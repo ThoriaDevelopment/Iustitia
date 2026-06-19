@@ -20,11 +20,12 @@ import kotlin.math.sqrt
  *
  * **Server-lag exemption:** a genuine server hitch freezes *every* player at once, then
  * releases them in a batched catch-up that looks identical to one player's Blink. We now
- * distinguish them via [EntityTrackerManager.lastServerLagTick] — set when a majority of
- * tracked players froze in the same tick (a single Blinker freezing alone never sets it).
- * Freezes accumulating during a server-lag window don't count, and snaps inside it aren't
- * flagged. This is the per-entity comparison the check previously couldn't do. setbackVL 5,
- * decay 0.5/tick.
+ * distinguish them via [EntityTrackerManager.lastServerLagTick] (a majority froze) and
+ * [EntityTrackerManager.lastLagBurstTick] (a batched catch-up snapped) — a single Blinker
+ * freezing alone never sets either. During a lag window we *reset* the freeze counter so a
+ * pre-lag idle run (freeze already ≥5) can't carry into the first post-lag movement tick and
+ * fire a false "Blink", and snaps inside the window aren't flagged. This is the per-entity
+ * comparison the check previously couldn't do. setbackVL 5, decay 0.5/tick.
  */
 class PacketGapCheck : Check() {
 
@@ -42,13 +43,22 @@ class PacketGapCheck : Check() {
             val dy = tp.delta.y
             val dz = tp.delta.z
             val mag = sqrt(dx * dx + dy * dy + dz * dz)
-            // server-wide lag window: majority of players froze recently -> this player's
-            // freeze/snap is the server's batched catch-up, not a Blink.
-            val serverLag = tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW
+            // server-wide lag window: majority froze (lastServerLagTick) OR a batched catch-up
+            // snapped (lastLagBurstTick) recently -> this player's freeze/snap is the server's
+            // catch-up, not a Blink. Reset the freeze so a pre-lag idle run can't fire on the
+            // first post-lag move; skip the snap. (Consulting lastLagBurstTick matches the
+            // sibling SpeedEnvelope/PhaseClip checks, which a lag manifested as a burst only
+            // would otherwise evade.)
+            val serverLag = tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            if (serverLag) {
+                ctx.freeze = 0
+                return
+            }
             if (mag < 0.01) {
-                if (!serverLag) ctx.freeze++
+                ctx.freeze++
             } else {
-                if (ctx.freeze >= 5 && mag > cfg.threshold && !serverLag) {
+                if (ctx.freeze >= 5 && mag > cfg.threshold) {
                     flag(tp, ctx, 1.0, "Blink", tick)
                 }
                 ctx.freeze = 0
@@ -61,7 +71,9 @@ class PacketGapCheck : Check() {
     }
 
     companion object {
-        /** Ticks after a server-lag tick during which freezes/snaps are exempt. */
+        /** Ticks after a server-wide freeze during which freezes/snaps are exempt. */
         private const val LAG_WINDOW = 8
+        /** Ticks after a batched catch-up burst during which freezes/snaps are exempt. */
+        private const val BURST_WINDOW = 3
     }
 }

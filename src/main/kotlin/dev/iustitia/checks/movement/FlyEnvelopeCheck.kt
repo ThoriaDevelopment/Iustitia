@@ -64,6 +64,19 @@ class FlyEnvelopeCheck : Check() {
             pushFront(ctx.descendWindow, if (dy < 0) -dy else 0.0, 5)
             val recentDescend = ctx.descendWindow.sum()
 
+            // Sustained-levitation guard: a player airborne for many ticks with a small,
+            // steady upward drift (0 < dy < LEV_RISE) and no jump/velocity/teleport/hurt
+            // impulse is under a Levitation effect (Shulker bullet / potion), not flying —
+            // vanilla Levitation I–III drifts up ~0.045–0.135/tick. Slow Falling (dy<0) is
+            // already excluded by the dy>-0.01 gate below; this closes the Levitation leak on
+            // the physics-breach and ascend signals. Once sustained, stop accumulating VL.
+            // (We can't observe the effect without expanding the mixin, so we infer shape.)
+            val smallRise = dy > 0.0 && dy < LEV_RISE
+            val noImpulse = tick - ctx.lastJumpTick > 6
+            ctx.levTicks = if (smallRise && noImpulse) ctx.levTicks + 1 else 0
+            val levitating = ctx.levTicks >= LEV_GUARD_TICKS
+            if (levitating) { ctx.breachTicks = 0; ctx.ascendTicks = 0 }
+
             // 1) physics breach — sustained ≥2 ticks. A single lag-catch-up tick (server
             //    didn't move last tick → prevDeltaY~0 → this tick a collapsed 2-tick jump
             //    Δy) trips the prediction once; requiring 2 consecutive breaches filters
@@ -73,10 +86,10 @@ class FlyEnvelopeCheck : Check() {
             // recentDescend<0.5 (a slow-faller barely descends) and trip a false Fly. A real
             // hover/fly gains altitude (dy>0), so requiring dy > -0.01 excludes slow-fallers
             // without loosening the breach for ascenders.
-            if (dy > expectedY + cfg.threshold && recentDescend < 0.5 && dy > -0.01) {
+            if (!levitating && dy > expectedY + cfg.threshold && recentDescend < 0.5 && dy > -0.01) {
                 ctx.breachTicks++
                 if (ctx.breachTicks >= 2) flag(tp, ctx, 1.0, "Fly", tick)
-            } else {
+            } else if (!levitating) {
                 ctx.breachTicks = 0
             }
 
@@ -105,7 +118,7 @@ class FlyEnvelopeCheck : Check() {
                     tick - ctx.lastJumpTick > 6
                 ) ctx.lastJumpTick = tick
                 val blockedAbove = hasBlockAbove(tp)
-                if (!blockedAbove && tick - ctx.lastJumpTick > 2) {
+                if (!levitating && !blockedAbove && tick - ctx.lastJumpTick > 2) {
                     ctx.ascendTicks++
                     if (ctx.ascendTicks >= 2) flag(tp, ctx, 1.0, "Fly(Ascend)", tick)
                 } else {
@@ -145,6 +158,15 @@ class FlyEnvelopeCheck : Check() {
         var breachTicks = 0
         var ascendTicks = 0
         var lastJumpTick = -10000
+        /** Consecutive airborne small-upward-drift ticks — sustained => Levitation guard. */
+        var levTicks = 0
         val descendWindow = ArrayDeque<Double>()
+    }
+
+    private companion object {
+        /** Max upward Δy (blocks/tick) still treated as a Levitation drift (not a fly ascend). */
+        const val LEV_RISE = 0.2
+        /** Airborne small-drift ticks required to arm the sustained-levitation guard (1s). */
+        const val LEV_GUARD_TICKS = 20
     }
 }

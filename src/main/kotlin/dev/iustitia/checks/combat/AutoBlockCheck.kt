@@ -4,6 +4,7 @@ import dev.iustitia.Iustitia
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.event.SwingSignal
+import dev.iustitia.protocol.ProtocolDetector
 import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
 
@@ -52,7 +53,15 @@ class AutoBlockCheck : Check() {
             val swinging = ctx.lastSwingTick != Int.MIN_VALUE && tick - ctx.lastSwingTick < SWING_TICKS
             if (swinging && tp.isBlocking) {
                 ctx.autoBlockTicks++
-                if (ctx.autoBlockTicks > cfg.threshold) {
+                // On 1.8, sword-blocking (UseAction.BLOCK) is a normal PvP technique — a skilled
+                // player block-hits (swings while the sword is raised) and sustains overlap far
+                // past the modern threshold. On 1.21 a shield can't be raised while attacking, so
+                // the same overlap is the cheat. Require a much longer run on 1.8 so legit
+                // block-hitters don't flag while blatant 1.8 autoblock (sustained across a whole
+                // fight) still climbs past it. Fail-open: ProtocolDetector falls back to modern,
+                // so a misdetection only loosens the 1.8 gate.
+                val need = if (ProtocolDetector.is1_8OrLess) cfg.threshold + LEGACY_1_8_BONUS else cfg.threshold
+                if (ctx.autoBlockTicks > need) {
                     flag(tp, ctx, 1.0, "AutoBlock", tick)
                 }
             } else {
@@ -69,5 +78,8 @@ class AutoBlockCheck : Check() {
     companion object {
         /** Swing animation duration in ticks (~6 in 1.8; close enough to gate "swinging now"). */
         private const val SWING_TICKS = 6
+        /** Extra overlap ticks required on 1.8 before flagging — legit block-hitting sustains a
+         *  long overlap, so the modern 10-tick gate would flag skilled 1.8 players. */
+        private const val LEGACY_1_8_BONUS = 30.0
     }
 }

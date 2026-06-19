@@ -1,8 +1,10 @@
 package dev.iustitia.checks.movement
 
+import dev.iustitia.Iustitia
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
+import dev.iustitia.event.AttackEvent
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.math.Vectors
@@ -10,7 +12,6 @@ import java.util.ArrayDeque
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.atan2
-import kotlin.math.hypot
 import kotlin.math.sqrt
 
 /**
@@ -21,24 +22,43 @@ import kotlin.math.sqrt
  *
  * Each tick we find the nearest other player within 6 blocks, compute the expected yaw/pitch
  * from the player's eye to that target's center, and mark a "match" if the broadcast
- * yaw/pitch land within a tight tolerance (±8° yaw / ±10° pitch — a real aimbot centers on
- * the hitbox; legit PvP micro-adjusts and looks around, rarely holding ±8° for long). Over
- * a rolling window we flag when the match rate exceeds [threshold] (0.92) with ≥50 samples
- * — a sustained near-perfect lock. Legit focused 1v1 PvP tracks the opponent ~60–80% of
- * ticks and never sustains 92% within 8°, so the borderline vl~6 baseline disappears; a real
- * aimlock (~99%) climbs. setbackVL 5, decay 0.05/tick (slow — tracking is a sustained
- * behavior, one clean tick shouldn't reset it).
+ * yaw/pitch land within a tolerance. Over a rolling window we flag when the match rate
+ * exceeds [threshold] (0.92) with ≥60 samples — a sustained near-perfect lock. setbackVL 5,
+ * decay 0.05/tick (slow — tracking is a sustained behavior, one clean tick shouldn't reset).
+ *
+ * FP guards over the original 50-sample / ±8°±10° / always-on form:
+ *  - **Distance floor with tighter tolerance.** Inside ~2 blocks the target hitbox spans a
+ *    huge angular range, so "within ±8°" is meaningless and a legit close-range tracker can
+ *    sustain it. Inside 2 blocks we require a *much* tighter ±3°/±4° match; outside, the
+ *    normal ±8°/±10° applies.
+ *  - **Combat-window gate.** Samples only accumulate while the attacker has been in combat
+ *    recently (an attack within [COMBAT_WINDOW]); idle "looking at a teammate" never feeds
+ *    the window. AimAssist activates to land hits, so combat-gating targets exactly the cheat
+ *    window while removing the idle-stare FP.
+ *  - **Higher sample bar (60).** Raises the bar above short lucky stretches.
  */
 class RotationTrackingCheck : Check() {
 
     override val id: String = "rotationTracking"
 
+    init {
+        try { Iustitia.bus.subscribe<AttackEvent> { onAttack(it) } } catch (_: Throwable) {}
+    }
+
     override fun newContext(uuid: UUID): CheckContext = TrackContext()
+
+    private fun onAttack(ev: AttackEvent) {
+        try {
+            (contextOf(ev.attacker) as TrackContext).lastAttackTick = ev.tick
+        } catch (_: Throwable) {}
+    }
 
     override fun process(tp: TrackedPlayer, tick: Int) {
         try {
             if (tp.inVehicle) return
             val ctx = contextOf(tp.uuid) as TrackContext
+            // combat gate: only accumulate while in/around a fight; idle looking never feeds VL.
+            if (tick - ctx.lastAttackTick > COMBAT_WINDOW) return
             // find nearest other player within 6 blocks
             var best: TrackedPlayer? = null
             var bestD = 6.0
@@ -66,11 +86,15 @@ class RotationTrackingCheck : Check() {
             val expPitch = Math.toDegrees(atan2(-cy, horiz))
             val yDiff = abs(Vectors.angleDiff(tp.yaw.toDouble(), expYaw))
             val pDiff = abs(tp.pitch.toDouble() - expPitch)
-            push(ctx, yDiff < 8.0 && pDiff < 10.0)
+            // distance floor: inside 2 blocks the hitbox spans a wide angle, so ±8° is
+            // trivially held by a legit close-range tracker — require a tight ±3°/±4° there.
+            val match = if (horiz < 2.0) yDiff < 3.0 && pDiff < 4.0
+                        else yDiff < 8.0 && pDiff < 10.0
+            push(ctx, match)
 
             // evaluate over the rolling window
             val samples = ctx.window.size
-            if (samples >= 50) {
+            if (samples >= MIN_SAMPLES) {
                 val rate = ctx.window.count { it }.toDouble() / samples
                 if (rate > cfg.threshold) flag(tp, ctx, 1.0, "AimTrack", tick)
             }
@@ -79,10 +103,20 @@ class RotationTrackingCheck : Check() {
 
     private fun push(ctx: TrackContext, v: Boolean) {
         ctx.window.addFirst(v)
-        while (ctx.window.size > 60) ctx.window.removeLast()
+        while (ctx.window.size > WINDOW) ctx.window.removeLast()
     }
 
     private class TrackContext : CheckContext() {
         val window = ArrayDeque<Boolean>()
+        var lastAttackTick: Int = -10000
+    }
+
+    private companion object {
+        /** Rolling sample window (ticks). */
+        const val WINDOW = 60
+        /** Min samples before judging the match rate. */
+        const val MIN_SAMPLES = 60
+        /** Ticks after an attack during which samples accumulate (combat window). */
+        const val COMBAT_WINDOW = 60
     }
 }

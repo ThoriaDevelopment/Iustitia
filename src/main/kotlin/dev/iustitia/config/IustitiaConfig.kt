@@ -83,7 +83,7 @@ data class IustitiaConfig(
     var phaseClip: CheckConfig = CheckConfig(true, 5.0, 0.5, 1.0),
     var packetGap: CheckConfig = CheckConfig(true, 5.0, 0.5, 2.0),
     var timerRate: CheckConfig = CheckConfig(true, 5.0, 0.5, 14.0),
-    var aimWrap: CheckConfig = CheckConfig(true, 5.0, 0.5, 150.0),
+    var aimWrap: CheckConfig = CheckConfig(true, 5.0, 0.5, 165.0),
     var pitchBound: CheckConfig = CheckConfig(true, 5.0, 0.0, 90.0),
     var scaffoldRotation: CheckConfig = CheckConfig(true, 5.0, 0.05, 78.0),
 ) {

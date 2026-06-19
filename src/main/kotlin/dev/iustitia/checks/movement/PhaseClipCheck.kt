@@ -8,6 +8,7 @@ import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
 import net.minecraft.client.MinecraftClient
 import java.util.UUID
+import kotlin.math.hypot
 
 /**
  * Phase / no-clip detector (PhaseClip). The Phase cheat moves through solid blocks. We
@@ -71,6 +72,14 @@ class PhaseClipCheck : Check() {
             val inside = WorldQueries.isFullCubeSolidAt(world, bx, lowerY, bz) &&
                 WorldQueries.isFullCubeSolidAt(world, bx, upperY, bz)
             if (inside) {
+                // Trapped discriminator: a player pinned in a 1×1 full-cube pocket by knockback
+                // has both bands in a solid, isn't moving horizontally, and has a solid block
+                // above the head (an enclosed pocket). A real phase cheat *moves* through the
+                // wall (horizontal motion) and isn't enclosed. Reset the streak for the trapped
+                // case so a sustained KB-pin past the 3-tick hurt window doesn't false-flag.
+                val horiz = hypot(tp.delta.x, tp.delta.z)
+                val enclosed = WorldQueries.isFullCubeSolidAt(world, bx, upperY + 1, bz)
+                if (horiz < 0.05 && enclosed) { ctx.streak = 0; return }
                 ctx.streak++
                 if (ctx.streak >= 5) flag(tp, ctx, 1.0, "Phase", tick)
             } else {

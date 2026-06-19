@@ -10,6 +10,9 @@ import net.fabricmc.loader.api.FabricLoader
 import java.nio.file.Files
 import java.nio.file.Path
 
+/** Quiet period after the last [ConfigManager.save] before the writer flushes — coalesces bursts. */
+private const val DEBOUNCE_MS = 350L
+
 /**
  * Loads/saves [IustitiaConfig] to `config/iustitia.json`. Hand-rolled through Gson's
  * JsonObject so we stay independent of the kotlinx.serialization compiler plugin and
@@ -17,6 +20,17 @@ import java.nio.file.Path
  *
  * Everything is fail-open: a corrupt or partial file falls back to defaults and is
  * overwritten on the next save.
+ *
+ * **Saving is async + debounced.** [save] serializes the live config on the *calling*
+ * thread (so the volatile [config] reference is read consistently, never cross-thread),
+ * hands the resulting JSON string to a single daemon writer thread, and returns
+ * immediately — it never blocks the render/tick thread on disk I/O. A burst of [save]
+ * calls (e.g. dragging a YACL slider fires one per step, or toggling several mutes at
+ * once) coalesces into a single write: the writer waits [DEBOUNCE_MS] after the last
+ * [save] before flushing, so only the latest snapshot hits disk. [flush] forces any
+ * pending write synchronously and is wired to the client-stopping lifecycle event so a
+ * pending config change is never lost on exit. All of it is wrapped in try/catch — a
+ * config write never crashes the client.
  */
 object ConfigManager {
 
@@ -28,6 +42,28 @@ object ConfigManager {
     @Volatile
     var config: IustitiaConfig = IustitiaConfig()
         private set
+
+    // --- async/debounced save plumbing ------------------------------------------------
+
+    /** Serializes disk writes so the writer thread and [flush] never interleave a file write. */
+    private val writeLock = Any()
+    /** Monitor guarding [dirty] / [pendingJson]; the writer thread waits on it. */
+    private val queueLock = Object()
+    @Volatile private var dirty: Boolean = false
+    @Volatile private var pendingJson: String? = null
+    @Volatile private var writerStarted: Boolean = false
+
+    private val writerThread: Thread by lazy {
+        Thread(::writerLoop, "Iustitia-ConfigWriter").apply { isDaemon = true }
+    }
+
+    /**
+     * JVM shutdown hook that forces a final synchronous [flush] so a debounced config change
+     * made right before the client closes is not lost (the writer is a daemon — the JVM won't
+     * wait for it). Registered once on the first [save]; fail-open.
+     */
+    private val flushHook: Thread = Thread({ try { flush() } catch (_: Throwable) {} }, "Iustitia-ConfigFlush")
+    @Volatile private var hookAdded: Boolean = false
 
     fun load() {
         config = try {
@@ -42,12 +78,93 @@ object ConfigManager {
         }
     }
 
+    /**
+     * Debounced, off-thread save. Serializes the config now (on the caller thread) and hands
+     * the JSON to the writer thread, which flushes it to disk after a [DEBOUNCE_MS] quiet
+     * period. Rapid successive calls coalesce — only the latest snapshot is written. Never
+     * throws; never blocks the caller on disk I/O.
+     */
     fun save() {
         try {
-            Files.createDirectories(path.parent)
-            Files.writeString(path, gson.toJson(toJson(config)))
+            val json = gson.toJson(toJson(config))
+            synchronized(queueLock) {
+                pendingJson = json
+                dirty = true
+                if (!writerStarted) {
+                    writerStarted = true
+                    writerThread.start()
+                }
+                if (!hookAdded) {
+                    hookAdded = true
+                    try { Runtime.getRuntime().addShutdownHook(flushHook) } catch (_: Throwable) {}
+                }
+                @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
+                (queueLock as Object).notify()
+            }
         } catch (_: Throwable) {
-            // best-effort; never crash the client over a config write
+            // best-effort; never crash the caller over a config queue
+        }
+    }
+
+    /**
+     * Block until any pending debounced write has landed on disk. Called from the
+     * client-stopping lifecycle hook so a config change made right before quit is not lost.
+     * If nothing is pending this is a no-op. Never throws.
+     */
+    fun flush() {
+        try {
+            val snapshot: String?
+            synchronized(queueLock) {
+                snapshot = pendingJson
+                if (snapshot != null) {
+                    pendingJson = null
+                    dirty = false
+                }
+            }
+            if (snapshot != null) writeNow(snapshot)
+        } catch (_: Throwable) {
+            // best-effort
+        }
+    }
+
+    private fun writerLoop() {
+        while (true) {
+            try {
+                // Wait for a save() to mark dirty. Then sleep DEBOUNCE_MS *outside* the lock so a
+                // burst of save() calls during that window keeps overwriting pendingJson (last
+                // wins → one coalesced write). After the debounce, take the latest snapshot and
+                // write it. fail-open: any error just loops back to waiting.
+                synchronized(queueLock) {
+                    while (!dirty) {
+                        @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
+                        (queueLock as Object).wait()
+                    }
+                }
+                Thread.sleep(DEBOUNCE_MS)
+                val snapshot: String?
+                synchronized(queueLock) {
+                    snapshot = pendingJson
+                    if (snapshot != null) {
+                        pendingJson = null
+                        dirty = false
+                    }
+                }
+                if (snapshot != null) writeNow(snapshot)
+            } catch (_: Throwable) {
+                // interrupted / etc — clear and continue; a daemon writer must never die
+            }
+        }
+    }
+
+    /** Performs the actual file write, serialized on [writeLock] so [flush] + writer can't race. */
+    private fun writeNow(json: String) {
+        synchronized(writeLock) {
+            try {
+                Files.createDirectories(path.parent)
+                Files.writeString(path, json)
+            } catch (_: Throwable) {
+                // best-effort; never crash the writer thread over a config write
+            }
         }
     }
 

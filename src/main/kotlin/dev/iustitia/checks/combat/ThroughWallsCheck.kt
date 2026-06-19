@@ -35,6 +35,9 @@ class ThroughWallsCheck : Check() {
             val attacker = EntityTrackerManager.get(ev.attacker) ?: return
             val victim = EntityTrackerManager.get(ev.victim) ?: return
             if (attacker.inVehicle) return
+            // A passenger's eye sits inside the vehicle frame; LOS through the frame is legit,
+            // so a victim riding a boat/minecart is exempt (only the attacker side was before).
+            if (victim.inVehicle) return
             val world = MinecraftClient.getInstance().world ?: return
             // Raycast eye→eye (both ~1.62). A legit melee reaches OVER low obstacles
             // (fences 1.5, slabs 0.5/1.0, walls 1.0) since player hitboxes reach 3.0+ at

@@ -3,6 +3,7 @@ package dev.iustitia.checks.movement
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
+import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
 import kotlin.math.hypot
@@ -17,6 +18,13 @@ import kotlin.math.hypot
  * blatant sustained-overspeed tier (> [threshold], 14 bps) distinct from SpeedEnvelope's
  * cap. setbackVL 5, decay 0.5/tick (so a sustained cheater climbs past setback while a brief
  * spike washes out).
+ *
+ * Server-lag exemption: a server-wide hitch / batched catch-up burst injects huge bps
+ * samples into every player at once (the spawn-in burst after a world transition is exactly
+ * this). We skip — and clear the streak so a pre-lag partial run can't carry into the post-lag
+ * catch-up — within the same [LAG_WINDOW]/[BURST_WINDOW] SpeedEnvelope consults. This was the
+ * one overspeed check without the lag gate; without it a post-hitch catch-up mass-flagged
+ * Timer across the whole lobby.
  */
 class TimerRateCheck : Check() {
 
@@ -31,6 +39,11 @@ class TimerRateCheck : Check() {
             if (tick - tp.hurtTick < 5) return
             if (tick - tp.velocityTick < 40) return
             val ctx = contextOf(tp.uuid) as TimerContext
+            // Server-lag exemption: skip AND clear the streak so a pre-lag partial run can't
+            // combine with the post-lag catch-up to reach 3. Matches SpeedEnvelope's windows.
+            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            ) { ctx.streak = 0; return }
             val bps = hypot(tp.delta.x, tp.delta.z) * 20.0
             if (bps > cfg.threshold) {
                 ctx.streak++
@@ -43,5 +56,12 @@ class TimerRateCheck : Check() {
 
     private class TimerContext : CheckContext() {
         var streak: Int = 0
+    }
+
+    private companion object {
+        // Mirrors SpeedEnvelope's windows: a lag tick within the last 8 ticks (or a catch-up
+        // burst within 3) means bps samples are unreliable — skip Timer evaluation.
+        const val LAG_WINDOW = 8
+        const val BURST_WINDOW = 3
     }
 }

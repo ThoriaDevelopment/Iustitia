@@ -53,7 +53,10 @@ object YaclScreenBuilder {
         .option(bool("Enabled", "Toggle the $id check.", { cc.enabled }) { cc.enabled = it })
         .option(double("Setback VL", "Alert only when VL exceeds this.", { cc.setbackVL }, 0.0, 100.0) { cc.setbackVL = it })
         .option(double("Decay / tick", "VL reduced per clean tick.", { cc.decay }, 0.0, 5.0) { cc.decay = it })
-        .option(double("Threshold", "Primary numeric threshold (check-specific meaning).", { cc.threshold }, 0.0, 100.0) { cc.threshold = it })
+        // Threshold max 200 covers the largest default (aimWrap 165) with headroom; the range
+        // is now actually applied to the controller, so the field is slider/keyboard-bounded
+        // instead of accepting any double (the previous helper ignored its min/max args).
+        .option(double("Threshold", "Primary numeric threshold (check-specific meaning).", { cc.threshold }, 0.0, 200.0) { cc.threshold = it })
         .build()
 
     private fun bool(name: String, desc: String, getter: () -> Boolean, setter: (Boolean) -> Unit): Option<Boolean> =
@@ -69,7 +72,7 @@ object YaclScreenBuilder {
             .name(Text.literal(name))
             .description(OptionDescription.of(Text.literal(desc)))
             .binding(getter(), getter, setter)
-            .controller { opt -> IntegerFieldControllerBuilder.create(opt) }
+            .controller { opt -> IntegerFieldControllerBuilder.create(opt).range(min, max) }
             .build()
 
     private fun double(name: String, desc: String, getter: () -> Double, min: Double, max: Double, setter: (Double) -> Unit): Option<Double> =
@@ -77,6 +80,6 @@ object YaclScreenBuilder {
             .name(Text.literal(name))
             .description(OptionDescription.of(Text.literal(desc)))
             .binding(getter(), getter, setter)
-            .controller { opt -> DoubleFieldControllerBuilder.create(opt) }
+            .controller { opt -> DoubleFieldControllerBuilder.create(opt).range(min, max) }
             .build()
 }

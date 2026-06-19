@@ -6,6 +6,7 @@ import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.event.AttackEvent
 import dev.iustitia.math.AABB
+import dev.iustitia.math.HitboxSizes
 import dev.iustitia.tracking.EntityTrackerManager
 import java.util.UUID
 import kotlin.math.sqrt
@@ -38,13 +39,15 @@ class BacktrackCheck : Check() {
             val reach = cfg.threshold
             val eye = attacker.pos.add(0.0, attacker.eyeHeight(), 0.0)
             val margin = 0.5
+            // victim hitbox is pose-aware (sneak → 0.6×1.5, glide/swim/riptide → 0.6×0.6).
+            val vh = HitboxSizes.forPose(victim)
             // current position out of reach?
-            val curBox = AABB.around(victim.pos.x, victim.pos.y, victim.pos.z, 0.6, 1.8).expand(0.0005)
+            val curBox = AABB.around(victim.pos.x, victim.pos.y, victim.pos.z, vh.width, vh.height).expand(0.0005)
             val curDist = sqrt(curBox.closestPointSqDistance(eye.x, eye.y, eye.z))
             if (curDist <= reach + margin) return // current pos already in reach — not backtrack
             // any recent position in reach?
             for (p in victim.ring.getPositions(4, ev.tick)) {
-                val oldBox = AABB.around(p.x, p.y, p.z, 0.6, 1.8).expand(0.0005)
+                val oldBox = AABB.around(p.x, p.y, p.z, vh.width, vh.height).expand(0.0005)
                 val oldDist = sqrt(oldBox.closestPointSqDistance(eye.x, eye.y, eye.z))
                 if (oldDist <= reach + margin) {
                     flag(attacker, contextOf(attacker.uuid), 1.0, "Backtrack", ev.tick)

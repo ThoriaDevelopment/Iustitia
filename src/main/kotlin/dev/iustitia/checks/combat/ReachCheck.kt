@@ -6,6 +6,7 @@ import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.event.AttackEvent
 import dev.iustitia.math.AABB
+import dev.iustitia.math.HitboxSizes
 import dev.iustitia.math.RayAABB
 import dev.iustitia.math.Vectors
 import dev.iustitia.protocol.ProtocolDetector
@@ -59,6 +60,11 @@ class ReachCheck : Check() {
                 Vectors.lookVector(attacker.lastYaw.toDouble(), attacker.lastPitch.toDouble()),
             )
 
+            // victim hitbox is pose-aware (sneak → 0.6×1.5, glide/swim/riptide → 0.6×0.6).
+            // A standing-sized box on a crouched/elytra victim biased the ray intercept
+            // (taller box → shorter measured distance → missed real reach against them).
+            val vh = HitboxSizes.forPose(victim)
+
             // candidate victim positions: current + recent ring samples (lag comp)
             val positions = ArrayList<Vec3d>(8)
             positions.add(victim.pos)
@@ -67,7 +73,7 @@ class ReachCheck : Check() {
             var minDist = Double.MAX_VALUE
             var anyHit = false
             for (vp in positions) {
-                val box = AABB.around(vp.x, vp.y, vp.z, 0.6, 1.8).expand(margin)
+                val box = AABB.around(vp.x, vp.y, vp.z, vh.width, vh.height).expand(margin)
                 for (look in looks) {
                     val end = eye.add(look.multiply(maxReach + 3.0))
                     val hit = RayAABB.calculateIntercept(box, eye, end) ?: continue
@@ -91,7 +97,7 @@ class ReachCheck : Check() {
                 // never-FP is preserved: an unloaded victim chunk yields a near origin/pos, which
                 // is always within reach and therefore never flags).
                 val centerDist = eye.distanceTo(victim.pos)
-                val nearestFace = centerDist - 0.6
+                val nearestFace = centerDist - vh.width / 2.0
                 if (nearestFace > maxReach + 0.5) {
                     val level = max(1.0, ceil((nearestFace - maxReach) * 2.0))
                     flag(attacker, ctx, level, "Reach", ev.tick)

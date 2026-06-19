@@ -2,10 +2,15 @@ package dev.iustitia.world
 
 import net.minecraft.block.BlockState
 import net.minecraft.block.Blocks
+import net.minecraft.client.MinecraftClient
 import net.minecraft.client.world.ClientWorld
+import net.minecraft.entity.vehicle.BoatEntity
 import net.minecraft.util.math.BlockPos
+import net.minecraft.util.math.Box
 import net.minecraft.util.math.Vec3d
 import net.minecraft.entity.Entity
+import net.minecraft.util.hit.BlockHitResult
+import net.minecraft.util.hit.HitResult
 import net.minecraft.world.RaycastContext
 import net.minecraft.world.chunk.ChunkStatus
 
@@ -119,9 +124,89 @@ object WorldQueries {
     }
 
     /**
-     * True iff no opaque/solid block intersects the segment [from] -> [to].
-     * Uses a block-only colliding raycast. A clean MISS (or a hit essentially at the
-     * endpoint) counts as line-of-sight. Chunk-gated per endpoint block.
+     * True iff the block at (x,y,z) legitimately dampens knockback — liquids (water/lava),
+     * cobweb, soul sand/soil, and honey. A victim on/in these can move <0.1/tick after a
+     * sprint-hit without using a Velocity cheat, so NoKnockback exempts them. Chunk-gated.
+     */
+    fun isKbDampeningAt(world: ClientWorld?, x: Int, y: Int, z: Int): Boolean {
+        return try {
+            if (isLiquidAt(world, x, y, z)) return true
+            val state = blockStateAt(world, x, y, z) ?: return false
+            state.isOf(Blocks.COBWEB) || state.isOf(Blocks.SOUL_SAND) ||
+                state.isOf(Blocks.SOUL_SOIL) || state.isOf(Blocks.HONEY_BLOCK)
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /** True iff a lily pad sits at/just above (x,y,z) — a player can stand on a lily pad
+     *  over water (it has no collision, so isSolidAt returns false) and must not be flagged
+     *  as WaterWalk. Chunk-gated. */
+    fun isLilyPadAt(world: ClientWorld?, x: Int, y: Int, z: Int): Boolean {
+        return try {
+            val state = blockStateAt(world, x, y, z) ?: return false
+            state.isOf(Blocks.LILY_PAD)
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /** True iff a boat entity sits within ~1 block below (x,y,z) — a player standing ON a
+     *  boat (not riding it) has water at the feet but is supported by the boat, not the
+     *  WaterWalk cheat. `tp.inVehicle` only catches riding, not standing-on. */
+    fun isBoatBelow(world: ClientWorld?, x: Double, y: Double, z: Double): Boolean {
+        if (world == null) return false
+        return try {
+            val player = MinecraftClient.getInstance().player ?: return false
+            val box = Box(x - 1.0, y - 1.5, z - 1.0, x + 1.0, y + 0.3, z + 1.0)
+            world.getOtherEntities(player, box) { it is BoatEntity }.isNotEmpty()
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /** True iff a solid block stands within [reach] blocks ahead of (x,z) along the (dx,dz)
+     *  unit direction, sweeping several vertical bands — a wall anywhere along the push
+     *  legitimately stops the victim. Used by NoKnockback to exempt a blocked KB. */
+    fun isWallAhead(world: ClientWorld?, x: Double, y: Double, z: Double, dx: Double, dz: Double, reach: Double): Boolean {
+        if (world == null) return false
+        return try {
+            val len = hypotOf(dx, dz)
+            if (len < 1.0E-6) return false
+            val ux = dx / len
+            val uz = dz / len
+            val footY = Math.floor(y).toInt()
+            // sample at 0.3 / 0.6 / 0.9 ahead across three body bands (foot, torso, head)
+            for (off in doubleArrayOf(0.3, 0.6, 0.9)) {
+                val bx = Math.floor(x + ux * off).toInt()
+                val bz = Math.floor(z + uz * off).toInt()
+                if (isSolidAt(world, bx, footY, bz) ||
+                    isSolidAt(world, bx, footY + 1, bz) ||
+                    isSolidAt(world, bx, footY + 2, bz)
+                ) return true
+            }
+            false
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun hypotOf(a: Double, b: Double): Double {
+        val x = Math.abs(a); val y = Math.abs(b)
+        return if (x > y) x * Math.sqrt(1.0 + (y / x) * (y / x))
+        else if (y > 0.0) y * Math.sqrt(1.0 + (x / y) * (x / y))
+        else 0.0
+    }
+
+    /**
+     * True iff no opaque block intersects the segment [from] -> [to].
+     * Uses a block-only colliding raycast, then treats a hit on a **non-opaque** block
+     * (glass, leaves, ice, fences, panes, iron bars, …) as line-of-sight — those are
+     * see-through and vanilla melee reaches entities poking past them, so flagging a hit
+     * "through" them was a map-dependent false positive. A real wall (opaque full cube:
+     * stone/planks/…) still blocks. A clean MISS (or a hit essentially at the endpoint)
+     * counts as line-of-sight. Chunk-gated per endpoint block; fail-open on any error
+     * (returns false = "blocked", which makes [ThroughWallsCheck] simply not flag — safe).
      */
     fun hasLineOfSight(world: ClientWorld?, from: Vec3d, to: Vec3d): Boolean {
         if (world == null) return false
@@ -136,8 +221,13 @@ object WorldQueries {
                 null as Entity?,
             )
             val hit = world.raycast(ctx)
-            // A MISS lands at `to`; a block *between* from and to lands short of `to`.
-            // "Clear" iff the hit point is essentially at the destination.
+            // MISS (lands at `to`) = clear. A block hit short of `to` = blocked — UNLESS the
+            // hit block is non-opaque (see-through), in which case the melee is legit.
+            if (hit.type == HitResult.Type.MISS) return true
+            if (hit is BlockHitResult) {
+                val state = world.getBlockState(hit.blockPos)
+                if (!state.isAir && !state.isOpaque) return true
+            }
             hit.getPos().squaredDistanceTo(to) < 1.0E-6
         } catch (_: Throwable) {
             false

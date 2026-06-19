@@ -15,8 +15,11 @@ import kotlin.math.abs
  * (STOP→START) around each attack tick so the server applies sprint-bonus knockback to the
  * victim even though the cheater isn't really sprinting. We track the attacker's sprint
  * metadata transitions in [process] (comparing this tick's sprinting to the last), then on
- * each [AttackEvent] count transitions within ±1 tick of the attack. ≥ [threshold] (2)
- * transitions around a single attack → flag. setbackVL 5, decay 0.5/tick.
+ * each [AttackEvent] record whether ≥ [threshold] (2) transitions fell within ±1 tick of
+ * that attack. A sustained macro (SuperKnockback) W-taps on nearly every hit; a legit player
+ * W-taps only sometimes. We flag only when the pattern is *sustained* — ≥3 of the last 4
+ * attacks each had ≥threshold near-transitions (and ≥4 attacks observed) — so a single or
+ * occasional legit W-tap can't trip it. setbackVL 5, decay 0.5/tick.
  */
 class WTapCheck : Check() {
 
@@ -45,7 +48,12 @@ class WTapCheck : Check() {
             val ctx = contextOf(ev.attacker) as WTapContext
             val need = cfg.threshold.toInt().coerceAtLeast(2)
             val near = ctx.transitions.count { abs(it - ev.tick) <= 1 }
-            if (near >= need) {
+            // record whether this attack carried the W-tap transition signature, then judge the
+            // rolling window: a sustained macro hits the signature on most attacks, a legit
+            // W-tapper only sometimes. Flag at ≥3 of the last 4 (with ≥4 observed).
+            ctx.recent.addFirst(near >= need)
+            while (ctx.recent.size > WINDOW) ctx.recent.removeLast()
+            if (ctx.recent.size >= MIN_SAMPLES && ctx.recent.count { it } >= SUSTAINED_HITS) {
                 flag(attacker, ctx, 1.0, "WTap", ev.tick)
             }
         } catch (_: Throwable) {}
@@ -54,5 +62,16 @@ class WTapCheck : Check() {
     private class WTapContext : CheckContext() {
         var prevSprinting: Boolean = false
         val transitions = java.util.ArrayDeque<Int>()
+        /** Per-attack "did this hit carry ≥threshold sprint transitions within ±1 tick". */
+        val recent = java.util.ArrayDeque<Boolean>()
+    }
+
+    private companion object {
+        /** Rolling window of recent attacks judged for the sustained-macro gate. */
+        const val WINDOW = 4
+        /** Min attacks observed before flagging (small-sample guard). */
+        const val MIN_SAMPLES = 4
+        /** Tappy attacks required in the window to call it a sustained macro (3 of 4). */
+        const val SUSTAINED_HITS = 3
     }
 }

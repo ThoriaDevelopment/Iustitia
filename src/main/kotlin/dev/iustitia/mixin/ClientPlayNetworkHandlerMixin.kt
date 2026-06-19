@@ -20,6 +20,7 @@ import net.minecraft.network.packet.s2c.play.EntityStatusEffectS2CPacket
 import net.minecraft.network.packet.s2c.play.EntityStatusS2CPacket
 import net.minecraft.network.packet.s2c.play.EntityVelocityUpdateS2CPacket
 import net.minecraft.network.packet.s2c.play.GameJoinS2CPacket
+import net.minecraft.network.packet.s2c.play.PlayerRespawnS2CPacket
 import net.minecraft.network.packet.s2c.play.RemoveEntityStatusEffectS2CPacket
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.injection.At
@@ -57,7 +58,41 @@ class ClientPlayNetworkHandlerMixin {
         try {
             ProtocolDetector.redetect()
             Iustitia.resetAll()
+            // Record the world identity of this session so a later onPlayerRespawn can tell
+            // a death-respawn (same world) from a dimension-transfer / Bungee sub-server switch
+            // (different world). See iustitia_onPlayerRespawn.
+            SpawnState.seed = packet.commonPlayerSpawnInfo().seed()
             Iustitia.bus.publish(GameJoinSignal(Iustitia.tickCounter))
+        } catch (_: Throwable) {}
+    }
+
+    /**
+     * onPlayerRespawn fires on BOTH death-respawn AND dimension transfer (portal) / Bungee
+     * sub-server switch. We must reset VL and re-detect protocol ONLY on a genuine world
+     * change, never on a same-world death-respawn (that would wipe a cheater's accumulated VL
+     * every time they die — a trivial evasion: die, respawn, the slate is clean). Vanilla
+     * intentionally keeps the same seed/dimension for a death-respawn, so:
+     *  - dimension() != the live (pre-respawn) world's registryKey → portal dimension transfer,
+     *  - seed() != the seed recorded at GameJoin (or the last world-change respawn) → Bungee
+     *    sub-server switch (same dimension key, freshly generated world).
+     * Either => world changed: resetAll + redetect + record the new seed. Both equal => a
+     * same-world death-respawn: preserve VL. Fail-open.
+     */
+    @Inject(method = ["onPlayerRespawn"], at = [At("HEAD")])
+    private fun iustitia_onPlayerRespawn(packet: PlayerRespawnS2CPacket, ci: CallbackInfo) {
+        try {
+            val info = packet.commonPlayerSpawnInfo()
+            val newSeed = info.seed()
+            val newDim = info.dimension()
+            val oldDim = world()?.registryKey
+            val dimChanged = oldDim != null && newDim != oldDim
+            val seedChanged = newSeed != SpawnState.seed
+            if (dimChanged || seedChanged) {
+                ProtocolDetector.redetect()
+                Iustitia.resetAll()
+                SpawnState.seed = newSeed
+            }
+            // same world (death-respawn): intentionally preserve all VL — see PacketSignals.
         } catch (_: Throwable) {}
     }
 
@@ -136,4 +171,15 @@ class ClientPlayNetworkHandlerMixin {
             Iustitia.bus.publish(EffectSignal(entity, Iustitia.tickCounter, isSpeed, -1, added = false))
         } catch (_: Throwable) {}
     }
+}
+
+/**
+ * Holds the seed of the world the client is currently in, as reported by the last
+ * GameJoin / world-change respawn. Used by [ClientPlayNetworkHandlerMixin.iustitia_onPlayerRespawn]
+ * to tell a death-respawn (same seed → preserve VL) from a dimension-transfer / Bungee
+ * sub-server switch (different seed → reset VL). Volatile: read by the respawn handler from
+ * the network thread, written by the game-join/respawn handlers.
+ */
+private object SpawnState {
+    @Volatile var seed: Long = Long.MIN_VALUE
 }

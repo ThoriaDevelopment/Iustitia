@@ -5,6 +5,7 @@ import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.event.AttackEvent
 import dev.iustitia.math.AABB
+import dev.iustitia.math.HitboxSizes
 import dev.iustitia.math.RayAABB
 import dev.iustitia.math.Vectors
 import dev.iustitia.protocol.ProtocolDetector
@@ -83,7 +84,12 @@ class TriggerbotCheck : Check() {
                 if (vEntity != null && !vEntity.isAlive) continue
                 nearby.add(victim.uuid)
 
-                val box = AABB.around(victim.pos.x, victim.pos.y, victim.pos.z, 0.6, 1.8).expand(margin)
+                // victim hitbox is pose-aware (sneak → 0.6×1.5, glide/swim/riptide → 0.6×0.6).
+                // A standing-sized box on a crouched victim registered the crosshair "on"
+                // while still above the real (shorter) hitbox → rising edge early → false
+                // sub-reaction reading on a legit player sneaking under the crosshair.
+                val vh = HitboxSizes.forPose(victim)
+                val box = AABB.around(victim.pos.x, victim.pos.y, victim.pos.z, vh.width, vh.height).expand(margin)
                 val onNow = RayAABB.calculateIntercept(box, eye, end) != null
                 val prev = ctx.onHitbox[victim.uuid] ?: false
                 if (onNow && !prev) {

@@ -13,13 +13,20 @@ import kotlin.math.abs
 import kotlin.math.atan2
 
 /**
- * Snap-back aura detector (RotationSnapBack). A tell-tale KillAura pattern: yaw snaps to the
- * victim on the attack tick, then snaps back to the travel direction within 1–3 ticks
- * (target acquired → attack → reset). On [AttackEvent] we check whether the attacker was
- * facing the victim at the attack tick (yaw within 15° of the eye→victim bearing) and prime
- * a watch; in [process] we flag if the yaw has since moved > [threshold] (30°) away within
- * 1–3 ticks. Requires correlation with a damage event, so legit flicks (rare, slower) don't
- * trip it. setbackVL 5, decay 0.5/tick.
+ * Snap-back aura detector (RotationSnapBack). A tell-tale KillAura pattern: the attacker is
+ * traveling one way, yaw snaps to the victim on the attack tick, then snaps *back to the
+ * pre-attack travel bearing* within 1–3 ticks (target acquired → attack → reset). On
+ * [AttackEvent] we check whether the attacker was facing the victim at the attack tick (yaw
+ * within 15° of the eye→victim bearing) and prime a watch recording both the attack-tick yaw
+ * and the *pre-attack* yaw (the travel bearing before the snap). In [process] we flag only
+ * when the yaw has since moved > [threshold] (30°) away from the attack yaw AND returned
+ * within [SNAP_BACK_TOL] of the pre-attack travel bearing — i.e. a genuine snap-back-to-travel.
+ *
+ * Requiring the return-to-travel is what separates the KillAura tell from a legit
+ * target-switch (snapping to a *different* opponent after a hit, which moves the yaw far from
+ * the travel bearing too, so it doesn't match) — the original "any >30° change within 3
+ * ticks" form flagged legit multi-opponent target-switches. Requires correlation with a
+ * damage event, so legit flicks (rare, slower) don't trip it. setbackVL 5, decay 0.5/tick.
  */
 class RotationSnapBackCheck : Check() {
 
@@ -44,7 +51,8 @@ class RotationSnapBackCheck : Check() {
                 val ctx = contextOf(ev.attacker) as SnapContext
                 ctx.prime = true
                 ctx.snapTick = ev.tick
-                ctx.attackYaw = attacker.yaw.toDouble()
+                ctx.attackYaw = attacker.yaw.toDouble()      // facing the victim
+                ctx.preAttackYaw = attacker.lastYaw.toDouble() // travel bearing before the snap
             }
         } catch (_: Throwable) {}
     }
@@ -54,9 +62,19 @@ class RotationSnapBackCheck : Check() {
             val ctx = contextOf(tp.uuid) as SnapContext
             if (!ctx.prime) return
             val since = tick - ctx.snapTick
-            if (since in 1..3 && abs(Vectors.angleDiff(tp.yaw.toDouble(), ctx.attackYaw)) > cfg.threshold) {
-                flag(tp, ctx, 1.0, "SnapBack", tick)
-                ctx.prime = false
+            if (since in 1..3) {
+                val yaw = tp.yaw.toDouble()
+                val fromAttack = abs(Vectors.angleDiff(yaw, ctx.attackYaw))
+                if (fromAttack > cfg.threshold) {
+                    // large deviation — is it a snap-BACK to travel, or a target-switch to
+                    // another opponent? Only flag if the yaw returned near the pre-attack
+                    // travel bearing (the KillAura reset signature).
+                    val fromTravel = abs(Vectors.angleDiff(yaw, ctx.preAttackYaw))
+                    if (fromTravel <= SNAP_BACK_TOL) {
+                        flag(tp, ctx, 1.0, "SnapBack", tick)
+                        ctx.prime = false
+                    }
+                }
             } else if (since > 3) {
                 ctx.prime = false
             }
@@ -67,5 +85,12 @@ class RotationSnapBackCheck : Check() {
         var prime: Boolean = false
         var snapTick: Int = -10000
         var attackYaw: Double = 0.0
+        var preAttackYaw: Double = 0.0
+    }
+
+    private companion object {
+        /** Max yaw deviation from the pre-attack travel bearing that still counts as a
+         *  snap-back-to-travel (vs. a target-switch to another opponent). */
+        const val SNAP_BACK_TOL = 20.0
     }
 }
