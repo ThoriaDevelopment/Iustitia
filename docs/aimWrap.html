@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AimWrap &mdash; Iustitia checks</title>
+  <meta name="description" content="Max-rotation-rate / snap detector — flags a single-tick yaw rotation larger than threshold (150deg) coming out of a near-still tick (previous wrapped delta &lt; 30deg): a classic aimbot snap from rest.">
+  <link rel="stylesheet" href="../assets/iustitia.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="../index.html"><span class="diamond"></span>IUSTITIA</a>
+      <div class="nav-links">
+        <a href="../index.html#features">Features</a>
+        <a href="index.html" class="cur">Checks</a>
+        <a href="../index.html#philosophy">Philosophy</a>
+        <a href="../index.html#install">Install</a>
+        <a href="https://github.com/ThoriaDevelopment/Iustitia" target="_blank" rel="noopener">GitHub</a>
+      </div>
+      <span class="nav-spacer"></span>
+      <span class="nav-cta"><a class="btn btn-primary" href="https://github.com/ThoriaDevelopment/Iustitia/releases/download/v0.2.0/iustitia-v0.2.0.jar">Download v0.2.0</a></span>
+    </div>
+  </nav>
+  <div class="container docs-layout">
+    <aside class="docs-side">
+      <a href="index.html" style="display:block;margin-bottom:14px;color:var(--accent);font-size:13px;font-weight:600">&larr; All checks</a>
+      <h4>⚔ Combat <span style="color:var(--text-faint);font-weight:400">(14)</span></h4>
+      <a href="reach.html">Reach<span class="badge-t">●</span></a>
+      <a href="multiTarget.html">MultiTarget<span class="badge-t">●</span></a>
+      <a href="clickStatistics.html">Autoclicker<span class="badge-t">○</span></a>
+      <a href="throughWalls.html">ThroughWalls<span class="badge-t">●</span></a>
+      <a href="criticals.html">Criticals<span class="badge-t">●</span></a>
+      <a href="noKnockback.html">NoKnockback<span class="badge-t">○</span></a>
+      <a href="keepSprint.html">KeepSprint<span class="badge-t">○</span></a>
+      <a href="wTap.html">WTap<span class="badge-t">○</span></a>
+      <a href="jumpOnHurt.html">JumpReset<span class="badge-t">○</span></a>
+      <a href="backtrack.html">Backtrack<span class="badge-t">○</span></a>
+      <a href="killAura.html">KillAura<span class="badge-t">●</span></a>
+      <a href="autoBlock.html">AutoBlock<span class="badge-t">●</span></a>
+      <a href="hitFlick.html">HitFlick<span class="badge-t">●</span></a>
+      <a href="triggerbot.html">Triggerbot<span class="badge-t">○</span></a>
+      <h4>↗ Movement <span style="color:var(--text-faint);font-weight:400">(11)</span></h4>
+      <a href="speedEnvelope.html">Speed<span class="badge-t">○</span></a>
+      <a href="flyEnvelope.html">Fly<span class="badge-t">●</span></a>
+      <a href="noFallDamage.html">NoFall<span class="badge-t">●</span></a>
+      <a href="stepHeight.html">Step<span class="badge-t">○</span></a>
+      <a href="teleport.html">Teleport<span class="badge-t">●</span></a>
+      <a href="longJump.html">LongJump<span class="badge-t">●</span></a>
+      <a href="noSlow.html">NoSlow<span class="badge-t">○</span></a>
+      <a href="backwardSprint.html">BackwardSprint<span class="badge-t">○</span></a>
+      <a href="waterWalk.html">WaterWalk<span class="badge-t">●</span></a>
+      <a href="elytraSpeed.html">ElytraSpeed<span class="badge-t">○</span></a>
+      <a href="phaseClip.html">PhaseClip<span class="badge-t">●</span></a>
+      <h4>◎ Rotation <span style="color:var(--text-faint);font-weight:400">(5)</span></h4>
+      <a href="rotationTracking.html">RotationTracking<span class="badge-t">○</span></a>
+      <a href="rotationSnapBack.html">RotationSnapBack<span class="badge-t">○</span></a>
+      <a href="aimWrap.html" class="cur">AimWrap<span class="badge-t">○</span></a>
+      <a href="pitchBound.html">PitchBound<span class="badge-t">○</span></a>
+      <a href="scaffoldRotation.html">Scaffold<span class="badge-t">●</span></a>
+      <h4>■ Packet <span style="color:var(--text-faint);font-weight:400">(2)</span></h4>
+      <a href="packetGap.html">PacketGap<span class="badge-t">○</span></a>
+      <a href="timerRate.html">Timer<span class="badge-t">●</span></a>
+    </aside>
+    <main>
+      <div class="breadcrumb"><a href="../index.html">Iustitia</a> <span class="sep">/</span> <a href="index.html">Checks</a> <span class="sep">/</span> <a href="index.html#rotation">Rotation</a> <span class="sep">/</span> AimWrap</div>
+      <div class="check-head">
+        <div class="check-title">
+          <h1>AimWrap</h1>
+          <span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span>
+        </div>
+        <div class="check-sub">Max-rotation-rate / snap detector — flags a single-tick yaw rotation larger than threshold (150deg) coming out of a near-still tick (previous wrapped delta &lt; 30deg): a classic aimbot snap from rest.</div>
+        <div class="meta" style="margin-top:10px;color:var(--text-faint);font-family:var(--mono);font-size:13px">id: <span style="color:var(--accent)">aimWrap</span> &nbsp;&middot;&nbsp; class: AimWrapCheck &nbsp;&middot;&nbsp; group: Rotation</div>
+      </div>
+      <div class="doc-nav">
+      <a href="rotationSnapBack.html" class="prev"><div class="dir">← Previous</div><div class="who">RotationSnapBack</div></a>
+      <a href="pitchBound.html" class="next"><div class="dir">Next →</div><div class="who">PitchBound</div></a>
+      </div>
+
+      <section class="doc-section">
+        <h2>What it detects</h2>
+        <p>Max-rotation-rate / snap detector — flags a single-tick yaw rotation larger than threshold (150deg) coming out of a near-still tick (previous wrapped delta &lt; 30deg): a classic aimbot snap from rest.</p>
+      </section>
+
+      <section class="doc-section">
+        <h2>Observer signature</h2>
+        <div class="sig">wrappedDelta = wrapDegrees(yaw - lastYaw); flags when |wrappedDelta| &gt; threshold &amp;&amp; |lastWrappedDelta| &lt; 30.0. Delta measured as shortest angular distance so legit boundary crossings (179deg -&gt; -179deg, actual 2deg) do NOT false-flag.</div>
+      </section>
+
+      <section class="doc-section">
+        <h2>False-positive guards</h2>
+    <ul>
+      <li>Wrapped (shortest-path) delta eliminates +-180deg boundary-crossing FPs</li>
+      <li>Near-still previous-tick gate (lastWrappedDelta &lt; 30deg)</li>
+      <li>Threshold must stay &lt; 180</li>
+    </ul>
+      </section>
+
+      <section class="doc-section">
+        <h2>Configuration</h2>
+        <p style="color:var(--text-dim);font-size:14px;margin-bottom:14px">Defaults (editable in-game via the YACL config screen or <code style="font-family:var(--mono)">/ius config</code>):</p>
+    <table class="cfg-table">
+      <thead><tr><th>Field</th><th>Default</th></tr></thead>
+      <tbody>
+        <tr><td>enabled</td><td class="val">true</td></tr>
+        <tr><td>setbackVL</td><td class="val">5.0</td></tr>
+        <tr><td>decay</td><td class="val">0.5</td></tr>
+        <tr><td>threshold</td><td class="val">165.0</td></tr>
+        <tr class="const-row"><td>near-still gate</td><td class="val">30deg</td></tr>
+      </tbody>
+    </table>
+      </section>
+
+      <section class="doc-section">
+        <h2>Source</h2>
+        <a class="src-link" href="https://github.com/ThoriaDevelopment/Iustitia/blob/main/src/main/kotlin/dev/iustitia/checks/movement/AimWrapCheck.kt" target="_blank" rel="noopener">src/main/kotlin/dev/iustitia/checks/movement/AimWrapCheck.kt &nbsp;&nearr;</a>
+      </section>
+
+      <div class="doc-nav" style="margin-top:40px">
+      <a href="rotationSnapBack.html" class="prev"><div class="dir">← Previous</div><div class="who">RotationSnapBack</div></a>
+      <a href="pitchBound.html" class="next"><div class="dir">Next →</div><div class="who">PitchBound</div></a>
+      </div>
+    </main>
+  </div>
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div><span class="diamond" style="display:inline-block;width:14px;height:14px;background:var(--grad);transform:rotate(45deg);border-radius:3px;vertical-align:-2px;margin-right:7px"></span>Iustitia &mdash; client-sided Fabric anticheat</div>
+      <div class="footer-links">
+        <a href="../index.html">Home</a>
+        <a href="index.html">Checks</a>
+        <a href="https://github.com/ThoriaDevelopment/Iustitia" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/ThoriaDevelopment/Iustitia/releases/tag/v0.2.0" target="_blank" rel="noopener">Releases</a>
+      </div>
+      <div class="footer-disclaimer">
+        v0.2.0 &middot; For Minecraft 1.21.11 (Fabric). Not affiliated with or endorsed by Mojang or Microsoft.
+        Minecraft is a trademark of Mojang Synergies AB. No telemetry, no outgoing packets &mdash; the mod only observes.
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
