@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "dev.iustitia.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ClientPlayNetworkHandlerMixin",
+    "PlayerEntityRendererMixin",
+    "EntityRenderStateAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

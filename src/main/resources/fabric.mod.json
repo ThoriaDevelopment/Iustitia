@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "iustitia",
+  "version": "${version}",
+  "name": "Iustitia",
+  "description": "Client-sided anticheat/inspector. Detects impossible world/combat interactions from other players by parsing incoming server packets. Local-only chat alerts.",
+  "icon": "iustitia.png",
+  "authors": ["Iustitia"],
+  "contact": { "homepage": "" },
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [ "dev.iustitia.IustitiaClientMod" ]
+  },
+  "mixins": [
+    "iustitia.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": "~1.21.11",
+    "fabric-api": "*",
+    "fabric-language-kotlin": "*",
+    "yet_another_config_lib_v3": "*"
+  },
+  "recommends": {
+    "viafabricplus": "*"
+  }
+}

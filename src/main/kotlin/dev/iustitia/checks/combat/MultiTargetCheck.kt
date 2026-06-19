@@ -1,0 +1,86 @@
+package dev.iustitia.checks.combat
+
+import dev.iustitia.Iustitia
+import dev.iustitia.checks.Check
+import dev.iustitia.checks.CheckContext
+import dev.iustitia.config.IustitiaConfig
+import dev.iustitia.event.AttackEvent
+import dev.iustitia.tracking.EntityTrackerManager
+import dev.iustitia.tracking.TrackedPlayer
+import java.util.UUID
+import kotlin.math.max
+
+/**
+ * Multi-target / multi-aura detector, Grim `MultiInteractA` proxy. Tracks the set of
+ * distinct player victims an attacker hits per tick; ≥2 in one tick, or ≥3 across a
+ * 2-tick lag-absorb window with ≥2 same-tick, flags. Self-hurt and non-player victims
+ * are already filtered by AttackInference.
+ *
+ * setbackVL 2, decay 1/tick, level = distinctCount - 1.
+ */
+class MultiTargetCheck : Check() {
+
+    override val id: String = "multiTarget"
+
+    init {
+        try {
+            Iustitia.bus.subscribe<AttackEvent> { onAttack(it) }
+        } catch (_: Throwable) {}
+    }
+
+    override fun newContext(uuid: UUID): CheckContext = MultiTargetContext()
+
+    private fun onAttack(ev: AttackEvent) {
+        try {
+            val attacker = EntityTrackerManager.get(ev.attacker) ?: return
+            val ctx = contextOf(ev.attacker) as MultiTargetContext
+            val set = ctx.tickVictims.getOrPut(ev.tick) { HashSet() }
+            set.add(ev.victim)
+
+            val sameTick = set.size
+            if (sameTick >= 2) {
+                flag(attacker, ctx, max(1.0, (sameTick - 1).toDouble()), "MultiTarget", ev.tick)
+            }
+
+            // lag-absorb: union this tick + previous tick
+            val prev = ctx.tickVictims[ev.tick - 1]
+            if (prev != null && sameTick >= 2) {
+                val union = HashSet<UUID>(set.size + prev.size)
+                union.addAll(set)
+                union.addAll(prev)
+                if (union.size >= 3) {
+                    flag(attacker, ctx, max(1.0, (union.size - 1).toDouble()), "MultiTarget", ev.tick)
+                }
+            }
+            // lag-absorb (independent detector): a multi-aura spread across two ticks — e.g.
+            // 2 victims on the previous tick + 1 now, or 1 + 2 — sums to >=3 across the 2-tick
+            // window even when no single tick reached 2. The branch above is gated on
+            // sameTick >= 2 (the same gate as the same-tick flag, so it only double-counts and
+            // is dead as an independent detector); this one fires when sameTick < 2, a strictly
+            // additional detector that never reduces the existing same-tick vl.
+            if (prev != null && sameTick < 2) {
+                val union = HashSet<UUID>(set.size + prev.size)
+                union.addAll(set)
+                union.addAll(prev)
+                if (union.size >= 3) {
+                    flag(attacker, ctx, max(1.0, (union.size - 1).toDouble()), "MultiTarget", ev.tick)
+                }
+            }
+        } catch (_: Throwable) {}
+    }
+
+    /** Per-tick purge of stale tick→victim maps (called by the driver for every player). */
+    override fun process(tp: TrackedPlayer, tick: Int) {
+        try {
+            val ctx = contextOf(tp.uuid) as? MultiTargetContext ?: return
+            val it = ctx.tickVictims.entries.iterator()
+            while (it.hasNext()) {
+                if (it.next().key < tick - 2) it.remove()
+            }
+        } catch (_: Throwable) {}
+    }
+
+    private class MultiTargetContext : CheckContext() {
+        val tickVictims = HashMap<Int, MutableSet<UUID>>()
+    }
+}
