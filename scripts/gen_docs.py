@@ -18,6 +18,9 @@ CHECKS_JSON = ROOT / "scripts" / "checks.json"
 DOCS_DIR = ROOT / "docs"
 
 REPO = "https://github.com/ThoriaDevelopment/Iustitia"
+# Never-stale install / release links — point at /releases/latest so we never
+# have to bump a version string here when a new jar ships.
+RELEASES_LATEST = f"{REPO}/releases/latest"
 RELEASE_PAGE = f"{REPO}/releases/tag/v0.2.0"
 JAR_URL = f"{REPO}/releases/download/v0.2.0/iustitia-v0.2.0.jar"
 BRANCH = "main"
@@ -51,13 +54,13 @@ def nav(active: str, depth: int) -> str:
       <a class="brand" href="{base}index.html"><span class="diamond"></span>IUSTITIA</a>
       <div class="nav-links">
         <a href="{base}index.html#features"{cls("features")}>Features</a>
-        <a href="index.html"{cls("checks")}>Checks</a>
+        <a href="index.html"{cls("checks")}>Docs</a>
         <a href="{base}index.html#philosophy"{cls("philosophy")}>Philosophy</a>
         <a href="{base}index.html#install"{cls("install")}>Install</a>
         <a href="{REPO}" target="_blank" rel="noopener">GitHub</a>
       </div>
       <span class="nav-spacer"></span>
-      <span class="nav-cta"><a class="btn btn-primary" href="{JAR_URL}">Download v0.2.0</a></span>
+      <span class="nav-cta"><a class="btn btn-primary" href="{RELEASES_LATEST}">Install Iustitia</a></span>
     </div>
   </nav>"""
 
@@ -69,9 +72,9 @@ def footer(depth: int) -> str:
       <div><span class="diamond" style="display:inline-block;width:14px;height:14px;background:var(--grad);transform:rotate(45deg);border-radius:3px;vertical-align:-2px;margin-right:7px"></span>Iustitia &mdash; client-sided Fabric anticheat</div>
       <div class="footer-links">
         <a href="{base}index.html">Home</a>
-        <a href="index.html">Checks</a>
+        <a href="index.html">Docs</a>
         <a href="{REPO}" target="_blank" rel="noopener">GitHub</a>
-        <a href="{RELEASE_PAGE}" target="_blank" rel="noopener">Releases</a>
+        <a href="{RELEASES_LATEST}" target="_blank" rel="noopener">Releases</a>
       </div>
       <div class="footer-disclaimer">
         v0.2.0 &middot; For Minecraft 1.21.11 (Fabric). Not affiliated with or endorsed by Mojang or Microsoft.
@@ -153,7 +156,7 @@ def check_page(check: dict, checks: list, idx: int) -> str:
 {sidebar(checks, check['id'])}
     </aside>
     <main>
-      <div class="breadcrumb"><a href="../index.html">Iustitia</a> <span class="sep">/</span> <a href="index.html">Checks</a> <span class="sep">/</span> <a href="index.html#{esc(check['group'].lower())}">{esc(check['group'])}</a> <span class="sep">/</span> {esc(check['name'])}</div>
+      <div class="breadcrumb"><a href="../index.html">Iustitia</a> <span class="sep">/</span> <a href="index.html">Docs</a> <span class="sep">/</span> <a href="index.html#{esc(check['group'].lower())}">{esc(check['group'])}</a> <span class="sep">/</span> {esc(check['name'])}</div>
       <div class="check-head">
         <div class="check-title">
           <h1>{esc(check['name'])}</h1>
@@ -167,28 +170,28 @@ def check_page(check: dict, checks: list, idx: int) -> str:
 {next_html}
       </div>
 
-      <section class="doc-section">
+      <section class="doc-section fade-in-scroll">
         <h2>What it detects</h2>
         <p>{esc(check['what'])}</p>
       </section>
 
-      <section class="doc-section">
+      <section class="doc-section slide-in-bottom">
         <h2>Observer signature</h2>
         <div class="sig">{esc(check['signature'])}</div>
       </section>
 
-      <section class="doc-section">
+      <section class="doc-section fade-in-scroll">
         <h2>False-positive guards</h2>
 {fp_list(check)}
       </section>
 
-      <section class="doc-section">
+      <section class="doc-section slide-in-bottom">
         <h2>Configuration</h2>
         <p style="color:var(--text-dim);font-size:14px;margin-bottom:14px">Defaults (editable in-game via the YACL config screen or <code style="font-family:var(--mono)">/ius config</code>):</p>
 {cfg_table(check)}
       </section>
 
-      <section class="doc-section">
+      <section class="doc-section fade-in-scroll">
         <h2>Source</h2>
         <a class="src-link" href="{src_url}" target="_blank" rel="noopener">{esc(check['source'])} &nbsp;&nearr;</a>
       </section>
@@ -200,6 +203,7 @@ def check_page(check: dict, checks: list, idx: int) -> str:
     </main>
   </div>
 {footer(1)}
+  <script src="../assets/reveal.js"></script>
 </body>
 </html>"""
 
@@ -209,14 +213,15 @@ def catalog_page(checks: list) -> str:
     for g in GROUP_ORDER:
         in_g = [c for c in checks if c["group"] == g]
         cards = []
-        for c in in_g:
-            cards.append(f"""        <a class="check-card" href="{esc(c['id'])}.html">
+        for i, c in enumerate(in_g):
+            delay = (i % 4) + 1
+            cards.append(f"""        <a class="check-card slide-in-bottom delay-{delay}" href="{esc(c['id'])}.html">
           <div class="top"><span class="name">{esc(c['name'])}</span>{tier_badge(c)}</div>
           <div class="desc">{esc(c['what'])}</div>
         </a>""")
         sections.append(f"""      <div id="{esc(g.lower())}">
-        <div class="group-head"><h2>{esc(GROUP_ICON[g])} {esc(g)}</h2><span class="gtag">{len(in_g)} checks</span></div>
-        <p style="color:var(--text-dim);max-width:640px;margin-bottom:18px">{esc(GROUP_DESC[g])}</p>
+        <div class="group-head fade-in-scroll"><h2>{esc(GROUP_ICON[g])} {esc(g)}</h2><span class="gtag">{len(in_g)} checks</span></div>
+        <p class="fade-in-scroll" style="color:var(--text-dim);max-width:640px;margin-bottom:18px">{esc(GROUP_DESC[g])}</p>
         <div class="check-grid">
 {chr(10).join(cards)}
         </div>
@@ -234,9 +239,9 @@ def catalog_page(checks: list) -> str:
 <body>
 {nav("checks", 1)}
   <div class="container" style="padding:46px 24px 10px">
-    <div class="section-label">Documentation</div>
-    <h1 class="section-title"><span class="grad">32 checks</span>, four categories.</h1>
-    <p class="section-lead">Every check Iustitia ships &mdash; what it detects, the observer signature it keys on, the false-positive guards it applies, and its configuration defaults. Each card opens a deep page with the full detail.</p>
+    <div class="section-label fade-in-scroll">Documentation</div>
+    <h1 class="section-title fade-in-scroll"><span class="grad">32 checks</span>, four categories.</h1>
+    <p class="section-lead fade-in-scroll">Every check Iustitia ships &mdash; what it detects, the observer signature it keys on, the false-positive guards it applies, and its configuration defaults. Each card opens a deep page with the full detail.</p>
   </div>
   <div class="container" style="padding:0 24px 70px">
     <div class="docs-layout" style="grid-template-columns:240px 1fr">
@@ -250,6 +255,7 @@ def catalog_page(checks: list) -> str:
     </div>
   </div>
 {footer(1)}
+  <script src="../assets/reveal.js"></script>
 </body>
 </html>"""
 

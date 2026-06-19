@@ -13,13 +13,13 @@
       <a class="brand" href="../index.html"><span class="diamond"></span>IUSTITIA</a>
       <div class="nav-links">
         <a href="../index.html#features">Features</a>
-        <a href="index.html" class="cur">Checks</a>
+        <a href="index.html" class="cur">Docs</a>
         <a href="../index.html#philosophy">Philosophy</a>
         <a href="../index.html#install">Install</a>
         <a href="https://github.com/ThoriaDevelopment/Iustitia" target="_blank" rel="noopener">GitHub</a>
       </div>
       <span class="nav-spacer"></span>
-      <span class="nav-cta"><a class="btn btn-primary" href="https://github.com/ThoriaDevelopment/Iustitia/releases/download/v0.2.0/iustitia-v0.2.0.jar">Download v0.2.0</a></span>
+      <span class="nav-cta"><a class="btn btn-primary" href="https://github.com/ThoriaDevelopment/Iustitia/releases/latest">Install Iustitia</a></span>
     </div>
   </nav>
   <div class="container docs-layout">
@@ -63,7 +63,7 @@
       <a href="timerRate.html">Timer<span class="badge-t">●</span></a>
     </aside>
     <main>
-      <div class="breadcrumb"><a href="../index.html">Iustitia</a> <span class="sep">/</span> <a href="index.html">Checks</a> <span class="sep">/</span> <a href="index.html#movement">Movement</a> <span class="sep">/</span> ElytraSpeed</div>
+      <div class="breadcrumb"><a href="../index.html">Iustitia</a> <span class="sep">/</span> <a href="index.html">Docs</a> <span class="sep">/</span> <a href="index.html#movement">Movement</a> <span class="sep">/</span> ElytraSpeed</div>
       <div class="check-head">
         <div class="check-title">
           <h1>ElytraSpeed</h1>
@@ -77,17 +77,17 @@
       <a href="phaseClip.html" class="next"><div class="dir">Next →</div><div class="who">PhaseClip</div></a>
       </div>
 
-      <section class="doc-section">
+      <section class="doc-section fade-in-scroll">
         <h2>What it detects</h2>
         <p>ElytraFly detector — vanilla elytra caps ~1.5 b/t (30 bps); firework boosts briefly 40-50 bps. Flags when gliding is active for &gt;=3 sustained ticks of either blatant (bps &gt; 40) or a pitch-vs-speed anomaly (bps &gt; 34 while |pitch| &lt; 8deg).</p>
       </section>
 
-      <section class="doc-section">
+      <section class="doc-section slide-in-bottom">
         <h2>Observer signature</h2>
         <div class="sig">bps = hypot(...) * 20.0; blatant = bps &gt; threshold (40); levelFast = bps &gt; threshold*0.85 &amp;&amp; |pitch| &lt; 8.0; flag when streak &gt;= 3. The 3-tick sustain absorbs firework-boost spikes; steep-pitch legit glides never trip the anomaly.</div>
       </section>
 
-      <section class="doc-section">
+      <section class="doc-section fade-in-scroll">
         <h2>False-positive guards</h2>
     <ul>
       <li>Vehicle exempt</li>
@@ -97,7 +97,7 @@
     </ul>
       </section>
 
-      <section class="doc-section">
+      <section class="doc-section slide-in-bottom">
         <h2>Configuration</h2>
         <p style="color:var(--text-dim);font-size:14px;margin-bottom:14px">Defaults (editable in-game via the YACL config screen or <code style="font-family:var(--mono)">/ius config</code>):</p>
     <table class="cfg-table">
@@ -114,7 +114,7 @@
     </table>
       </section>
 
-      <section class="doc-section">
+      <section class="doc-section fade-in-scroll">
         <h2>Source</h2>
         <a class="src-link" href="https://github.com/ThoriaDevelopment/Iustitia/blob/main/src/main/kotlin/dev/iustitia/checks/movement/ElytraSpeedCheck.kt" target="_blank" rel="noopener">src/main/kotlin/dev/iustitia/checks/movement/ElytraSpeedCheck.kt &nbsp;&nearr;</a>
       </section>
@@ -130,9 +130,9 @@
       <div><span class="diamond" style="display:inline-block;width:14px;height:14px;background:var(--grad);transform:rotate(45deg);border-radius:3px;vertical-align:-2px;margin-right:7px"></span>Iustitia &mdash; client-sided Fabric anticheat</div>
       <div class="footer-links">
         <a href="../index.html">Home</a>
-        <a href="index.html">Checks</a>
+        <a href="index.html">Docs</a>
         <a href="https://github.com/ThoriaDevelopment/Iustitia" target="_blank" rel="noopener">GitHub</a>
-        <a href="https://github.com/ThoriaDevelopment/Iustitia/releases/tag/v0.2.0" target="_blank" rel="noopener">Releases</a>
+        <a href="https://github.com/ThoriaDevelopment/Iustitia/releases/latest" target="_blank" rel="noopener">Releases</a>
       </div>
       <div class="footer-disclaimer">
         v0.2.0 &middot; For Minecraft 1.21.11 (Fabric). Not affiliated with or endorsed by Mojang or Microsoft.
@@ -140,5 +140,6 @@
       </div>
     </div>
   </footer>
+  <script src="../assets/reveal.js"></script>
 </body>
 </html>

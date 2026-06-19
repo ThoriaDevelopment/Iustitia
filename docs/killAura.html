@@ -13,13 +13,13 @@
       <a class="brand" href="../index.html"><span class="diamond"></span>IUSTITIA</a>
       <div class="nav-links">
         <a href="../index.html#features">Features</a>
-        <a href="index.html" class="cur">Checks</a>
+        <a href="index.html" class="cur">Docs</a>
         <a href="../index.html#philosophy">Philosophy</a>
         <a href="../index.html#install">Install</a>
         <a href="https://github.com/ThoriaDevelopment/Iustitia" target="_blank" rel="noopener">GitHub</a>
       </div>
       <span class="nav-spacer"></span>
-      <span class="nav-cta"><a class="btn btn-primary" href="https://github.com/ThoriaDevelopment/Iustitia/releases/download/v0.2.0/iustitia-v0.2.0.jar">Download v0.2.0</a></span>
+      <span class="nav-cta"><a class="btn btn-primary" href="https://github.com/ThoriaDevelopment/Iustitia/releases/latest">Install Iustitia</a></span>
     </div>
   </nav>
   <div class="container docs-layout">
@@ -63,7 +63,7 @@
       <a href="timerRate.html">Timer<span class="badge-t">●</span></a>
     </aside>
     <main>
-      <div class="breadcrumb"><a href="../index.html">Iustitia</a> <span class="sep">/</span> <a href="index.html">Checks</a> <span class="sep">/</span> <a href="index.html#combat">Combat</a> <span class="sep">/</span> KillAura</div>
+      <div class="breadcrumb"><a href="../index.html">Iustitia</a> <span class="sep">/</span> <a href="index.html">Docs</a> <span class="sep">/</span> <a href="index.html#combat">Combat</a> <span class="sep">/</span> KillAura</div>
       <div class="check-head">
         <div class="check-title">
           <h1>KillAura</h1>
@@ -77,17 +77,17 @@
       <a href="autoBlock.html" class="next"><div class="dir">Next →</div><div class="who">AutoBlock</div></a>
       </div>
 
-      <section class="doc-section">
+      <section class="doc-section fade-in-scroll">
         <h2>What it detects</h2>
         <p>Unified killaura / silent-aim detector ported from Rain-Anticheat&#x27;s 1.8.9 KillauraCheck. Seven sub-components share one VL pool: heuristic(aim|constant|sync), pattern(snap), silent(snap|return|track), movement(fix|lock|sprint), consume. Silent-aim swaps yaw/pitch only in look packets so the head visibly snaps onto enemies while the cheater&#x27;s screen never moves.</p>
       </section>
 
-      <section class="doc-section">
+      <section class="doc-section slide-in-bottom">
         <h2>Observer signature</h2>
         <div class="sig">Subscribes to SwingSignal + AttackEvent, runs every tick. Windowed rotation heuristics over 10 non-zero rotations: heuristic(aim) if machineKnownMovement &gt; 8, heuristic(constant) if constantRotations &gt; 6, heuristic(sync) if robotizedAmount &gt; 8; pattern(snap) on both-direction +-12deg streak. Burst machine detects yaw bursts (&gt;=7deg step, &lt;=7 ticks, sum &gt;=20deg); silent(snap) when a burst settles inside a target hitbox with &gt;20deg pre-error, on the 3rd qualifying hit at level 2.5. silent(track) when yaw stays inside a target hitbox bearing on &gt;=0.85 of 24 fast-LOS-rotating ticks. movement(fix|lock|sprint) use body/head desync. consume flags attack while using a consumable &gt;6 ticks within 33 of last eat.</div>
       </section>
 
-      <section class="doc-section">
+      <section class="doc-section fade-in-scroll">
         <h2>False-positive guards</h2>
     <ul>
       <li>Attacker-in-vehicle exempt (rotations/consume unreliable)</li>
@@ -99,7 +99,7 @@
     </ul>
       </section>
 
-      <section class="doc-section">
+      <section class="doc-section slide-in-bottom">
         <h2>Configuration</h2>
         <p style="color:var(--text-dim);font-size:14px;margin-bottom:14px">Defaults (editable in-game via the YACL config screen or <code style="font-family:var(--mono)">/ius config</code>):</p>
     <table class="cfg-table">
@@ -118,7 +118,7 @@
     </table>
       </section>
 
-      <section class="doc-section">
+      <section class="doc-section fade-in-scroll">
         <h2>Source</h2>
         <a class="src-link" href="https://github.com/ThoriaDevelopment/Iustitia/blob/main/src/main/kotlin/dev/iustitia/checks/combat/KillAuraCheck.kt" target="_blank" rel="noopener">src/main/kotlin/dev/iustitia/checks/combat/KillAuraCheck.kt &nbsp;&nearr;</a>
       </section>
@@ -134,9 +134,9 @@
       <div><span class="diamond" style="display:inline-block;width:14px;height:14px;background:var(--grad);transform:rotate(45deg);border-radius:3px;vertical-align:-2px;margin-right:7px"></span>Iustitia &mdash; client-sided Fabric anticheat</div>
       <div class="footer-links">
         <a href="../index.html">Home</a>
-        <a href="index.html">Checks</a>
+        <a href="index.html">Docs</a>
         <a href="https://github.com/ThoriaDevelopment/Iustitia" target="_blank" rel="noopener">GitHub</a>
-        <a href="https://github.com/ThoriaDevelopment/Iustitia/releases/tag/v0.2.0" target="_blank" rel="noopener">Releases</a>
+        <a href="https://github.com/ThoriaDevelopment/Iustitia/releases/latest" target="_blank" rel="noopener">Releases</a>
       </div>
       <div class="footer-disclaimer">
         v0.2.0 &middot; For Minecraft 1.21.11 (Fabric). Not affiliated with or endorsed by Mojang or Microsoft.
@@ -144,5 +144,6 @@
       </div>
     </div>
   </footer>
+  <script src="../assets/reveal.js"></script>
 </body>
 </html>

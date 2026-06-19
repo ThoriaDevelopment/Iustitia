@@ -207,20 +207,37 @@ a:hover { color: #bda6fc; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 24px;
-  transition: border-color .15s ease, background .15s ease, transform .15s ease;
+  transition: border-color .4s cubic-bezier(.23,1,.32,1), background .3s ease, transform .3s ease, box-shadow .3s ease;
+  position: relative;
+  overflow: hidden;
 }
-.card:hover { border-color: var(--accent-line); background: var(--bg-card-hover); transform: translateY(-2px); }
+/* detect.ac-style light sweep on hover */
+.card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: -100%;
+  width: 100%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(139,92,246,0.10), transparent);
+  transition: left .6s ease;
+  pointer-events: none;
+  z-index: 0;
+}
+.card:hover::before { left: 100%; }
+.card:hover { border-color: var(--accent-line); background: var(--bg-card-hover); transform: translateY(-4px) scale(1.02); box-shadow: 0 14px 30px rgba(139,92,246,0.12); }
 .card .icon {
   width: 38px; height: 38px; border-radius: 10px;
   background: var(--accent-soft); border: 1px solid var(--accent-line);
   display: flex; align-items: center; justify-content: center;
   font-size: 19px; margin-bottom: 16px;
+  transition: transform .4s cubic-bezier(.23,1,.32,1), box-shadow .3s ease;
+  position: relative; z-index: 1;
 }
-.card h3 { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
-.card p { color: var(--text-dim); font-size: 14.5px; }
+.card:hover .icon { transform: scale(1.12) rotate(-6deg); box-shadow: 0 6px 18px rgba(139,92,246,0.28); }
+.card h3 { font-size: 17px; font-weight: 700; margin-bottom: 8px; position: relative; z-index: 1; }
+.card p { color: var(--text-dim); font-size: 14.5px; position: relative; z-index: 1; }
 
 /* ---- Philosophy block ---- */
-.philosophy { background: var(--bg-soft); border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); }
+.philosophy { background: var(--bg-soft); border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); margin-bottom: 96px; }
 .pillars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 34px; }
 .pillar { padding: 22px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); }
 .pillar h4 { font-size: 15px; margin-bottom: 8px; color: var(--text); }
@@ -266,7 +283,13 @@ a:hover { color: #bda6fc; }
 
 /* ---- Docs: catalog + per-check ---- */
 .docs-layout { display: grid; grid-template-columns: 240px 1fr; gap: 36px; align-items: start; padding: 36px 0 60px; }
-.docs-side { position: sticky; top: 82px; }
+.docs-side { position: sticky; top: 82px; max-height: calc(100vh - 104px); overflow-y: auto; align-self: start; padding-right: 4px; }
+/* thin scrollbar for the docs sidebar so it reads as an independent panel */
+.docs-side { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.docs-side::-webkit-scrollbar { width: 7px; }
+.docs-side::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+.docs-side::-webkit-scrollbar-thumb:hover { background: var(--accent-line); }
+.docs-side::-webkit-scrollbar-track { background: transparent; }
 .docs-side h4 { font-size: 11.5px; letter-spacing: 1.8px; text-transform: uppercase; color: var(--text-faint); margin: 18px 0 8px; }
 .docs-side h4:first-child { margin-top: 0; }
 .docs-side a { display: block; padding: 5px 10px; border-radius: 7px; color: var(--text-dim); font-size: 14px; }
@@ -333,7 +356,7 @@ a:hover { color: #bda6fc; }
 /* ---- Responsive ---- */
 @media (max-width: 920px) {
   .hero-grid, .install-grid, .docs-layout { grid-template-columns: 1fr; }
-  .docs-side { position: static; }
+  .docs-side { position: static; max-height: none; overflow: visible; }
   .grid-3, .grid-4, .pillars, .groups, .stats { grid-template-columns: repeat(2, 1fr); }
   .check-grid { grid-template-columns: 1fr; }
 }
@@ -341,4 +364,26 @@ a:hover { color: #bda6fc; }
   .grid-3, .grid-4, .pillars, .groups, .stats, .grid-2 { grid-template-columns: 1fr; }
   .nav-links { display: none; }
   .section { padding: 60px 0; }
+}
+
+/* ---- Scroll-reveal animations (detect.ac-style) ---- */
+/* Elements start hidden + offset; .in-view (added by assets/reveal.js via
+   IntersectionObserver) animates them in. .delay-N staggers a grid. */
+.fade-in-scroll { opacity: 0; transform: translateY(30px); transition: opacity .8s ease, transform .8s ease; }
+.slide-in-left   { opacity: 0; transform: translateX(-50px); transition: opacity .8s ease, transform .8s ease; }
+.slide-in-right  { opacity: 0; transform: translateX(50px); transition: opacity .8s ease, transform .8s ease; }
+.slide-in-bottom { opacity: 0; transform: translateY(50px); transition: opacity .8s ease, transform .8s ease; }
+.zoom-in         { opacity: 0; transform: scale(.85); transition: opacity .8s ease, transform .8s cubic-bezier(.175,.885,.32,1.275); }
+.in-view { opacity: 1 !important; transform: none !important; }
+.delay-1 { transition-delay: .10s; }
+.delay-2 { transition-delay: .20s; }
+.delay-3 { transition-delay: .30s; }
+.delay-4 { transition-delay: .40s; }
+.delay-5 { transition-delay: .50s; }
+.delay-6 { transition-delay: .60s; }
+.delay-7 { transition-delay: .70s; }
+@media (prefers-reduced-motion: reduce) {
+  .fade-in-scroll, .slide-in-left, .slide-in-right, .slide-in-bottom, .zoom-in {
+    opacity: 1 !important; transform: none !important; transition: none;
+  }
 }

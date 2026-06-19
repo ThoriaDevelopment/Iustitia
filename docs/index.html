@@ -13,19 +13,19 @@
       <a class="brand" href="../index.html"><span class="diamond"></span>IUSTITIA</a>
       <div class="nav-links">
         <a href="../index.html#features">Features</a>
-        <a href="index.html" class="cur">Checks</a>
+        <a href="index.html" class="cur">Docs</a>
         <a href="../index.html#philosophy">Philosophy</a>
         <a href="../index.html#install">Install</a>
         <a href="https://github.com/ThoriaDevelopment/Iustitia" target="_blank" rel="noopener">GitHub</a>
       </div>
       <span class="nav-spacer"></span>
-      <span class="nav-cta"><a class="btn btn-primary" href="https://github.com/ThoriaDevelopment/Iustitia/releases/download/v0.2.0/iustitia-v0.2.0.jar">Download v0.2.0</a></span>
+      <span class="nav-cta"><a class="btn btn-primary" href="https://github.com/ThoriaDevelopment/Iustitia/releases/latest">Install Iustitia</a></span>
     </div>
   </nav>
   <div class="container" style="padding:46px 24px 10px">
-    <div class="section-label">Documentation</div>
-    <h1 class="section-title"><span class="grad">32 checks</span>, four categories.</h1>
-    <p class="section-lead">Every check Iustitia ships &mdash; what it detects, the observer signature it keys on, the false-positive guards it applies, and its configuration defaults. Each card opens a deep page with the full detail.</p>
+    <div class="section-label fade-in-scroll">Documentation</div>
+    <h1 class="section-title fade-in-scroll"><span class="grad">32 checks</span>, four categories.</h1>
+    <p class="section-lead fade-in-scroll">Every check Iustitia ships &mdash; what it detects, the observer signature it keys on, the false-positive guards it applies, and its configuration defaults. Each card opens a deep page with the full detail.</p>
   </div>
   <div class="container" style="padding:0 24px 70px">
     <div class="docs-layout" style="grid-template-columns:240px 1fr">
@@ -70,152 +70,152 @@
       </aside>
       <main>
       <div id="combat">
-        <div class="group-head"><h2>⚔ Combat</h2><span class="gtag">14 checks</span></div>
-        <p style="color:var(--text-dim);max-width:640px;margin-bottom:18px">Hit / attack-time cheats — reach, auras, autoclicker, knockback manipulation.</p>
+        <div class="group-head fade-in-scroll"><h2>⚔ Combat</h2><span class="gtag">14 checks</span></div>
+        <p class="fade-in-scroll" style="color:var(--text-dim);max-width:640px;margin-bottom:18px">Hit / attack-time cheats — reach, auras, autoclicker, knockback manipulation.</p>
         <div class="check-grid">
-        <a class="check-card" href="reach.html">
+        <a class="check-card slide-in-bottom delay-1" href="reach.html">
           <div class="top"><span class="name">Reach</span><span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span></div>
           <div class="desc">Lag-compensated reach — catches attackers hitting victims from beyond vanilla melee reach. Ported from Nemesis RangeA + Grim Reach.</div>
         </a>
-        <a class="check-card" href="multiTarget.html">
+        <a class="check-card slide-in-bottom delay-2" href="multiTarget.html">
           <div class="top"><span class="name">MultiTarget</span><span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span></div>
           <div class="desc">Multi-aura / multi-target — a cheater hitting two or more distinct player victims in one tick, or three across a 2-tick lag-absorb window. Grim MultiInteractA proxy.</div>
         </a>
-        <a class="check-card" href="clickStatistics.html">
+        <a class="check-card slide-in-bottom delay-3" href="clickStatistics.html">
           <div class="top"><span class="name">Autoclicker</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">Autoclicker via four independent signals on a swing: CPS, Robot (sub-10ms nano-delta), StDev (too-uniform intervals), and Kurtosis (near-uniform fixed-delay). Ported from Nemesis AutoClickerA-D.</div>
         </a>
-        <a class="check-card" href="throughWalls.html">
+        <a class="check-card slide-in-bottom delay-4" href="throughWalls.html">
           <div class="top"><span class="name">ThroughWalls</span><span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span></div>
           <div class="desc">Through-walls / no-LOS KillAura — landing a hit through a solid block (the aura has no line-of-sight filter).</div>
         </a>
-        <a class="check-card" href="criticals.html">
+        <a class="check-card slide-in-bottom delay-1" href="criticals.html">
           <div class="top"><span class="name">Criticals</span><span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span></div>
           <div class="desc">Criticals spoof (CritOnGround) — the cheat injects a tiny Y hop (~+0.11) around the attack tick so the server awards a crit while the player is grounded (a real jump impulse is 0.42).</div>
         </a>
-        <a class="check-card" href="noKnockback.html">
+        <a class="check-card slide-in-bottom delay-2" href="noKnockback.html">
           <div class="top"><span class="name">NoKnockback</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">Anti-knockback / Velocity — cancels or scales the ~0.4 horizontal KB a sprint-hit applies so the victim barely moves. Nemesis VelocityA/B proxy.</div>
         </a>
-        <a class="check-card" href="keepSprint.html">
+        <a class="check-card slide-in-bottom delay-3" href="keepSprint.html">
           <div class="top"><span class="name">KeepSprint</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">KeepSprint / NoSlow on attack — cancels vanilla&#x27;s ~0.6 motion decel on hit so the attacker keeps full speed and sprint never drops.</div>
         </a>
-        <a class="check-card" href="wTap.html">
+        <a class="check-card slide-in-bottom delay-4" href="wTap.html">
           <div class="top"><span class="name">WTap</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">WTap / SuperKnockback — toggles sprint state (STOP then START) around each attack so the server awards sprint-bonus KB even though the cheater isn&#x27;t really sprinting.</div>
         </a>
-        <a class="check-card" href="jumpOnHurt.html">
+        <a class="check-card slide-in-bottom delay-1" href="jumpOnHurt.html">
           <div class="top"><span class="name">JumpReset</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">JumpReset / JumpOnHurt — auto-jumps the instant the cheater is hit to &#x27;reset&#x27; knockback.</div>
         </a>
-        <a class="check-card" href="backtrack.html">
+        <a class="check-card slide-in-bottom delay-2" href="backtrack.html">
           <div class="top"><span class="name">Backtrack</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">Backtrack / StalePositionReach — the cheat delays victim packets ~80-150ms to hit the victim at an older (closer) position. Weak, corroborating only.</div>
         </a>
-        <a class="check-card" href="killAura.html">
+        <a class="check-card slide-in-bottom delay-3" href="killAura.html">
           <div class="top"><span class="name">KillAura</span><span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span></div>
           <div class="desc">Unified killaura / silent-aim detector ported from Rain-Anticheat&#x27;s 1.8.9 KillauraCheck. Seven sub-components share one VL pool: heuristic(aim|constant|sync), pattern(snap), silent(snap|return|track), movement(fix|lock|sprint), consume. Silent-aim swaps yaw/pitch only in look packets so the head visibly snaps onto enemies while the cheater&#x27;s screen never moves.</div>
         </a>
-        <a class="check-card" href="autoBlock.html">
+        <a class="check-card slide-in-bottom delay-4" href="autoBlock.html">
           <div class="top"><span class="name">AutoBlock</span><span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span></div>
           <div class="desc">AutoBlock — holds a block/shield up while continuously swinging at enemies. On 1.8 it&#x27;s block-hit autoblock, on 1.21 shield-while-attacking. Ported from Rain&#x27;s AutoBlockCheck. Vanilla can&#x27;t swing and use an item simultaneously for more than an instant.</div>
         </a>
-        <a class="check-card" href="hitFlick.html">
+        <a class="check-card slide-in-bottom delay-1" href="hitFlick.html">
           <div class="top"><span class="name">HitFlick</span><span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span></div>
           <div class="desc">HitFlick / KnockbackDisplace — flicks attacker yaw OFF the victim hitbox at the attack tick (Vape 90/180/270deg; Slinky configurable) to redirect KB sideways, then snaps back. Vanilla never looks away at the hit instant then returns.</div>
         </a>
-        <a class="check-card" href="triggerbot.html">
+        <a class="check-card slide-in-bottom delay-2" href="triggerbot.html">
           <div class="top"><span class="name">Triggerbot</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">Triggerbot — deliberately LAX, only flags really blatant sub-reaction auto-attackers. The cheat auto-attacks the instant the crosshair reaches a victim&#x27;s hitbox. Unlike KillAura/HitFlick, a triggerbot DOES face the target, so the only inhuman signal is timing.</div>
         </a>
         </div>
       </div>
       <div id="movement">
-        <div class="group-head"><h2>↗ Movement</h2><span class="gtag">11 checks</span></div>
-        <p style="color:var(--text-dim);max-width:640px;margin-bottom:18px">Position / velocity cheats — speed, fly, fall, step, clip, water, elytra.</p>
+        <div class="group-head fade-in-scroll"><h2>↗ Movement</h2><span class="gtag">11 checks</span></div>
+        <p class="fade-in-scroll" style="color:var(--text-dim);max-width:640px;margin-bottom:18px">Position / velocity cheats — speed, fly, fall, step, clip, water, elytra.</p>
         <div class="check-grid">
-        <a class="check-card" href="speedEnvelope.html">
+        <a class="check-card slide-in-bottom delay-1" href="speedEnvelope.html">
           <div class="top"><span class="name">Speed</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">Horizontal-speed envelope — flags sustained or alternating overspeed. Catches both sustained speed hacks (all 6 ticks over) and alternating BHop (3 over / 3 under) while rejecting 1-2 tick spikes.</div>
         </a>
-        <a class="check-card" href="flyEnvelope.html">
+        <a class="check-card slide-in-bottom delay-2" href="flyEnvelope.html">
           <div class="top"><span class="name">Fly</span><span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span></div>
           <div class="desc">Flight envelope — three airborne signals while groundedProxy is false: physics breach, hover/AirWalk, and ascend-without-jump. Ported from AvA checkFlight + Nemesis FlyB.</div>
         </a>
-        <a class="check-card" href="noFallDamage.html">
+        <a class="check-card slide-in-bottom delay-3" href="noFallDamage.html">
           <div class="top"><span class="name">NoFall</span><span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span></div>
           <div class="desc">NoFall detector — accumulates downward distance while airborne, flags when a player lands from a damaging fall (fallAccum &gt; threshold 8.0) without a hurt signal. Also catches ground-spoof-over-air and Verus stair-step.</div>
         </a>
-        <a class="check-card" href="stepHeight.html">
+        <a class="check-card slide-in-bottom delay-4" href="stepHeight.html">
           <div class="top"><span class="name">Step</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">Step detector — flags the Step cheat raising step height beyond vanilla 0.6: a single-tick deltaY in (threshold, 2.5] that follows a grounded tick (no airborne lead-up) and is not a 0.42 jump, with a solid block within reach below the new feet.</div>
         </a>
-        <a class="check-card" href="teleport.html">
+        <a class="check-card slide-in-bottom delay-1" href="teleport.html">
           <div class="top"><span class="name">Teleport</span><span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span></div>
           <div class="desc">VClip / SlyPort / InfiniteAura detector — single-tick vertical clip |dy| &gt; threshold (1.5) or horizontal teleport &gt; 2x threshold (3.0), with no jump/knockback/velocity source. Only flags the 1.5-8 block range; the &gt;8-block server-teleport heuristic is handled upstream.</div>
         </a>
-        <a class="check-card" href="longJump.html">
+        <a class="check-card slide-in-bottom delay-2" href="longJump.html">
           <div class="top"><span class="name">LongJump</span><span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span></div>
           <div class="desc">LongJump detector — boosted horizontal velocity on jump launch. Vanilla sprint-jump first airborne tick ~0.31; flags if any airborne tick within 6 of the jump impulse (prevDeltaY ~0.42) has horizontal delta &gt; threshold (0.6/tick ~12 bps) with no knockback/velocity/elytra source.</div>
         </a>
-        <a class="check-card" href="noSlow.html">
+        <a class="check-card slide-in-bottom delay-3" href="noSlow.html">
           <div class="top"><span class="name">NoSlow</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">NoSlow detector — vanilla slows to ~20% while using an item; NoSlow cancels that, so the player sprints full speed with using-item metadata set.</div>
         </a>
-        <a class="check-card" href="backwardSprint.html">
+        <a class="check-card slide-in-bottom delay-4" href="backwardSprint.html">
           <div class="top"><span class="name">BackwardSprint</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">BackwardSprint / OmniSprint detector — vanilla cannot sprint backward; OmniSprint forces it. BLATANT-ONLY by design.</div>
         </a>
-        <a class="check-card" href="waterWalk.html">
+        <a class="check-card slide-in-bottom delay-1" href="waterWalk.html">
           <div class="top"><span class="name">WaterWalk</span><span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span></div>
           <div class="desc">LiquidWalk / Jesus detector — the cheat rewrites liquid bounding boxes to solid so the player stands/walks on water. Signature: near-constant Y with horizontal motion while the block at the feet is a liquid and NOT a solid, sustained &gt;=3 ticks.</div>
         </a>
-        <a class="check-card" href="elytraSpeed.html">
+        <a class="check-card slide-in-bottom delay-2" href="elytraSpeed.html">
           <div class="top"><span class="name">ElytraSpeed</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">ElytraFly detector — vanilla elytra caps ~1.5 b/t (30 bps); firework boosts briefly 40-50 bps. Flags when gliding is active for &gt;=3 sustained ticks of either blatant (bps &gt; 40) or a pitch-vs-speed anomaly (bps &gt; 34 while |pitch| &lt; 8deg).</div>
         </a>
-        <a class="check-card" href="phaseClip.html">
+        <a class="check-card slide-in-bottom delay-3" href="phaseClip.html">
           <div class="top"><span class="name">PhaseClip</span><span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span></div>
           <div class="desc">Phase / no-clip detector — the Phase cheat moves through solid blocks. Samples lower-body and upper-body centers; requires BOTH bands inside a FULL-CUBE solid (not either), so a player standing against a wall has at most one band in a solid. Sustained &gt;=5 ticks.</div>
         </a>
         </div>
       </div>
       <div id="rotation">
-        <div class="group-head"><h2>◎ Rotation</h2><span class="gtag">5 checks</span></div>
-        <p style="color:var(--text-dim);max-width:640px;margin-bottom:18px">Aim / rotation cheats — silent-aim, snap-back, aimbot snaps, scaffold.</p>
+        <div class="group-head fade-in-scroll"><h2>◎ Rotation</h2><span class="gtag">5 checks</span></div>
+        <p class="fade-in-scroll" style="color:var(--text-dim);max-width:640px;margin-bottom:18px">Aim / rotation cheats — silent-aim, snap-back, aimbot snaps, scaffold.</p>
         <div class="check-grid">
-        <a class="check-card" href="rotationTracking.html">
+        <a class="check-card slide-in-bottom delay-1" href="rotationTracking.html">
           <div class="top"><span class="name">RotationTracking</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">Silent-aim / AimAssist detector — the cheat silently rotates to face a target; the player&#x27;s look consistently points at one nearby entity&#x27;s body center.</div>
         </a>
-        <a class="check-card" href="rotationSnapBack.html">
+        <a class="check-card slide-in-bottom delay-2" href="rotationSnapBack.html">
           <div class="top"><span class="name">RotationSnapBack</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">Snap-back KillAura tell — the attacker yaw snaps to the victim on the attack tick, then snaps back to the pre-attack travel bearing within 1-3 ticks.</div>
         </a>
-        <a class="check-card" href="aimWrap.html">
+        <a class="check-card slide-in-bottom delay-3" href="aimWrap.html">
           <div class="top"><span class="name">AimWrap</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">Max-rotation-rate / snap detector — flags a single-tick yaw rotation larger than threshold (150deg) coming out of a near-still tick (previous wrapped delta &lt; 30deg): a classic aimbot snap from rest.</div>
         </a>
-        <a class="check-card" href="pitchBound.html">
+        <a class="check-card slide-in-bottom delay-4" href="pitchBound.html">
           <div class="top"><span class="name">PitchBound</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">Invalid-pitch detector (BadPacketsD / NCM WrongTurn) — the server normally clamps pitch to +-90deg, so a broadcast |pitch| &gt; threshold (90) is impossible from a legit client. Trivially portable, low fire-rate, zero FP.</div>
         </a>
-        <a class="check-card" href="scaffoldRotation.html">
+        <a class="check-card slide-in-bottom delay-1" href="scaffoldRotation.html">
           <div class="top"><span class="name">Scaffold</span><span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span></div>
           <div class="desc">Scaffold / BridgeAssist detector — two paths share one VL pool: (1) rotation-snap godbridge (snaps pitch to ~78deg and yaw to cardinal while airborne over air, sustained &gt;=8 ticks), and (2) LegitScaffold sneak-tap bridge (taps sneak 1-2 ticks at crouch-end with a swing timed to crouch-end, looking down holding a block).</div>
         </a>
         </div>
       </div>
       <div id="packet">
-        <div class="group-head"><h2>■ Packet</h2><span class="gtag">2 checks</span></div>
-        <p style="color:var(--text-dim);max-width:640px;margin-bottom:18px">Packet-rate cheats — blink / FakeLag, timer / boost.</p>
+        <div class="group-head fade-in-scroll"><h2>■ Packet</h2><span class="gtag">2 checks</span></div>
+        <p class="fade-in-scroll" style="color:var(--text-dim);max-width:640px;margin-bottom:18px">Packet-rate cheats — blink / FakeLag, timer / boost.</p>
         <div class="check-grid">
-        <a class="check-card" href="packetGap.html">
+        <a class="check-card slide-in-bottom delay-1" href="packetGap.html">
           <div class="top"><span class="name">PacketGap</span><span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span></div>
           <div class="desc">Blink / FakeLag / ScaffoldBlink / LagRange detector — the cheat cancels and queues outgoing packets, so the entity appears frozen then snaps a large distance.</div>
         </a>
-        <a class="check-card" href="timerRate.html">
+        <a class="check-card slide-in-bottom delay-2" href="timerRate.html">
           <div class="top"><span class="name">Timer</span><span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span></div>
           <div class="desc">Timer / Boost / TickBase detector (delta-based surrogate) — the cheat accelerates the local tick rate, observable as horizontal bps far above the sprint-jump envelope sustained for several ticks. Conservative surrogate flagging the blatant sustained-overspeed tier (&gt;14 bps) distinct from SpeedEnvelope&#x27;s cap.</div>
         </a>
@@ -229,9 +229,9 @@
       <div><span class="diamond" style="display:inline-block;width:14px;height:14px;background:var(--grad);transform:rotate(45deg);border-radius:3px;vertical-align:-2px;margin-right:7px"></span>Iustitia &mdash; client-sided Fabric anticheat</div>
       <div class="footer-links">
         <a href="../index.html">Home</a>
-        <a href="index.html">Checks</a>
+        <a href="index.html">Docs</a>
         <a href="https://github.com/ThoriaDevelopment/Iustitia" target="_blank" rel="noopener">GitHub</a>
-        <a href="https://github.com/ThoriaDevelopment/Iustitia/releases/tag/v0.2.0" target="_blank" rel="noopener">Releases</a>
+        <a href="https://github.com/ThoriaDevelopment/Iustitia/releases/latest" target="_blank" rel="noopener">Releases</a>
       </div>
       <div class="footer-disclaimer">
         v0.2.0 &middot; For Minecraft 1.21.11 (Fabric). Not affiliated with or endorsed by Mojang or Microsoft.
@@ -239,5 +239,6 @@
       </div>
     </div>
   </footer>
+  <script src="../assets/reveal.js"></script>
 </body>
 </html>
