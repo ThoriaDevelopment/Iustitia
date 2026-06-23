@@ -5,6 +5,8 @@
   "client": [
     "ClientPlayNetworkHandlerMixin",
     "PlayerEntityRendererMixin",
+    "PlayerEntityRenderStateAccessor",
+    "ArmorStandEntityRendererMixin",
     "EntityRenderStateAccessor"
   ],
   "injectors": {

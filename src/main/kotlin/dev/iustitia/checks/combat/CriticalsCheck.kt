@@ -5,6 +5,7 @@ import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.event.AttackEvent
+import dev.iustitia.history.Evidence
 import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
 import kotlin.math.abs
@@ -59,7 +60,9 @@ class CriticalsCheck : Check() {
             // original 0.05..0.30 window, now YACL-tunable instead of a hardcoded no-op.
             val lo = cfg.threshold
             if (dy in lo..(lo + 0.25) && horiz > 0.1 && abs(tp.prevDeltaY) < 0.08) {
-                flag(tp, ctx, 1.0, "Crits", tick)
+                flag(tp, ctx, 1.0, "Crits", tick, Evidence(
+                    subLabel = "grounded-hop", measurement = dy, threshold = lo, pos = tp.pos,
+                    extra = "horiz=$horiz prevΔy=${tp.prevDeltaY}"))
             }
         } catch (_: Throwable) {}
     }

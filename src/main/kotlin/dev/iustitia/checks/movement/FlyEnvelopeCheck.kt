@@ -3,6 +3,7 @@ package dev.iustitia.checks.movement
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
+import dev.iustitia.history.Evidence
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
 import net.minecraft.client.MinecraftClient
@@ -50,9 +51,12 @@ class FlyEnvelopeCheck : Check() {
             }
             // Hurt/knockback exemption: a recent hit injects a vertical knockback impulse
             // that trips the ascend flag (Δy>0.2 with no 0.42 jump impulse) and the physics
-            // breach. Skip the ~3-tick peak — substitutes for the velocity window, which is
-            // dead on servers that don't broadcast other-player EntityVelocityUpdate packets.
-            if (tick - tp.hurtTick < 3) return
+            // breach. Skip the ~6-tick peak + residual upward drift — substitutes for the
+            // velocity window, which is dead on servers that don't broadcast other-player
+            // EntityVelocityUpdate packets (the residual KB upward drift after the old 3-tick
+            // window expired was the dominant Fly-breach FP: a player knocked up still has
+            // Δy>0 and recentDescend<0.5 several ticks after the hurt peak).
+            if (tick - tp.hurtTick < 6) return
             if (tp.groundedProxy) {
                 ctx.hoverTicks = 0
                 return
@@ -88,7 +92,9 @@ class FlyEnvelopeCheck : Check() {
             // without loosening the breach for ascenders.
             if (!levitating && dy > expectedY + cfg.threshold && recentDescend < 0.5 && dy > -0.01) {
                 ctx.breachTicks++
-                if (ctx.breachTicks >= 2) flag(tp, ctx, 1.0, "Fly", tick)
+                if (ctx.breachTicks >= 2) flag(tp, ctx, 1.0, "Fly", tick, Evidence(
+                    measurement = dy, threshold = expectedY + cfg.threshold, pos = tp.pos,
+                    extra = "recentDescend=$recentDescend prevΔy=${tp.prevDeltaY}"))
             } else if (!levitating) {
                 ctx.breachTicks = 0
             }
@@ -97,13 +103,16 @@ class FlyEnvelopeCheck : Check() {
             val horizontal = hypot(tp.delta.x, tp.delta.z)
             if (abs(dy) < 0.01 && horizontal > 0.1) {
                 ctx.hoverTicks++
-                if (ctx.hoverTicks >= 3) flag(tp, ctx, 1.0, "Fly(Hover)", tick)
+                if (ctx.hoverTicks >= 3) flag(tp, ctx, 1.0, "Fly(Hover)", tick, Evidence(
+                    measurement = dy, threshold = 0.01, pos = tp.pos, extra = "horiz=$horizontal"))
             } else {
                 ctx.hoverTicks = 0
             }
 
-            // 3) ascend without a jump impulse — sustained ≥2 ticks (same lag-catch-up
-            //    filter as the physics breach).
+            // 3) ascend without a jump impulse — sustained ≥6 ticks (same lag-catch-up filter
+            //    as the physics breach, but longer: a KitPvP stairs/slab ramp is ≤4–5 ticks of
+            //    dy≈0.5 that the jump recognizer never arms — sustain 6 + decay 0.5 keeps those
+            //    brief legit climbs below setbackVL while a real fly sustains past it).
             if (dy > 0.2) {
                 // record a legitimate jump impulse for a grace window. The old
                 // `abs(prevDeltaY - 0.42) < 0.08` only matched a vanilla jump (0.42); Jump Boost
@@ -117,10 +126,18 @@ class FlyEnvelopeCheck : Check() {
                 if (tp.prevDeltaY < 0.15 && dy > 0.3 && dy < 1.0 &&
                     tick - ctx.lastJumpTick > 6
                 ) ctx.lastJumpTick = tick
+                // Climbable exemption: ladders / vines / scaffolding sustain a legit upward
+                // drift (dy≈0.2–0.35) that the jump recognizer never arms (prevDeltaY stays
+                // high), so without this the ascend branch flags the entire climb — the
+                // dominant Fly(Ascend) FP source. A real fly over a ladder column is already
+                // caught by the physics-breach sub. (Ascend is the last sub, so returning here
+                // skips nothing else.)
+                if (isOnClimbable(tp)) { ctx.ascendTicks = 0; return }
                 val blockedAbove = hasBlockAbove(tp)
                 if (!levitating && !blockedAbove && tick - ctx.lastJumpTick > 2) {
                     ctx.ascendTicks++
-                    if (ctx.ascendTicks >= 2) flag(tp, ctx, 1.0, "Fly(Ascend)", tick)
+                    if (ctx.ascendTicks >= 6) flag(tp, ctx, 1.0, "Fly(Ascend)", tick, Evidence(
+                        measurement = dy, threshold = 0.2, pos = tp.pos, extra = "ascendTicks=${ctx.ascendTicks}"))
                 } else {
                     ctx.ascendTicks = 0
                 }
@@ -128,6 +145,21 @@ class FlyEnvelopeCheck : Check() {
                 ctx.ascendTicks = 0
             }
         } catch (_: Throwable) {}
+    }
+
+    private fun isOnClimbable(tp: TrackedPlayer): Boolean = try {
+        val world = MinecraftClient.getInstance().world ?: return false
+        val bx = Math.floor(tp.pos.x).toInt()
+        val bz = Math.floor(tp.pos.z).toInt()
+        val by = Math.floor(tp.pos.y).toInt()
+        // A player climbing a ladder/vine/scaffolding column intersects the climbable block at
+        // foot level or the block below it; sample both so a freshly-grabbed ladder (feet still
+        // in air) still exempts. Fail-negative (return false) on unload/error → no exemption,
+        // same conservative posture as hasBlockAbove.
+        WorldQueries.isClimbableAt(world, bx, by, bz) ||
+            WorldQueries.isClimbableAt(world, bx, by - 1, bz)
+    } catch (_: Throwable) {
+        false
     }
 
     private fun hasBlockAbove(tp: TrackedPlayer): Boolean = try {

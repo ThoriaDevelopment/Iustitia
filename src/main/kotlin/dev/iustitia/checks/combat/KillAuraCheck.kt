@@ -5,6 +5,7 @@ import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.event.AttackEvent
 import dev.iustitia.event.SwingSignal
+import dev.iustitia.history.Evidence
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
@@ -175,7 +176,8 @@ class KillAuraCheck : Check() {
             if (attacker.isUsingConsumable && ctx.useItemTicks > MIN_USE_TIME &&
                 (ctx.lastEatTick == NO_TICK || ev.tick - ctx.lastEatTick < EAT_TIMEOUT)
             ) {
-                flag(attacker, ctx, VL_CONSUME, "Consume", ev.tick)
+                flag(attacker, ctx, VL_CONSUME, "Consume", ev.tick, Evidence(
+                    pos = attacker.pos, extra = "useTicks=${ctx.useItemTicks}"))
             }
         } catch (_: Throwable) {}
     }
@@ -291,14 +293,18 @@ class KillAuraCheck : Check() {
             oldYawChange = yawChange
         }
 
-        if (machineKnownMovement > 8) flag(tp, ctx, VL_AIM, "heuristic(aim)", tick)
-        if (constantRotations > 6) flag(tp, ctx, VL_CONSTANT, "heuristic(constant)", tick)
-        if (robotizedAmount > 8) flag(tp, ctx, VL_SYNC, "heuristic(sync)", tick)
+        if (machineKnownMovement > 8) flag(tp, ctx, VL_AIM, "heuristic(aim)", tick, Evidence(
+            pos = tp.pos, extra = "machineKnown=$machineKnownMovement"))
+        if (constantRotations > 6) flag(tp, ctx, VL_CONSTANT, "heuristic(constant)", tick, Evidence(
+            pos = tp.pos, extra = "constant=$constantRotations"))
+        if (robotizedAmount > 8) flag(tp, ctx, VL_SYNC, "heuristic(sync)", tick, Evidence(
+            pos = tp.pos, extra = "robotized=$robotizedAmount"))
 
         // pattern(snap): both-direction big jumps, persistent >2 windows
         if (bigSwingUp > 1 && bigSwingDown > 1 && bigSwingUp + bigSwingDown > 4) {
             ++ctx.snapStreak
-            if (ctx.snapStreak > 2) flag(tp, ctx, VL_PATTERN_SNAP, "pattern(snap)", tick)
+            if (ctx.snapStreak > 2) flag(tp, ctx, VL_PATTERN_SNAP, "pattern(snap)", tick, Evidence(
+                pos = tp.pos, extra = "snapStreak=${ctx.snapStreak}"))
         } else {
             ctx.snapStreak = 0
         }
@@ -367,14 +373,18 @@ class KillAuraCheck : Check() {
             ctx.lastSnapHitTick = tick
             if (ctx.snapHits >= SNAP_MIN_HITS && ctx.snapHits > ctx.snapMisses) {
                 // silent(snap): repeated packet-precision landings = confirmed silent aim.
-                flag(tp, ctx, VL_SILENT_SNAP, "silent(snap)", tick)
+                flag(tp, ctx, VL_SILENT_SNAP, "silent(snap)", tick, Evidence(
+                    pos = tp.pos, measurement = bestErr.toDouble(), threshold = QUANTUM.toDouble(),
+                    extra = "pre=$bestPre"))
             }
         } else if (bestPreInside <= QUANTUM && bestErr > SNAP_PRE_ERROR_MIN * 0.75f) {
             // burst started on a target and left it — the return leg of a snap-attack-return
             if (ctx.lastSnapHitTick != NO_TICK &&
                 tick - ctx.lastSnapHitTick <= RETURN_PAIR_TICKS
             ) {
-                flag(tp, ctx, VL_SILENT_RETURN, "silent(return)", tick)
+                flag(tp, ctx, VL_SILENT_RETURN, "silent(return)", tick, Evidence(
+                    pos = tp.pos, measurement = bestErr.toDouble(),
+                    threshold = (SNAP_PRE_ERROR_MIN * 0.75f).toDouble(), extra = "preInside=$bestPreInside"))
             }
         } else if (bestPre > SNAP_PRE_ERROR_MIN && bestErr > QUANTUM * 2.0f) {
             ++ctx.snapMisses // genuine flick that landed past/short of everyone
@@ -409,7 +419,9 @@ class KillAuraCheck : Check() {
                 if (minInsideError(tp, trail, yaw) <= TRACK_INSIDE_TOL) ++ctx.trackTicks
                 if (ctx.trackSamples >= TRACK_WINDOW) {
                     if (ctx.trackTicks.toFloat() >= TRACK_RATIO * ctx.trackSamples.toFloat()) {
-                        flag(tp, ctx, VL_SILENT_TRACK, "silent(track)", tick)
+                        flag(tp, ctx, VL_SILENT_TRACK, "silent(track)", tick, Evidence(
+                            pos = tp.pos, measurement = ctx.trackTicks.toDouble() / ctx.trackSamples,
+                            threshold = TRACK_RATIO.toDouble(), extra = "track=${ctx.trackTicks}/${ctx.trackSamples}"))
                     }
                     ctx.trackSamples = 0
                     ctx.trackTicks = 0
@@ -463,7 +475,8 @@ class KillAuraCheck : Check() {
         if (tp.sprinting && speed > SPRINT_MIN_SPEED && accel < SPRINT_ACCEL && abs(offset) > SPRINT_OFFSET) {
             ++ctx.sprintDesync
             if (ctx.sprintDesync >= SPRINT_HITS) {
-                flag(tp, ctx, VL_MOVE_SPRINT, "movement(sprint)", tick)
+                flag(tp, ctx, VL_MOVE_SPRINT, "movement(sprint)", tick, Evidence(
+                    pos = tp.pos, extra = "sprintDesync=${ctx.sprintDesync}"))
                 ctx.sprintDesync -= SPRINT_HITS
             }
         }
@@ -476,7 +489,8 @@ class KillAuraCheck : Check() {
                 if (minInsideError(tp, trail(target.uuid), yaw) <= LOCK_TOL) {
                     ++ctx.lockDesync
                     if (ctx.lockDesync >= LOCK_HITS) {
-                        flag(tp, ctx, VL_MOVE_LOCK, "movement(lock)", tick)
+                        flag(tp, ctx, VL_MOVE_LOCK, "movement(lock)", tick, Evidence(
+                            pos = tp.pos, extra = "lockDesync=${ctx.lockDesync}"))
                         ctx.lockDesync -= LOCK_HITS
                     }
                     break
@@ -489,7 +503,9 @@ class KillAuraCheck : Check() {
         if (residual > MOVE_DESYNC_RESIDUAL) ++ctx.moveDesyncTicks
         if (ctx.moveSamples >= MOVE_WINDOW) {
             val mean = ctx.residualSum / ctx.moveSamples.toFloat()
-            if (mean > MOVE_MEAN_LIMIT) flag(tp, ctx, VL_MOVE_FIX, "movement(fix)", tick)
+            if (mean > MOVE_MEAN_LIMIT) flag(tp, ctx, VL_MOVE_FIX, "movement(fix)", tick, Evidence(
+                pos = tp.pos, measurement = mean.toDouble(), threshold = MOVE_MEAN_LIMIT.toDouble(),
+                extra = "desync=${ctx.moveDesyncTicks}/${ctx.moveSamples}"))
             ctx.moveSamples = 0
             ctx.moveDesyncTicks = 0
             ctx.residualSum = 0.0f

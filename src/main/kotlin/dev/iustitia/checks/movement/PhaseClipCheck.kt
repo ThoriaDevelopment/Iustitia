@@ -38,7 +38,7 @@ import kotlin.math.hypot
  *
  * Server-rebroadcast positions lag the true collided position by up to ~0.1–0.3 (interpolation
  * + client-side inversion), so a player shoved into a corner can momentarily put both bands
- * in a solid cell. A 5-tick sustain gate + decay 0.5 washes those transient penetrations out
+ * in a solid cell. A 3-tick sustain gate + decay 0.5 washes those transient penetrations out
  * below setbackVL — a real Phase cheat stays submerged and climbs past it. Knockback can
  * pin a player into a wall, so a recent hurt exempts. Chunk-gated; fail-open. setbackVL 5,
  * decay 0.5/tick.
@@ -81,7 +81,7 @@ class PhaseClipCheck : Check() {
                 val enclosed = WorldQueries.isFullCubeSolidAt(world, bx, upperY + 1, bz)
                 if (horiz < 0.05 && enclosed) { ctx.streak = 0; return }
                 ctx.streak++
-                if (ctx.streak >= 5) flag(tp, ctx, 1.0, "Phase", tick)
+                if (ctx.streak >= 3) flag(tp, ctx, 1.0, "Phase", tick)
             } else {
                 ctx.streak = 0
             }

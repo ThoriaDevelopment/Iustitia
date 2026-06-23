@@ -16,6 +16,15 @@ package dev.iustitia.config
 data class IustitiaConfig(
     var enabled: Boolean = true,
     var verbose: Boolean = false,
+    /** Schema version of the calibration defaults. Bump [CONFIG_VERSION] whenever a check's
+     *  default setbackVL/decay/threshold is recalibrated. On load ([ConfigManager]), if the
+     *  persisted config predates this version, every check's CALIBRATION fields are reset to the
+     *  code defaults while user preferences (per-check enabled, mutes, alerts, nametag) are
+     *  preserved. Without this, a `config/iustitia.json` saved before a recalibration silently
+     *  overrides the tuned defaults — the round-1/2 decay/VL edits were being clobbered this way
+     *  (flyEnvelope decay stayed 1.0, throughWalls setbackVL stayed 5.0, etc.), so the config
+     *  tuning had zero effect on the running game. */
+    var configVersion: Int = CONFIG_VERSION,
     /** Min ticks between repeated alerts for the same (player, check). */
     var alertThrottleTicks: Int = 40,
     /** Ticks after a player joins before any alert fires (30s default). */
@@ -47,15 +56,19 @@ data class IustitiaConfig(
     var reach: CheckConfig = CheckConfig(true, 10.0, 0.25, 3.0),
     var multiTarget: CheckConfig = CheckConfig(true, 2.0, 1.0, 2.0),
     var clickStatistics: CheckConfig = CheckConfig(true, 5.0, 0.05, 20.0),
-    var throughWalls: CheckConfig = CheckConfig(true, 5.0, 0.5, 1.0),
+    var throughWalls: CheckConfig = CheckConfig(true, 8.0, 0.5, 1.0),
     var criticals: CheckConfig = CheckConfig(true, 5.0, 0.1, 0.05),
     var noKnockback: CheckConfig = CheckConfig(true, 5.0, 1.0, 0.61),
     var keepSprint: CheckConfig = CheckConfig(true, 5.0, 0.5, 0.5),
     var wTap: CheckConfig = CheckConfig(true, 5.0, 0.5, 2.0),
     var jumpOnHurt: CheckConfig = CheckConfig(true, 5.0, 0.2, 0.4),
     var backtrack: CheckConfig = CheckConfig(true, 10.0, 0.25, 3.0),
-    /** Rain-Anticheat killaura/silent-aim suite (7 sub-components, one VL pool). threshold unused. */
-    var killAura: CheckConfig = CheckConfig(true, 5.0, 0.05, 0.0),
+    /** Rain-Anticheat killaura/silent-aim suite (7 sub-components, one VL pool). threshold unused.
+     *  decay 0.10 (was 0.05): the 0.05 break-even (~1 flag/sec) was low enough that normal PvP
+     *  cadence over-accumulated to alert on Polar-clean players (cosYT vl 10.8, devilseeker 9.5).
+     *  0.10 raises the break-even to ~2 flags/sec — spread-out FP accumulation decays between
+     *  bursts, sustained silent-aim bursts still climb to alert. */
+    var killAura: CheckConfig = CheckConfig(true, 5.0, 0.1, 0.0),
     /** Rain-Anticheat AutoBlock — sustained swing+use overlap tick limit. */
     var autoBlock: CheckConfig = CheckConfig(true, 5.0, 0.5, 10.0),
     /** HitFlick / KnockbackDisplace — min yaw-off-hitbox degrees at the attack tick. */
@@ -67,7 +80,7 @@ data class IustitiaConfig(
 
     // --- movement ---
     var speedEnvelope: CheckConfig = CheckConfig(true, 5.0, 1.0, 10.0),
-    var flyEnvelope: CheckConfig = CheckConfig(true, 5.0, 1.0, 0.1),
+    var flyEnvelope: CheckConfig = CheckConfig(true, 5.0, 0.5, 0.1),
     var noFallDamage: CheckConfig = CheckConfig(true, 4.0, 1.0, 8.0),
     var stepHeight: CheckConfig = CheckConfig(true, 5.0, 0.5, 0.6),
     var teleport: CheckConfig = CheckConfig(true, 5.0, 0.5, 1.5),
@@ -78,15 +91,21 @@ data class IustitiaConfig(
     var elytraSpeed: CheckConfig = CheckConfig(true, 5.0, 1.0, 40.0),
 
     // --- rotation / packet-flow / minor ---
-    var rotationTracking: CheckConfig = CheckConfig(true, 5.0, 0.05, 0.92),
+    var rotationTracking: CheckConfig = CheckConfig(true, 5.0, 0.1, 0.92),
     var rotationSnapBack: CheckConfig = CheckConfig(true, 5.0, 0.5, 30.0),
     var phaseClip: CheckConfig = CheckConfig(true, 5.0, 0.5, 1.0),
     var packetGap: CheckConfig = CheckConfig(true, 5.0, 0.5, 2.0),
-    var timerRate: CheckConfig = CheckConfig(true, 5.0, 0.5, 14.0),
+    var timerRate: CheckConfig = CheckConfig(true, 6.5, 0.5, 14.0),
     var aimWrap: CheckConfig = CheckConfig(true, 5.0, 0.5, 165.0),
     var pitchBound: CheckConfig = CheckConfig(true, 5.0, 0.0, 90.0),
     var scaffoldRotation: CheckConfig = CheckConfig(true, 5.0, 0.05, 78.0),
 ) {
+    companion object {
+        /** Current calibration schema version. Bump on each recalibration round so
+         *  [ConfigManager] resets stale persisted calibration fields to these defaults. */
+        const val CONFIG_VERSION = 3
+    }
+
     data class CheckConfig(
         var enabled: Boolean = true,
         var setbackVL: Double = 5.0,

@@ -176,6 +176,7 @@ object ConfigManager {
     private fun toJson(c: IustitiaConfig): JsonObject = JsonObject().apply {
         addProperty("enabled", c.enabled)
         addProperty("verbose", c.verbose)
+        addProperty("configVersion", c.configVersion)
         addProperty("alertThrottleTicks", c.alertThrottleTicks)
         addProperty("joinGraceTicks", c.joinGraceTicks)
         addProperty("legitScaffoldStrictGates", c.legitScaffoldStrictGates)
@@ -197,6 +198,17 @@ object ConfigManager {
     private fun fromJson(o: JsonObject): IustitiaConfig {
         val c = IustitiaConfig()
         try {
+            // Calibration migration: if the persisted config predates the current calibration
+            // version, reset each check's CALIBRATION fields (setbackVL/decay/threshold) to the
+            // code defaults while preserving user choices (per-check enabled, mutes, alerts,
+            // nametag). Without this, a config/iustitia.json saved before a recalibration
+            // silently overrides the tuned defaults — the round-1/2 decay/VL edits were being
+            // clobbered this way (flyEnvelope decay stayed 1.0, throughWalls setbackVL stayed
+            // 5.0, timerRate setbackVL stayed 5.0), so the config tuning had no effect on the
+            // running game. c.configVersion is the fresh default (never overwritten from disk),
+            // so the next save stamps the file current.
+            val savedVersion = if (o.has("configVersion")) o.get("configVersion").asInt else 0
+            val resetCalibration = savedVersion < c.configVersion
             if (o.has("enabled")) c.enabled = o.get("enabled").asBoolean
             if (o.has("verbose")) c.verbose = o.get("verbose").asBoolean
             if (o.has("alertThrottleTicks")) c.alertThrottleTicks = o.get("alertThrottleTicks").asInt
@@ -208,7 +220,7 @@ object ConfigManager {
             readStringList(o, "mutedChecks", c.mutedChecks)
             readStringList(o, "mutedPlayers", c.mutedPlayers)
             for ((key, cc) in c.checks()) {
-                if (o.has(key)) readCheck(o.getAsJsonObject(key), cc)
+                if (o.has(key)) readCheck(o.getAsJsonObject(key), cc, resetCalibration)
             }
         } catch (_: Throwable) {
             // partial parse → keep defaults for anything unread
@@ -216,9 +228,10 @@ object ConfigManager {
         return c
     }
 
-    private fun readCheck(o: JsonObject, cc: IustitiaConfig.CheckConfig) {
+    private fun readCheck(o: JsonObject, cc: IustitiaConfig.CheckConfig, resetCalibration: Boolean) {
         try {
             if (o.has("enabled")) cc.enabled = o.get("enabled").asBoolean
+            if (resetCalibration) return // keep code-default setbackVL/decay/threshold (migration)
             if (o.has("setbackVL")) cc.setbackVL = o.get("setbackVL").asDouble
             if (o.has("decay")) cc.decay = o.get("decay").asDouble
             if (o.has("threshold")) cc.threshold = o.get("threshold").asDouble

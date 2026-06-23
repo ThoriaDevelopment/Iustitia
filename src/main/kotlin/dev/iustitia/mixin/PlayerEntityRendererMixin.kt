@@ -1,5 +1,6 @@
 package dev.iustitia.mixin
 
+import dev.iustitia.VerboseLog
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
 import net.minecraft.client.MinecraftClient
@@ -19,8 +20,10 @@ import java.util.IdentityHashMap
 
 /**
  * Prepends a cheat-tier prefix (green [+] / yellow [!] / red [X]) to OTHER players' nametags, so a
- * legit/low-flag player shows a green tick, a borderline player a yellow warning, and a player a
- * definitive check has proven a cheater a red skull.
+ * legit/low-flag player shows a green tick, a player a single red-capable check has flagged shows a
+ * yellow warning, and a player ≥3 distinct red-capable checks have corroborated shows a red skull
+ * (see [dev.iustitia.history.FlagHistory.tierFor] — strict corroboration + ~10-min decay, so a
+ * yellow/red nametag implies ≥95% cheating confidence).
  *
  * This is the second client mixin (the first, [ClientPlayNetworkHandlerMixin], is the read-only
  * packet observer). It is read-only on the render path: it rewrites the label *text* held in
@@ -98,10 +101,22 @@ import java.util.IdentityHashMap
 class PlayerEntityRendererMixin {
 
     /**
-     * state → cheat tier for the entity currently rendered by that state (set in updateRenderState,
-     * consumed+removed in renderLabelIfPresent). Bounded by remove-on-read + [CAP] backstop.
+     * state → cheat tier (+ owner uuid, for the fallback verbose log) for the entity currently
+     * rendered by that state (set in updateRenderState, consumed+removed in renderLabelIfPresent).
+     * Bounded by remove-on-read + [CAP] backstop.
      */
-    private val stateTier: IdentityHashMap<PlayerEntityRenderState, FlagHistory.Tier> = IdentityHashMap()
+    private data class TierEntry(val tier: FlagHistory.Tier, val uuid: java.util.UUID)
+
+    private val stateTier: IdentityHashMap<PlayerEntityRenderState, TierEntry> = IdentityHashMap()
+
+    /**
+     * Players for which we've already emitted the "fell back to BELOW_NAME score line" verbose
+     * line this session — one log per player (the fallback fires every frame; without this it'd
+     * spam `latest.log`). Diagnostic-only, gated on [VerboseLog.isEnabled]; CAP-bounded backstop
+     * like [stateTier]. Independent of `FlagHistory.reset` (a reset doesn't un-discover a server).
+     */
+    private val loggedFallback =
+        java.util.Collections.synchronizedSet(java.util.LinkedHashSet<java.util.UUID>())
 
     @Inject(method = ["updateRenderState"], at = [At("TAIL")])
     private fun iustitia_recordTier(
@@ -120,7 +135,7 @@ class PlayerEntityRendererMixin {
             if (other == null || isSelf) {
                 stateTier.remove(state)
             } else {
-                stateTier[state] = FlagHistory.tierFor(other.uuid)
+                stateTier[state] = TierEntry(FlagHistory.tierFor(other.uuid), other.uuid)
             }
         } catch (_: Throwable) {}
     }
@@ -138,15 +153,9 @@ class PlayerEntityRendererMixin {
             if (!cfg.nametagPrefixes) return
 
             // null = local player, non-player, or no updateRenderState for this state → skip.
-            val tier = stateTier.remove(state) ?: return
+            val entry = stateTier.remove(state) ?: return
+            val tier = entry.tier
             if (tier == FlagHistory.Tier.GREEN && !cfg.nametagGreenEnabled) return
-
-            val acc = state as? EntityRenderStateAccessor ?: return
-            val current = acc.iustitia_getDisplayName() ?: return   // null = vanilla drew no label (e.g. mcpvp/stray)
-
-            // Double-prefix guard: skip if already prefixed this frame (multi-pass render).
-            val s = current.string
-            if (s.startsWith(GREEN_MARK) || s.startsWith(YELLOW_MARK) || s.startsWith(RED_MARK)) return
 
             val (color, glyph, mark) = when (tier) {
                 FlagHistory.Tier.GREEN -> Triple("a", "[+]", GREEN_MARK)
@@ -154,7 +163,51 @@ class PlayerEntityRendererMixin {
                 FlagHistory.Tier.RED -> Triple("c", "[X]", RED_MARK)
             }
             val prefix = Text.literal("§${color}${glyph}§r ")
-            acc.iustitia_setDisplayName(Text.empty().append(prefix).append(current))
+
+            val dnAcc = state as? EntityRenderStateAccessor ?: return
+            val displayName = dnAcc.iustitia_getDisplayName()
+            if (displayName != null) {
+                // Vanilla path: prefix the name. The BELOW_NAME score line (playerName) is left
+                // untouched. Double-prefix guard: skip if already prefixed this frame (multi-pass).
+                val s = displayName.string
+                if (s.startsWith(GREEN_MARK) || s.startsWith(YELLOW_MARK) || s.startsWith(RED_MARK)) return
+                dnAcc.iustitia_setDisplayName(Text.empty().append(prefix).append(displayName))
+            } else {
+                // FALLBACK: the server hid the vanilla name (displayName null via team
+                // nametagVisibility — e.g. mcpvp.club / stray.gg). The only label the vanilla
+                // player renderer still draws here is the BELOW_NAME score line (playerName), so we
+                // prefix that as a tier cue. Skip GREEN — we don't want [+] on every clean player's
+                // score line; only YELLOW/RED surface a cue on the fallback path.
+                if (tier == FlagHistory.Tier.GREEN) return
+                val pnAcc = state as? PlayerEntityRenderStateAccessor ?: return
+                val score = pnAcc.iustitia_getPlayerName() ?: return   // null = no BELOW_NAME objective
+                val s = score.string
+                if (s.startsWith(GREEN_MARK) || s.startsWith(YELLOW_MARK) || s.startsWith(RED_MARK)) return
+                pnAcc.iustitia_setPlayerName(Text.empty().append(prefix).append(score))
+                logFallbackOnce(entry.uuid, tier)
+            }
+        } catch (_: Throwable) {}
+    }
+
+    /**
+     * Emit one verbose line the first time we fall back to prefixing a given player's BELOW_NAME
+     * score line this session. This is the diagnostic that tells us (a) which servers actually
+     * surface a BELOW_NAME score (vs none at all — stray.gg), and (b) whether mcpvp's visible label
+     * really is the score line (if the log fires but no on-screen prefix appears, the label is a
+     * hologram entity → the rider-coverage follow-up is the real fix). One-per-player to avoid
+     * per-frame log spam; CAP-bounded. Writes to `latest.log` via [VerboseLog], not chat.
+     */
+    private fun logFallbackOnce(uuid: java.util.UUID, tier: FlagHistory.Tier) {
+        try {
+            if (!VerboseLog.isEnabled()) return
+            if (loggedFallback.add(uuid)) {   // true only the first time per player
+                if (loggedFallback.size > CAP) loggedFallback.clear()
+                val name = FlagHistory.nameFor(uuid) ?: uuid.toString().take(8)
+                VerboseLog.log(
+                    "nametag-fallback: prefixed BELOW_NAME score for $name (tier=$tier) " +
+                        "— displayName hidden by server"
+                )
+            }
         } catch (_: Throwable) {}
     }
 

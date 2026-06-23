@@ -9,6 +9,7 @@ import dev.iustitia.math.AABB
 import dev.iustitia.math.HitboxSizes
 import dev.iustitia.tracking.EntityTrackerManager
 import java.util.UUID
+import kotlin.math.hypot
 import kotlin.math.sqrt
 
 /**
@@ -45,6 +46,24 @@ class BacktrackCheck : Check() {
             val curBox = AABB.around(victim.pos.x, victim.pos.y, victim.pos.z, vh.width, vh.height).expand(0.0005)
             val curDist = sqrt(curBox.closestPointSqDistance(eye.x, eye.y, eye.z))
             if (curDist <= reach + margin) return // current pos already in reach — not backtrack
+            // Victim-freeze gate (lag-correlation axis). Real Backtrack holds the victim's
+            // incoming packet stream, so the victim appears FROZEN for several ticks then snaps
+            // to a far position — the attacker hits the stale (close) pos. Without this gate the
+            // check fired on ANY victim that simply walked out of reach (1,545 flags, not the
+            // intended low-VL corroborating signal). Only scan the stale-pos history when the
+            // victim was actually static for ≥3 consecutive samples (a ≥2-tick freeze) within
+            // the last 4 ticks — which no smoothly-retreating victim shows. The in-reach scan
+            // below then confirms the stale pos was in reach while the current (post-snap) pos
+            // is out; an AFK victim has old==current==out-of-reach and still never flags.
+            val recent = victim.ring.getPositions(4, ev.tick)
+            var frozen = false
+            for (i in 0 until recent.size - 2) {
+                val a = recent[i]; val b = recent[i + 1]; val c = recent[i + 2]
+                val d1 = hypot(a.x - b.x, a.z - b.z)
+                val d2 = hypot(b.x - c.x, b.z - c.z)
+                if (d1 < FREEZE_MOVE && d2 < FREEZE_MOVE) { frozen = true; break }
+            }
+            if (!frozen) return
             // any recent position in reach?
             for (p in victim.ring.getPositions(4, ev.tick)) {
                 val oldBox = AABB.around(p.x, p.y, p.z, vh.width, vh.height).expand(0.0005)
@@ -58,4 +77,10 @@ class BacktrackCheck : Check() {
     }
 
     private class BacktrackContext : CheckContext()
+
+    private companion object {
+        /** Max horizontal Δpos (blocks) between two consecutive ring samples still counted as
+         *  "static". A ≥3-sample run under this is a real packet-hold freeze (Backtrack). */
+        const val FREEZE_MOVE = 0.05
+    }
 }

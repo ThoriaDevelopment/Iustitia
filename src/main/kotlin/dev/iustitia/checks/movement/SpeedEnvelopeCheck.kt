@@ -17,14 +17,17 @@ import kotlin.math.min
 
 /**
  * Horizontal-speed envelope, ported from AvA `checkSpeed`. Flags sustained/alternating
- * overspeed: when ≥3 of the last 6 ticks exceeded the cap ([threshold], default 10.0 —
- * absorbs vanilla sprint-jump ~6.2, Speed II sprint ~7.8). A single knockback/lag-spike
- * sample (one over-cap tick) is NOT enough — the previous 10-tick windowed-MAX form let one
+ * overspeed: when ≥3 of the last 6 ticks exceeded the cap ([threshold], default 10.0). On
+ * KitPvP servers that grant a dash/teleport item ability, the dash burst is indistinguishable
+ * from client speed-hack by bps alone (anti-correlated: legit dashers out-VL real cheaters), so
+ * the cap is left at the conservative 10.0 base — it mostly flags nothing here, by design. The
+ * Speed-effect factor below lifts the effective cap for Speed II. A single knockback/lag-spike
+ * sample (one over-cap tick) is NOT enough — the previous 10-tick
  * uncovered spike poison the window for 10 ticks and pin vl~6 on normal players. The
  * ≥3-of-6 gate catches both sustained speed hacks (all 6 over) and alternating BHop
  * (3 over, 3 under) while rejecting 1–2 tick spikes.
  *
- * Exemption order (fail-closed → stricter on unknowns): recent velocity (<40 ticks),
+ * Exemption order (fail-closed → stricter on unknowns): recent velocity (<20 ticks — a real
  * gliding/riptide, vehicle, in-water (dolphin's grace unobservable), a 10-tick teleport
  * exemption (server teleports otherwise inject 50k+ bps samples), then a 3-tick
  * hurt/knockback exemption (substitutes for the velocity window on servers that don't
@@ -55,7 +58,7 @@ class SpeedEnvelopeCheck : Check() {
         try {
             // exemptions
             if (tp.inVehicle || tp.gliding || tp.riptide || tp.swimming) return
-            if (tick - tp.velocityTick < 40) return
+            if (tick - tp.velocityTick < 20) return
 
             // Teleport exemption: a server teleport (kit-equip, /tpa, respawn, "jumped to")
             // injects a 50k+ bps sample that would otherwise rocket VL and poison the window.

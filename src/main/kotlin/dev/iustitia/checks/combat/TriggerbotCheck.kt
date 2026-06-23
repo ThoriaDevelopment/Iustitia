@@ -4,6 +4,7 @@ import dev.iustitia.Iustitia
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.event.AttackEvent
+import dev.iustitia.history.Evidence
 import dev.iustitia.math.AABB
 import dev.iustitia.math.HitboxSizes
 import dev.iustitia.math.RayAABB
@@ -137,7 +138,10 @@ class TriggerbotCheck : Check() {
             // blatant, consistent sub-reaction auto-attacker: flag once per qualifying fast hit.
             // The consistency gate (minFast + ratio) means this only fires once the pattern is
             // established, so each subsequent fast hit climbs VL toward setbackVL (5).
-            flag(attacker, ctx, 1.0, "Triggerbot", ev.tick)
+            val reaction = startTick?.let { ev.tick - it }
+            flag(attacker, ctx, 1.0, "Triggerbot", ev.tick, Evidence(
+                measurement = ratio, threshold = RATIO.toDouble(), pos = attacker.pos,
+                victim = ev.victim, extra = "fast=$fastCount/$total reaction=$reaction"))
         } catch (_: Throwable) {
             // fail-open
         }

@@ -97,10 +97,14 @@ class NoFallDamageCheck : Check() {
                 }
             }
 
-            // ground-spoof-over-air: onGround claimed but nothing solid below + a real
-            // fall accumulated (gated to threshold — a 1.0 gate false-fires on every
-            // chunk-edge / half-block stand during KitPvP knockback-falls).
-            if (tp.onGroundPacket && tp.fallAccum > cfg.threshold &&
+            // ground-spoof-over-air: onGround claimed but nothing solid below + a real fall
+            // accumulated. Gated to a fixed 4.0 (not cfg.threshold 8.0): this branch only fires
+            // when onGroundPacket is true AND there is provably no solid below, so the strict
+            // floor check already prevents FPs — the gate is pure sensitivity, and 4.0 catches
+            // the shorter ground-spooofs Polar flagged (Ground Spoof) that 8.0 missed. The
+            // landed-no-hurt branch above keeps cfg.threshold (8.0) to protect against
+            // unobservable feather-falling.
+            if (tp.onGroundPacket && tp.fallAccum > 4.0 &&
                 !WorldQueries.isSolidBelow(world, tp.pos.x, tp.pos.y, tp.pos.z, 0.5)
             ) {
                 flag(tp, ctx, 1.0, "NoFall(Spoof)", tick)

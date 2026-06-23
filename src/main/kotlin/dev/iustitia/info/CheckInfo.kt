@@ -14,7 +14,9 @@ object CheckInfo {
     fun describe(checkId: String): String = DESCRIPTIONS[checkId]
         ?: "Iustitia check '$checkId'."
 
-    /** Whether a check's alert "proves cheating" (drives the red nametag tier). */
+    /** Whether a check is primary red-capable: its alert can self-standing mark a player YELLOW
+     *  (and contributes toward RED, which needs ≥3 distinct red-capable checks — see
+     *  [dev.iustitia.history.FlagHistory.tierFor]). killAura is a corroborator, not primary. */
     fun isDefinitive(checkId: String): Boolean = dev.iustitia.history.FlagHistory.DEFINITIVE.contains(checkId)
 
     /** Severity color legend shown in alert hover + `/ius help` + `/ius status`. */

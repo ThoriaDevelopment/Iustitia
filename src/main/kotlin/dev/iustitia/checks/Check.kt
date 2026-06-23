@@ -65,15 +65,24 @@ abstract class Check {
     /**
      * Record a violation: add [level] to vl and alert if it crosses [setbackVL] (subject
      * to throttle + join-grace). [label] is the short check tag shown in the alert.
+     *
+     * [evidence] is the optional per-flag "why" payload (see [dev.iustitia.history.Evidence]):
+     * reach distance, fly Δy, blocked LOS rays, etc. Default `null` — only the combat + fly
+     * subset of checks populate it; every existing `flag(...)` call site compiles unchanged.
+     * This is read-only capture of values already in scope at the flag site; no check logic
+     * changes.
      */
-    protected fun flag(tp: TrackedPlayer, ctx: CheckContext, level: Double, label: String, tick: Int) {
+    protected fun flag(
+        tp: TrackedPlayer, ctx: CheckContext, level: Double, label: String, tick: Int,
+        evidence: dev.iustitia.history.Evidence? = null,
+    ) {
         try {
             ctx.vl += level
             VerboseLog.countFlag()
             // Session flag history (drives /ius hist, status counts, alert hover, nametag tier).
             // Fail-open: a history error must never block a flag.
             try {
-                dev.iustitia.history.FlagHistory.recordFlag(tp.uuid, tp.username(), id, label, ctx.vl, tick)
+                dev.iustitia.history.FlagHistory.recordFlag(tp.uuid, tp.username(), id, label, ctx.vl, tick, evidence)
             } catch (_: Throwable) {}
             // Verbose: surface every flag (sub-threshold included) so a validation pass can
             // confirm a check is reacting even when nothing crosses setbackVL. The line below

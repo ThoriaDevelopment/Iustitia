@@ -34,6 +34,7 @@ Desktop.ini
 *.log
 logs.txt
 run/logs/
+launcher_log.txt
 
 # ---- Claude Code session data (local only, never committed) ----
 .claude/
@@ -45,3 +46,4 @@ References/
 Anticheat Documentation.txt
 Minecraft_Cheat_AntiCheat_Findings.md
 Reference Analysis & Detection Plan.md
+Development Plan.md

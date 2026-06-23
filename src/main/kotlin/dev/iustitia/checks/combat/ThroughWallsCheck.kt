@@ -5,6 +5,7 @@ import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.event.AttackEvent
+import dev.iustitia.history.Evidence
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.world.WorldQueries
 import net.minecraft.client.MinecraftClient
@@ -39,20 +40,27 @@ class ThroughWallsCheck : Check() {
             // so a victim riding a boat/minecart is exempt (only the attacker side was before).
             if (victim.inVehicle) return
             val world = MinecraftClient.getInstance().world ?: return
-            // Raycast eye→eye (both ~1.62). A legit melee reaches OVER low obstacles
-            // (fences 1.5, slabs 0.5/1.0, walls 1.0) since player hitboxes reach 3.0+ at
-            // torso/eye height — a horizontal eye-level ray clears them. Only a full
-            // block at eye height (a real wall, ≥2 tall or a 1.0-tall block under a
-            // ceiling) occludes eye→eye → that is a genuine through-walls hit. Targeting
-            // the victim's torso center (0.9) instead made the ray slope downward and
-            // clip every fence/slab between two meleeing players (FP on every close hit).
+            // Multi-point victim tolerance. A single eye→eye ray flags ANY cover between the
+            // two players regardless of attacker look direction — fences, slabs and low walls
+            // between meleeing players all occluded eye→eye and fired 21k FPs with 0 Polar
+            // corroboration. Sample three victim body points (eye / mid-torso / feet) and flag
+            // only when the attacker's eye cannot see ANY of them — i.e. the victim's whole
+            // body is occluded, which no legit melee hit is. Most "cover between players" leaves
+            // the feet or torso visible, so this narrows to genuine full-wall through-hits.
             val eye = attacker.pos.add(0.0, attacker.eyeHeight(), 0.0)
-            val target = victim.pos.add(0.0, victim.eyeHeight(), 0.0)
-            // only trust a "blocked" verdict when both endpoint chunks are loaded
+            val targets = listOf(
+                victim.pos.add(0.0, victim.eyeHeight(), 0.0), // ~1.62 victim eye
+                victim.pos.add(0.0, 0.9, 0.0),                // mid-torso
+                victim.pos.add(0.0, 0.1, 0.0)                 // feet
+            )
+            // only trust a "blocked" verdict when both endpoint chunks are loaded (all three
+            // targets share the victim column, so one chunk check covers them).
             if (!WorldQueries.isChunkLoaded(world, eye.x.toInt(), eye.z.toInt())) return
-            if (!WorldQueries.isChunkLoaded(world, target.x.toInt(), target.z.toInt())) return
-            if (!WorldQueries.hasLineOfSight(world, eye, target)) {
-                flag(attacker, contextOf(attacker.uuid), 1.0, "ThroughWalls", ev.tick)
+            if (!WorldQueries.isChunkLoaded(world, victim.pos.x.toInt(), victim.pos.z.toInt())) return
+            if (targets.all { !WorldQueries.hasLineOfSight(world, eye, it) }) {
+                flag(attacker, contextOf(attacker.uuid), 1.0, "ThroughWalls", ev.tick, Evidence(
+                    subLabel = "all-occluded", pos = eye, victim = victim.uuid,
+                    measurement = 3.0, threshold = 3.0, extra = "eye→{eye,mid,feet} all blocked"))
             }
         } catch (_: Throwable) {}
     }

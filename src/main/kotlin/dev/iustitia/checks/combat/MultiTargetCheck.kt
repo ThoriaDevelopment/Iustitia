@@ -5,6 +5,7 @@ import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.event.AttackEvent
+import dev.iustitia.history.Evidence
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
@@ -39,7 +40,9 @@ class MultiTargetCheck : Check() {
 
             val sameTick = set.size
             if (sameTick >= 2) {
-                flag(attacker, ctx, max(1.0, (sameTick - 1).toDouble()), "MultiTarget", ev.tick)
+                flag(attacker, ctx, max(1.0, (sameTick - 1).toDouble()), "MultiTarget", ev.tick, Evidence(
+                    subLabel = "same-tick", measurement = sameTick.toDouble(), threshold = 2.0,
+                    pos = attacker.pos, extra = "victims=${set.size}"))
             }
 
             // lag-absorb: union this tick + previous tick
@@ -49,7 +52,9 @@ class MultiTargetCheck : Check() {
                 union.addAll(set)
                 union.addAll(prev)
                 if (union.size >= 3) {
-                    flag(attacker, ctx, max(1.0, (union.size - 1).toDouble()), "MultiTarget", ev.tick)
+                    flag(attacker, ctx, max(1.0, (union.size - 1).toDouble()), "MultiTarget", ev.tick, Evidence(
+                        subLabel = "window", measurement = union.size.toDouble(), threshold = 3.0,
+                        pos = attacker.pos, extra = "victims=${union.size}"))
                 }
             }
             // lag-absorb (independent detector): a multi-aura spread across two ticks — e.g.
@@ -63,7 +68,9 @@ class MultiTargetCheck : Check() {
                 union.addAll(set)
                 union.addAll(prev)
                 if (union.size >= 3) {
-                    flag(attacker, ctx, max(1.0, (union.size - 1).toDouble()), "MultiTarget", ev.tick)
+                    flag(attacker, ctx, max(1.0, (union.size - 1).toDouble()), "MultiTarget", ev.tick, Evidence(
+                        subLabel = "window", measurement = union.size.toDouble(), threshold = 3.0,
+                        pos = attacker.pos, extra = "victims=${union.size}"))
                 }
             }
         } catch (_: Throwable) {}

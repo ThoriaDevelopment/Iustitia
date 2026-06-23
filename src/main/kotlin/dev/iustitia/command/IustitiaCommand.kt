@@ -9,9 +9,12 @@ import com.mojang.brigadier.suggestion.SuggestionsBuilder
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.config.YaclScreenBuilder
 import dev.iustitia.history.FlagHistory
+import dev.iustitia.history.Evidence
 import dev.iustitia.info.CheckInfo
 import dev.iustitia.protocol.ProtocolDetector
 import dev.iustitia.tracking.EntityTrackerManager
+import dev.iustitia.ui.PlayerHistoryScreen
+import dev.iustitia.ui.PlayerSearchScreen
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource
 import net.minecraft.client.MinecraftClient
@@ -47,6 +50,7 @@ object IustitiaCommand {
         "list" to "show all checks + enabled state",
         "status" to "health panel: master, tracked players, protocol, alerts",
         "hist" to "flag history: /ius hist [name] [check]",
+        "report" to "copy a player's report card to clipboard: /ius report <name> [markdown|json]",
         "help" to "this help, or /ius help <check|subcommand>",
         "alerts" to "toggle all chat alerts: /ius alerts  (or mute one: /ius alerts <name|check> [on|off])",
         "toggle" to "enable/disable a check: /ius toggle <check>",
@@ -84,6 +88,13 @@ object IustitiaCommand {
                     .then(ClientCommandManager.argument("check", StringArgumentType.word())
                         .suggests { _, b -> checkIds.forEach(b::suggest); b.buildFuture() }
                         .executes { histPlayer(it, StringArgumentType.getString(it, "check")) })))
+            .then(ClientCommandManager.literal("report")
+                .then(ClientCommandManager.argument("name", StringArgumentType.word())
+                    .suggests { _, b -> suggestNames(b); b.buildFuture() }
+                    .executes { report(it, "markdown") }
+                    .then(ClientCommandManager.argument("format", StringArgumentType.word())
+                        .suggests { _, b -> listOf("markdown", "json").forEach(b::suggest); b.buildFuture() }
+                        .executes { report(it, StringArgumentType.getString(it, "format")) })))
             .then(ClientCommandManager.literal("alerts")
                 .executes { alertsList(it) }
                 .then(ClientCommandManager.argument("target", StringArgumentType.word())
@@ -216,7 +227,22 @@ object IustitiaCommand {
     }
 
     // ---- history ----
+    /** Bare `/ius hist` — opens the searchable player list (#1). Mirrors the [openConfig]
+     *  `MinecraftClient.execute{}` + fail-open pattern; falls back to the chat top-offenders
+     *  dump if the screen can't be opened (e.g. opened from a non-foreground context). */
     private fun histTop(ctx: CommandContext<FabricClientCommandSource>): Int {
+        val mc = MinecraftClient.getInstance()
+        mc.execute {
+            try {
+                mc.setScreen(PlayerSearchScreen(mc.currentScreen))
+            } catch (_: Throwable) {
+                histTopChat(ctx)
+            }
+        }
+        return 1
+    }
+
+    private fun histTopChat(ctx: CommandContext<FabricClientCommandSource>): Int {
         val top = FlagHistory.topOffenders(8)
         if (top.isEmpty()) { send(ctx, "$tag §7no alerts yet this session."); return 1 }
         send(ctx, "$tag §7top offenders (by alert count):")
@@ -224,10 +250,34 @@ object IustitiaCommand {
         return 1
     }
 
+    /** `/ius hist <name> [check]` — resolves the player (by flagged name, then by a
+     *  tracked-player name match for fresh joins) and opens [PlayerHistoryScreen] (#1 + #2).
+     *  Falls back to the existing chat dump if the uuid can't be resolved or the screen
+     *  can't open, so the command never regresses. */
     private fun histPlayer(ctx: CommandContext<FabricClientCommandSource>, checkFilter: String?): Int {
         val name = StringArgumentType.getString(ctx, "name")
-        val uuid = FlagHistory.resolveName(name)
+        var uuid = FlagHistory.resolveName(name)
+        if (uuid == null) {
+            // fresh join: tracked but not yet flagged — match by live username
+            uuid = try {
+                EntityTrackerManager.all().firstOrNull { it.username().equals(name, ignoreCase = true) }?.uuid
+            } catch (_: Throwable) { null }
+        }
         if (uuid == null) { send(ctx, "$tag §cno history for §f$name§7 (must be tracked or have flagged first)."); return 0 }
+        val mc = MinecraftClient.getInstance()
+        mc.execute {
+            try {
+                mc.setScreen(PlayerHistoryScreen(uuid, mc.currentScreen))
+            } catch (_: Throwable) {
+                histPlayerChat(ctx, uuid, name, checkFilter)
+            }
+        }
+        return 1
+    }
+
+    /** Chat fallback for [histPlayer] — used if the GUI fails to open. Keeps the
+     *  pre-GUI `/ius hist <name>` behavior intact as a safety net. */
+    private fun histPlayerChat(ctx: CommandContext<FabricClientCommandSource>, uuid: UUID, name: String, checkFilter: String?): Int {
         val flags = FlagHistory.flags(uuid)
         if (flags.isEmpty()) { send(ctx, "$tag §7no flags recorded for §f$name§7."); return 1 }
         val filtered = if (checkFilter == null) flags else flags.filter { it.checkId == checkFilter }
@@ -240,13 +290,149 @@ object IustitiaCommand {
         return 1
     }
 
+    // ---- report (#9) ----
+    /** `/ius report <name> [format]` — builds a report card from the FlagHistory aggregators
+     *  (same data as [PlayerHistoryScreen]) and copies it to the clipboard. `format` defaults
+     *  to `markdown`; `json` emits the same data as a JSON object. Never sends anything to the
+     *  server (clipboard is client-only). Fail-open. */
+    private fun report(ctx: CommandContext<FabricClientCommandSource>, format: String): Int {
+        val name = StringArgumentType.getString(ctx, "name")
+        var uuid = FlagHistory.resolveName(name)
+        if (uuid == null) {
+            uuid = try {
+                EntityTrackerManager.all().firstOrNull { it.username().equals(name, ignoreCase = true) }?.uuid
+            } catch (_: Throwable) { null }
+        }
+        if (uuid == null) { send(ctx, "$tag §cno history for §f$name§7 (must be tracked or have flagged first)."); return 0 }
+        val fmt = if (format.equals("json", ignoreCase = true)) "json" else "markdown"
+        val text = try { if (fmt == "json") reportJson(uuid, name) else reportMarkdown(uuid, name) } catch (_: Throwable) {
+            send(ctx, "$tag §cfailed to build report for §f$name§7."); return 0
+        }
+        try { MinecraftClient.getInstance().keyboard.setClipboard(text) } catch (_: Throwable) {
+            send(ctx, "$tag §cfailed to write clipboard."); return 0
+        }
+        send(ctx, "$tag §7report for §f$name§7 copied to clipboard §8(${text.length} chars, $fmt)")
+        return 1
+    }
+
+    private fun reportMarkdown(uuid: UUID, name: String): String {
+        val sb = StringBuilder()
+        val tier = FlagHistory.tierFor(uuid)
+        val tierName = when (tier) {
+            FlagHistory.Tier.GREEN -> "GREEN"; FlagHistory.Tier.YELLOW -> "YELLOW"; FlagHistory.Tier.RED -> "RED"
+        }
+        val sp = FlagHistory.span(uuid)
+        val alerts = FlagHistory.sessionAlertCount(uuid)
+        val counts = FlagHistory.flagCounts(uuid)
+        val maxVlMap = FlagHistory.maxVlByCheck(uuid)
+        val totalFlags = counts.values.sum()
+        val maxVl = maxVlMap.values.maxOrNull() ?: 0.0
+        val spanTxt = if (sp == null) "no flags" else "first flag @t${sp.first} | last flag @t${sp.second}"
+        sb.append("# Iustitia report — $name\n\n")
+        sb.append("tier: $tierName | $spanTxt | alerts: $alerts | flags: $totalFlags | max vl: ${"%.2f".format(maxVl)}\n")
+        sb.append("confidence: ${FlagHistory.confidenceLine(uuid)}\n")
+        val topCheck = FlagHistory.topCheck(uuid)
+        if (topCheck != null) sb.append("top check: $topCheck\n")
+        sb.append("\n## Flags by check (count / max vl)\n")
+        if (counts.isEmpty()) sb.append("(no flags this session)\n")
+        counts.forEach { (cid, c) ->
+            val mv = maxVlMap[cid] ?: 0.0
+            sb.append("- $cid: $c flags, max vl ${"%.2f".format(mv)}\n")
+        }
+        sb.append("\n## Timeline (last 50)\n")
+        val flags = FlagHistory.flags(uuid)
+        if (flags.isEmpty()) sb.append("(no flags recorded)\n")
+        flags.forEach { f ->
+            val ev = f.evidence
+            val evTxt = if (ev == null) "" else " " + evidenceMd(ev)
+            sb.append("@t${f.tick} ${f.checkId} (${f.label}) vl=${"%.2f".format(f.vl)}$evTxt\n")
+        }
+        return sb.toString()
+    }
+
+    private fun reportJson(uuid: UUID, name: String): String {
+        val sb = StringBuilder()
+        val tier = FlagHistory.tierFor(uuid)
+        val tierName = when (tier) {
+            FlagHistory.Tier.GREEN -> "GREEN"; FlagHistory.Tier.YELLOW -> "YELLOW"; FlagHistory.Tier.RED -> "RED"
+        }
+        val sp = FlagHistory.span(uuid)
+        val counts = FlagHistory.flagCounts(uuid)
+        val maxVlMap = FlagHistory.maxVlByCheck(uuid)
+        sb.append("{\n")
+        sb.append("  \"name\": ").append(jsonStr(name)).append(",\n")
+        sb.append("  \"uuid\": ").append(jsonStr(uuid.toString())).append(",\n")
+        sb.append("  \"tier\": ").append(jsonStr(tierName)).append(",\n")
+        sb.append("  \"alerts\": ").append(FlagHistory.sessionAlertCount(uuid)).append(",\n")
+        sb.append("  \"flags\": ").append(counts.values.sum()).append(",\n")
+        sb.append("  \"maxVl\": ").append("%.2f".format(maxVlMap.values.maxOrNull() ?: 0.0)).append(",\n")
+        sb.append("  \"confidence\": ").append(jsonStr(FlagHistory.confidenceLine(uuid))).append(",\n")
+        if (sp != null) sb.append("  \"firstTick\": ").append(sp.first).append(", \"lastTick\": ").append(sp.second).append(",\n")
+        sb.append("  \"byCheck\": {")
+        if (counts.isEmpty()) sb.append("},\n") else {
+            sb.append("\n")
+            counts.entries.forEachIndexed { i, e ->
+                val mv = maxVlMap[e.key] ?: 0.0
+                sb.append("    ").append(jsonStr(e.key)).append(": {\"count\": ").append(e.value)
+                    .append(", \"maxVl\": ").append("%.2f".format(mv)).append("}")
+                sb.append(if (i == counts.size - 1) "\n  },\n" else ",\n")
+            }
+        }
+        sb.append("  \"timeline\": [")
+        val flags = FlagHistory.flags(uuid)
+        if (flags.isEmpty()) sb.append("]\n") else {
+            sb.append("\n")
+            flags.forEachIndexed { i, f ->
+                sb.append("    {\"tick\": ").append(f.tick)
+                    .append(", \"check\": ").append(jsonStr(f.checkId))
+                    .append(", \"label\": ").append(jsonStr(f.label))
+                    .append(", \"vl\": ").append("%.2f".format(f.vl))
+                val ev = f.evidence
+                if (ev != null) sb.append(", ").append(evidenceJson(ev))
+                sb.append("}")
+                sb.append(if (i == flags.size - 1) "\n  ]\n" else ",\n")
+            }
+        }
+        sb.append("}\n")
+        return sb.toString()
+    }
+
+    private fun evidenceMd(e: Evidence): String {
+        val parts = ArrayList<String>()
+        e.subLabel?.let { parts += it }
+        if (e.measurement != null || e.threshold != null) parts += "${e.measurement ?: "?"}/${e.threshold ?: "?"}"
+        e.pos?.let { parts += "pos=(${it.x.toInt()},${it.y.toInt()},${it.z.toInt()})" }
+        e.victim?.let { parts += "victim=" + (FlagHistory.nameFor(it) ?: it.toString().take(8)) }
+        e.extra?.let { parts += it }
+        return parts.joinToString(" · ")
+    }
+
+    private fun evidenceJson(e: Evidence): String {
+        val sb = StringBuilder("\"evidence\": {")
+        val kvs = ArrayList<String>()
+        e.subLabel?.let { kvs += "\"subLabel\": " + jsonStr(it) }
+        e.measurement?.let { kvs += "\"measurement\": " + "%.4f".format(it) }
+        e.threshold?.let { kvs += "\"threshold\": " + "%.4f".format(it) }
+        e.pos?.let { kvs += "\"pos\": [${it.x}, ${it.y}, ${it.z}]" }
+        e.victim?.let { kvs += "\"victim\": " + jsonStr(it.toString()) }
+        e.extra?.let { kvs += "\"extra\": " + jsonStr(it) }
+        sb.append(kvs.joinToString(", ")).append("}")
+        return sb.toString()
+    }
+
+    private fun jsonStr(s: String): String {
+        val escaped = s.replace("\\", "\\\\").replace("\"", "\\\"")
+            .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+        return "\"$escaped\""
+    }
+
     // ---- help ----
     private fun help(ctx: CommandContext<FabricClientCommandSource>, topic: String?): Int {
         if (topic == null) {
             send(ctx, "$tag §7commands (alias: §f/ius§7):")
             subcommands.forEach { (s, d) -> send(ctx, " §f$s §7— $d") }
             send(ctx, CheckInfo.SEVERITY_LEGEND)
-            send(ctx, "§7nametag: §a[+] §7clean §e[!] §7suspect §c[X] §7proven. Hover an alert for details, click it for history.")
+            send(ctx, "§7nametag: §a[+] §7clean §e[!] §7suspect (≥1 red-capable) §c[X] §7caught (≥3 distinct)§7. Fades one tier per ~10 min idle. Hover an alert for details, click it for history.")
             return 1
         }
         // subcommand?
@@ -255,8 +441,12 @@ object IustitiaCommand {
         // check?
         if (topic in checkIds) {
             val cc = ConfigManager.config.slice(topic)
-            val def = if (CheckInfo.isDefinitive(topic)) " §7(definitive → §cred nametag§7)" else ""
-            send(ctx, "$tag §f$topic$def")
+            val tier = when {
+                CheckInfo.isDefinitive(topic) -> " §7(red-capable → §eyellow§7/§cred§7 nametag; §cred§7 needs ≥3 distinct)"
+                topic == "killAura" -> " §7(corroborator → counts toward §cred§7 only with another red-capable alert)"
+                else -> ""
+            }
+            send(ctx, "$tag §f$topic$tier")
             send(ctx, " §7${CheckInfo.describe(topic)}")
             send(ctx, " §7enabled=${cc.enabled} §7setbackVL=${cc.setbackVL} §7decay=${cc.decay} §7threshold=${cc.threshold}")
             return 1
