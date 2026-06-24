@@ -8,7 +8,7 @@ A purely client-sided anticheat for Minecraft Java **1.21.11** (Fabric).
 
 Detects **both 1.8-era and 1.21.11-era cheats** by passively observing *other* players through the packets the server already rebroadcasts to you — no server component, no network transmission, no outgoing packets.
 
-**Local-only chat alerts. No HUD. No bans. No interference.**
+**Local-only alerts and overlays. No bans. No interference. No outgoing packets.**
 
 </div>
 
@@ -18,7 +18,7 @@ Detects **both 1.8-era and 1.21.11-era cheats** by passively observing *other* p
 
 Iustitia is a Fabric client mod that watches every *other* player on your server and flags impossible world/combat interactions — the kind of thing a reach hack, a killaura, a fly hack, or a timer cheat produces. It does this entirely on your client:
 
-- **Read-only on incoming packets.** A single mixin (`ClientPlayNetworkHandlerMixin`) observes server packets and feeds them into a tracking pipeline. It never sends anything to the server and never mutates the local player or the camera.
+- **Read-only on incoming packets.** A single mixin (`ClientPlayNetworkHandlerMixin`) observes server packets and feeds them into a tracking pipeline. It never sends anything to the server and never mutates the local player. The **watch follow-cam** (`/ius spectate`, see below) is the one deliberate exception: it overrides the *camera only*, while you're actively spectating, and auto-reverts the instant you stop, move, get hit, or the target leaves — vanilla re-derives the camera every frame so it can never get stuck.
 - **Other players only.** It builds a server-space model of every other client player (position, yaw/pitch, sprint/sneak, hurt ticks, vehicle, deltas) from rebroadcast state, then runs 32 detection checks against that model each tick.
 - **Fail-open everywhere.** Every check and mixin body is wrapped so a thrown exception is swallowed and skipped — a detection error never crashes your client and never produces a false positive. A chunk-unloaded player is a false *negative*, never a false *positive*.
 - **Two streams, kept separate.** *Chat alerts* fire only when a check's violation level crosses its setback threshold. *Verbose console logging* (every flag, a pipeline heartbeat) is opt-in via `/ius verbose` for validation/debugging and is **off by default** — the release build is silent in `latest.log` unless you turn it on.
@@ -43,11 +43,11 @@ All three library mods (Fabric API, fabric-language-kotlin, YACL) are standard a
 
 1. Install Fabric Loader 0.19.3+ for Minecraft 1.21.11.
 2. Drop **Fabric API**, **fabric-language-kotlin**, and **YACL** into your `mods/` folder.
-3. Drop `iustitia-v0.1.0.jar` into your `mods/` folder.
+3. Drop `iustitia-1.0.0.jar` into your `mods/` folder.
 4. (To detect cheats on 1.8-era servers) Install **ViaFabricPlus** so your 1.21.11 client can join them.
-5. Launch. Join any server with other players.
+5. Launch. A one-time **first-launch wizard** asks how you use Iustitia (General / Moderation / Ranked Player) and pre-sets sensible defaults. Join any server with other players.
 
-That's it. Alerts appear in chat; other players get a colored tier prefix on their nametag (where the server allows it — see [Nametag prefixes](#nametag-prefixes)).
+That's it. Alerts appear in chat; other players get a colored tier prefix (with a confidence score) on their nametag (where the server allows it — see [Nametag prefixes](#nametag-prefixes)).
 
 ## Quick start
 
@@ -55,12 +55,22 @@ That's it. Alerts appear in chat; other players get a colored tier prefix on the
 /ius                 # list checks + enabled state (alias of /iustitia)
 /ius status          # health panel: master, tracked players, protocol, alerts
 /ius help            # in-game command help
-/ius help reach      # describe a check + its live config
-/ius hist            # session top offenders
-/ius hist <name>     # a player's recent flags
+/ius help reach      # describe a check + its live config (or /ius help spectate, transcript, …)
+/ius hist            # session top offenders (searchable screen)
+/ius hist <name>     # a player's profile card + recent flags
+/ius spectate <name> # watch follow-cam on a player (or your crosshair target; /ius spectate off to stop)
+/ius transcript <name>  # copyable session timeline (or /ius transcript panel <name> for the side panel)
+/ius evidence <name>    # one-line summary of their last few seconds of flags
+/ius note <name> <cat> <text…>  # tag a player (closet/blatant/needsReview/legit); /ius note <name> to read
+/ius session         # session summary: tracked players, tier counts, who peaked highest
+/ius report <name>   # full report card → clipboard (markdown or json)
+/ius snapshot [name] # one-line evidence snapshot of your crosshair target → clipboard
 /ius alerts          # mute/unmute all chat alerts (detection keeps running)
+/ius keybinds        # open the keybind hub screen
 /ius config          # open the YACL config screen
 ```
+
+There are also **eight keybinds** (snapshot, transcript, session, keybinds, config, note, compact, watch) — configurable in vanilla Controls → Iustitia, and listed with conflict-detection in the keybind hub (`/ius keybinds`).
 
 See **[USERMANUAL.md](USERMANUAL.md)** for a non-developer walkthrough.
 
@@ -92,17 +102,23 @@ See **[USERMANUAL.md](USERMANUAL.md)** for a non-developer walkthrough.
                       └──────────────────────┘
 
                  ┌─────────────────────────────┐
-   render thread  │  PlayerEntityRendererMixin  │  (nametag prefix — render-only, no visibility hack)
-                  └─────────────────────────────┘
+   render thread  │  PlayerEntityRendererMixin  │  nametag tier prefix + confidence badge + burst pulse
+                  │  ArmorStandEntityRendererMx │  nametag fallback for armor-stand holograms
+                  │  PlayerListHudMixin          │  tab-list tier badge
+                  │  CameraMixin                │  offender-selfie + watch follow-cam (auto-reverting)
+                  └─────────────────────────────┘  (all render-only, no visibility hack, no send path)
 ```
 
 ### Mixin set (the only bytecode touched)
 
 - `ClientPlayNetworkHandlerMixin` — the read-only packet observer. `defaultRequire: 1` (loud-fail if it ever drifts on a future MC build, because a silent packet miss means silent false negatives).
-- `PlayerEntityRendererMixin` — the nametag prefix renderer. Cosmetic, render-only, fail-open (a future-build signature drift would at worst make prefixes silently not appear).
-- `EntityRenderStateAccessor` — `@Accessor` for `displayName` on `EntityRenderState`.
+- `PlayerEntityRendererMixin` — the nametag tier prefix + confidence badge + burst-pulse renderer. Cosmetic, render-only, fail-open (a future-build signature drift would at worst make prefixes silently not appear).
+- `ArmorStandEntityRendererMixin` — extends the nametag fallback to armor-stand holograms (servers that ride the nametag on an armor stand). Render-only, fail-open.
+- `PlayerListHudMixin` — prepends the tier glyph (+ score) to each OTHER player's row in the Tab list. `@Inject` on `getPlayerName` at RETURN, fail-open.
+- `EntityRenderStateAccessor` — `@Accessor` for `displayName` / `playerName` on `EntityRenderState`.
+- `CameraMixin` — the offender-selfie (single-frame) and watch follow-cam (sustained) camera overrides. Both rely on vanilla re-deriving the camera before the `@At("TAIL")` inject each frame, so the override only persists while actively re-applied — the instant it stops, the view reverts to the local player (the safe state).
 
-No `@Redirect` or `@Overwrite` is used anywhere. No send-path mixins. No camera or local-player mutation.
+No `@Redirect` or `@Overwrite` is used anywhere. No send-path mixins. No local-player mutation (the watch follow-cam overrides the *camera* only, and is the sole deliberate exception — see above).
 
 ### Protocol awareness
 
@@ -179,18 +195,52 @@ Other players get a tier prefix drawn on their nametag (vanilla visibility is re
 | prefix | tier | meaning |
 |---|---|---|
 | `§a[+]§r` | green | no chat alerts this session (clean / low-flag) |
-| `§e[!]§r` | yellow | ≥1 alert but no definitive check has fired (suspect) |
-| `§c[X]§r` | red | a definitive check has proven cheating (sticky for the session) |
+| `§e[!]§r` | yellow | ≥1 primary red-capable alert has fired (suspect) |
+| `§c[X]§r` | red | ≥2 distinct red-capable checks have proven cheating (sticky for the session, decays one tier per ~10 min idle) |
 
-The prefix is written at the HEAD of `PlayerEntityRenderer.renderLabelIfPresent` (the draw method), so it survives label batching.
+When **nametag confidence badge** is on (default), the 0-99 confidence score is appended inside the bracket, e.g. `[X 87]` or `[! 55]`, so two suspects are comparable at a glance. When **nametag burst pulse** is on (default), the prefix briefly pulses white/tier-color for ~3 s after a fresh yellow/red alert. Both are display-only (no check logic changed).
+
+The prefix is written at the HEAD of `PlayerEntityRenderer.renderLabelIfPresent` (the draw method), so it survives label batching, and is mirrored into the Tab list by `PlayerListHudMixin`.
 
 **Server coverage caveat:** the prefix only appears on servers that populate the vanilla nametag field (`displayName`). This works on most servers, including **minemen.club** and 1.8-era servers. Some servers suppress the vanilla nametag and render their own server-side name hologram instead — on those, Iustitia has no `displayName` to attach to and the prefix will not appear. This is by design (the alternative would be a wallhack-style visibility hack, which Iustitia refuses to do). Confirmed-affected: **stray.gg** and **mcpvp.club** (the latter shows a black-background label that is actually the server's BELOW_NAME health indicator, not the vanilla name).
 
+## Observer tooling & render overlays
+
+v1.0.0 adds a control surface and a visual layer that turn raw detections into a moderation workflow — all still read-only and client-sided.
+
+### Evidence commands
+- `/ius transcript <name>` — a Discord-copyable session timeline (swings, inferred hits, reach samples, velocity received, checks fired). `/ius transcript panel <name>` toggles a live side panel.
+- `/ius evidence <name>` — collapses the last few seconds of a player's flags into one chat line.
+- `/ius note <name> <category> <text…>` — moderator tag (closet / blatant / needsReview / legit). `/ius note <name>` re-reads it.
+- `/ius session` — session summary: players tracked, tier counts, who peaked highest (confidence score). `/ius session screen` opens a dense one-screen version.
+- `/ius report <name> [markdown|json]` — a full report card copied to your clipboard.
+- `/ius snapshot [name]` — a one-line evidence snapshot of your crosshair target, copied to clipboard.
+
+### Keybinds
+Eight configurable binds (snapshot, transcript, session, keybinds, config, note, compact, watch) registered in vanilla Controls → Iustitia. `/ius keybinds` opens a hub screen that lists them all and highlights any that conflict with another bind in red.
+
+### Watch follow-cam
+`/ius spectate [name]` (or the `watch` keybind, default F9) starts a sustained follow-cam on a player: it forces F1, shows a third-party view of the target (all entities — including yourself — still rendered), and lets you orbit with the mouse (the target stays centered). It auto-stops when you move >0.5 blocks, get hit, or the target leaves render range; `/ius spectate off` (or the bind again) stops it manually. The camera auto-reverts to your view the instant it stops (vanilla re-derives it each frame, so it can never get stuck).
+
+### World/HUD overlays (all render-only, depth-tested — no wallhack)
+- **Target highlight** — a tier-colored wireframe box around the player your crosshair is on.
+- **Ghost trail** — fading breadcrumb trail of recent positions for suspect (yellow/red) players.
+- **Burst sparks** — a brief tier-colored particle burst at a player's eye on a fresh tier-relevant alert.
+- **Hover tooltip** — after the crosshair rests on one player for ~1.5 s, an expanded top-center banner (tier + score + why-this-tier + FP hint + most-flagged checks). Suppresses the compact crosshair panel while up.
+- **Crosshair confidence HUD** — a compact panel near the crosshair with the looked-at player's tier glyph + score + why-this-tier + FP hint.
+- **Server-lag HUD indicator** — a top-left ⚠ marker while a server-lag burst is recent (shows *why* alerts are being softened).
+- **Tab-list badge** — the tier glyph (+ score) prepended to each other player's row in the Tab list.
+- **Offender selfie** — a single-frame third-person screenshot of a freshly-red player, saved to `%APPDATA%/.iustitia/snapshots` (when persistence is on).
+
+Each overlay has its own toggle in `/ius config` and is off-able independently.
+
 ## Configuration
 
-- **In-game:** `/ius config` opens a YACL screen with a toggle per check plus the global switches (master, chat alerts, nametag prefixes, green-tick display).
-- **Commands:** `/ius toggle <check>`, `/ius threshold <check> <value>`, `/ius alerts <check|name> [on|off]`, `/ius verbose`, `/ius reload`, `/ius reset`.
-- **On disk:** `config/iustitia.json` (hand-rolled JSON via Gson; no extra serialization dependency). Edited live values are saved automatically.
+- **In-game:** `/ius config` opens a YACL screen with a toggle per check plus all the global switches — master, chat alerts, nametag prefixes / confidence badge / burst pulse / green-tick, alert presets, smart batching, audio cues, lag-soften, compact mode, the render/HUD overlays, persistence, and the first-launch wizard.
+- **Commands:** `/ius toggle <check>`, `/ius threshold <check> <value>`, `/ius alerts <check|name> [on|off]`, `/ius verbose`, `/ius reload`, `/ius reset`, `/ius wizard` (re-run the setup wizard).
+- **On disk:** `config/iustitia.json` (hand-rolled JSON via Gson; no extra serialization dependency). Edited live values are saved automatically (debounced, off the render thread).
+- **Optional persistence:** when **Persist across sessions** is on, moderator notes, tier/flag history, evidence snapshots, and transcript/evidence exports are saved to `%APPDATA%/.iustitia` (roaming) and reappear after a restart. Off by default — everything is in-memory session-only otherwise.
+- **Alert presets (`alertLevel`):** 0 = quiet (red-severity band only), 1 = normal (orange + red), 2 = verbose (all). Display-only — no check logic changes. **Smart batching** collapses rapid same-player flags into one line after a quiet window; **audio cues** play a note-block chime per flushed batch (distinct "nuclear" cue for RED from ≥2 primary checks); **lag-soften** prefixes `[lag]` and (under quiet) drops non-red alerts during a server-lag burst. **Compact mode** shortens alert lines and screen rows to one-liners.
 
 Each check's `threshold` is check-specific (Reach→max reach, MultiTarget→min victims, ClickStatistics→CPS cap, SpeedEnvelope→bps cap, Triggerbot→min fast-hits, etc.). `/ius help <check>` prints the live config + description for any check.
 
@@ -210,7 +260,9 @@ The built mod jar is at `build/libs/iustitia-<version>.jar`. A sources jar is al
 
 ## Privacy
 
-Iustitia is **purely client-sided**. It reads incoming server packets that your client already receives, runs detection locally, and writes to your local chat and your local config file. It does **not** transmit, upload, or report anything to any server, endpoint, or third party. There is no telemetry, no analytics, no network code beyond reading what the server sends you. Muting, tiering, and history are all in-memory and cleared on restart (or `/ius reset`).
+Iustitia is **purely client-sided**. It reads incoming server packets that your client already receives, runs detection locally, and writes to your local chat and your local config file. It does **not** transmit, upload, or report anything to any server, endpoint, or third party. There is no telemetry, no analytics, no network code beyond reading what the server sends you.
+
+By default, muting, tiering, flag history, moderator notes, and evidence data are all **in-memory** and cleared on restart (or `/ius reset`). The optional **Persist across sessions** toggle (`persistenceEnabled`) writes moderator notes, tier/flag history, evidence snapshots, and transcript/evidence exports to `%APPDATA%/.iustitia` on your own machine so they survive a restart — still local, still never uploaded. Nothing else is written to disk unless you turn that on.
 
 ## Known limitations
 
