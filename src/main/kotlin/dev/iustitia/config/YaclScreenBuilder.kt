@@ -37,12 +37,43 @@ object YaclScreenBuilder {
                     .option(bool("Show green tick on clean players", "Show the green [+] on low-flag players. Off = only mark yellow/red (less visual noise). Mute a check/player via /ius alerts.", { cfg.nametagGreenEnabled }) { cfg.nametagGreenEnabled = it })
                     .build()
             )
+            .group(
+                OptionGroup.createBuilder()
+                    .name(Text.literal("Display & Alerts"))
+                    .option(bool("Nametag confidence badge", "Append the numeric score [nn] to the tier prefix so two suspects are comparable at a glance.", { cfg.nametagBadge }) { cfg.nametagBadge = it })
+                    .option(bool("Nametag flag-burst pulse", "Color-pulse the tier prefix for ~3s after a fresh yellow/red flag.", { cfg.nametagBurstPulse }) { cfg.nametagBurstPulse = it })
+                    .option(int("Alert level", "0 = quiet (red-severity only) · 1 = normal (orange + red) · 2 = verbose (all). Display-only.", { cfg.alertLevel }, 0, 2) { cfg.alertLevel = it })
+                    .option(bool("Smart alert batching", "Collapse rapid same-player flags into one line after a quiet window.", { cfg.alertBatching }) { cfg.alertBatching = it })
+                    .option(int("Batch window (ticks)", "Quiet ticks before a batch flushes (100 = 5s).", { cfg.alertBatchWindowTicks }, 0, 600) { cfg.alertBatchWindowTicks = it })
+                    .option(bool("Audio cues", "Play a note-block cue per flushed alert batch (yellow vs red).", { cfg.audioCues }) { cfg.audioCues = it })
+                    .option(double("Audio volume", "Cue volume (0..1).", { cfg.audioVolume }, 0.0, 1.0) { cfg.audioVolume = it })
+                    .option(bool("Nuclear cue", "Distinct cue when a flush reaches RED from ≥2 primary checks.", { cfg.audioNuclear }) { cfg.audioNuclear = it })
+                    .option(bool("Soften alerts on server lag", "Prefix [lag] and (under quiet) drop non-red alerts during a lag burst.", { cfg.lagSuppressAlerts }) { cfg.lagSuppressAlerts = it })
+                    .option(bool("Compact mode", "One-line alert + screen summaries (less clutter).", { cfg.compactMode }) { cfg.compactMode = it })
+                    .option(int("Evidence window (ticks)", "/ius evidence lookback (200 = 10s).", { cfg.evidenceWindowTicks }, 20, 1200) { cfg.evidenceWindowTicks = it })
+                    .option(bool("Transcript side panel", "Auto-show the transcript panel for your crosshair target.", { cfg.transcriptPanel }) { cfg.transcriptPanel = it })
+                    .option(bool("Crosshair confidence HUD", "Draw a compact panel near the crosshair: the looked-at player's tier glyph + score + why-this-tier + FP hint. Display-only.", { cfg.confidenceHud }) { cfg.confidenceHud = it })
+                    .option(bool("Server-lag HUD indicator", "Draw a top-left ⚠ lag marker while a server-lag burst is recent. Display-only.", { cfg.lagHudIcon }) { cfg.lagHudIcon = it })
+                    .option(bool("On-world target highlight", "Draw a tier-colored wireframe box around the other player your crosshair is on. Depth-tested (no wallhack). Suspects always boxed; clean players only when nametag-green is on. Render-only.", { cfg.targetHighlight }) { cfg.targetHighlight = it })
+                    .option(bool("Ghost trail", "Draw a fading breadcrumb trail of recent positions for suspect (yellow/red) players, so you can see where a cheater came from / is heading. Depth-tested (no wallhack); clean players never trailed. Render-only.", { cfg.ghostTrail }) { cfg.ghostTrail = it })
+                    .option(bool("Watch follow-cam", "Press the watch keybind on a crosshair-targeted player to start a sustained slow auto-orbit camera around them; press again to stop. Auto-reverts to your view when you stop / they leave / the world changes. Render-only.", { cfg.watchFollowCam }) { cfg.watchFollowCam = it })
+                    .option(bool("Burst sparks", "Spawn a brief tier-colored (red/yellow) particle burst at a player's eye when a fresh tier-relevant alert fires — a visual flag cue mid-fight. Client-only (no packet). Render-only.", { cfg.burstSparks }) { cfg.burstSparks = it })
+                    .option(bool("Hover tooltip", "After the crosshair rests on one player for ~1.5s, show an expanded top-center banner (tier + score + why-this-tier + FP hint + most-flagged checks). Suppresses the compact crosshair panel while up. Display-only.", { cfg.hoverTooltip }) { cfg.hoverTooltip = it })
+                    .option(bool("Tab-list badge", "Prepend the tier glyph (+ score when nametag-badge is on) to each OTHER player's row in the Tab list. Follows the nametag settings; never touches your own row. Display-only.", { cfg.tabListBadge }) { cfg.tabListBadge = it })
+                    .option(bool("Persist across sessions", "Save notes, tier/flag history, snapshots & exports to %APPDATA%/.iustitia. Off = session-only.", { cfg.persistenceEnabled }) { cfg.persistenceEnabled = it })
+                    .build()
+            )
         for ((id, cc) in cfg.checks()) {
             category.group(checkGroup(id, cc))
         }
         return YetAnotherConfigLib.createBuilder()
             .title(Text.literal("Iustitia"))
-            .save { ConfigManager.save() }
+            .save {
+                ConfigManager.save()
+                // The persistence toggle may have just flipped — react so a freshly-enabled store
+                // loads its notes/history and a freshly-disabled one stops scheduling saves.
+                try { dev.iustitia.Iustitia.onConfigReloaded() } catch (_: Throwable) {}
+            }
             .category(category.build())
             .build()
             .generateScreen(parent)

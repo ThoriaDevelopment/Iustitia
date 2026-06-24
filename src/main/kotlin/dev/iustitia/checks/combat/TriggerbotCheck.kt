@@ -13,6 +13,7 @@ import dev.iustitia.protocol.ProtocolDetector
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
 
 /**
@@ -148,11 +149,17 @@ class TriggerbotCheck : Check() {
     }
 
     private class TriggerbotContext : CheckContext() {
+        // onHitbox + engagementStart are mutated in process (client-tick thread: put / remove /
+        // key-iterator.remove) AND read in onAttack (network thread: get) — AttackEvent is
+        // published from the packet handler. A plain HashMap under concurrent put+get can
+        // resize-mid-get and infinite-loop (NOT caught by fail-open, which only catches
+        // throwables); ConcurrentHashMap is the drop-in safe replacement.
         /** victim uuid → was the attacker's crosshair on this victim's hitbox last tick. */
-        val onHitbox: HashMap<UUID, Boolean> = HashMap()
+        val onHitbox: ConcurrentHashMap<UUID, Boolean> = ConcurrentHashMap()
         /** victim uuid → tick the current on-hitbox engagement began (rising edge). Absent = disengaged. */
-        val engagementStart: HashMap<UUID, Int> = HashMap()
-        /** rolling window of recent hits (most-recent first); bounded by [WINDOW]. */
+        val engagementStart: ConcurrentHashMap<UUID, Int> = ConcurrentHashMap()
+        /** rolling window of recent hits (most-recent first); bounded by [WINDOW].
+         *  Mutated only in onAttack (network thread) — single-threaded, ArrayDeque is fine. */
         val samples: ArrayDeque<HitSample> = ArrayDeque()
     }
 

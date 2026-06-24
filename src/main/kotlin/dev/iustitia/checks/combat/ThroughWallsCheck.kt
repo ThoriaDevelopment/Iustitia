@@ -54,9 +54,11 @@ class ThroughWallsCheck : Check() {
                 victim.pos.add(0.0, 0.1, 0.0)                 // feet
             )
             // only trust a "blocked" verdict when both endpoint chunks are loaded (all three
-            // targets share the victim column, so one chunk check covers them).
-            if (!WorldQueries.isChunkLoaded(world, eye.x.toInt(), eye.z.toInt())) return
-            if (!WorldQueries.isChunkLoaded(world, victim.pos.x.toInt(), victim.pos.z.toInt())) return
+            // targets share the victim column, so one chunk check covers them). Floor (not toInt)
+            // so negative X/Z select the correct chunk — Double.toInt() truncates toward zero and
+            // would gate the wrong chunk at negative coordinates.
+            if (!WorldQueries.isChunkLoaded(world, Math.floor(eye.x).toInt(), Math.floor(eye.z).toInt())) return
+            if (!WorldQueries.isChunkLoaded(world, Math.floor(victim.pos.x).toInt(), Math.floor(victim.pos.z).toInt())) return
             if (targets.all { !WorldQueries.hasLineOfSight(world, eye, it) }) {
                 flag(attacker, contextOf(attacker.uuid), 1.0, "ThroughWalls", ev.tick, Evidence(
                     subLabel = "all-occluded", pos = eye, victim = victim.uuid,

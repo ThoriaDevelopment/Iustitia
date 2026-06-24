@@ -7,7 +7,9 @@
     "PlayerEntityRendererMixin",
     "PlayerEntityRenderStateAccessor",
     "ArmorStandEntityRendererMixin",
-    "EntityRenderStateAccessor"
+    "EntityRenderStateAccessor",
+    "CameraMixin",
+    "PlayerListHudMixin"
   ],
   "injectors": {
     "defaultRequire": 1

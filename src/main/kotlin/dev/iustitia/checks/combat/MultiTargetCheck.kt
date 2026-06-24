@@ -9,6 +9,7 @@ import dev.iustitia.history.Evidence
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
 
 /**
@@ -35,7 +36,14 @@ class MultiTargetCheck : Check() {
         try {
             val attacker = EntityTrackerManager.get(ev.attacker) ?: return
             val ctx = contextOf(ev.attacker) as MultiTargetContext
-            val set = ctx.tickVictims.getOrPut(ev.tick) { HashSet() }
+            // onAttack runs on the netty thread (AttackEvent is published from the packet handler
+            // via AttackInference), while process() iterates+purges this map on the client tick
+            // thread. A plain HashMap here can throw ConcurrentModificationException (swallowed by
+            // the surrounding try → a silently-dropped flag) or structurally corrupt under
+            // concurrent iterator-remove. ConcurrentHashMap is weakly-consistent: iteration never
+            // CMEs and entrySet().iterator().remove() is safe. computeIfAbsent is atomic so two
+            // attacks on the same tick (serial on netty anyway) can't lose a victim-set.
+            val set = ctx.tickVictims.computeIfAbsent(ev.tick) { HashSet() }
             set.add(ev.victim)
 
             val sameTick = set.size
@@ -88,6 +96,6 @@ class MultiTargetCheck : Check() {
     }
 
     private class MultiTargetContext : CheckContext() {
-        val tickVictims = HashMap<Int, MutableSet<UUID>>()
+        val tickVictims = ConcurrentHashMap<Int, MutableSet<UUID>>()
     }
 }

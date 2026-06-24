@@ -63,7 +63,14 @@ object RayAABB {
         // Intersection with the infinite line exists in [tmin, tmax]; require the segment
         // (param in [0,1]) to actually touch the box.
         if (tmax < 0.0 || tmin > 1.0) return null
-        val t = if (tmin >= 0.0) tmin else tmax
+        // When the origin is INSIDE the box, tmin < 0 (the entry plane is behind the origin).
+        // The intersection along the forward segment is then the origin itself (t=0) — the eye is
+        // already touching/inside the hitbox, so the reach distance is 0. The old form returned
+        // tmax here (the EXIT plane, which can be >1 → a point beyond `end`), which INFLATED the
+        // measured reach for point-blank/overlapping positions and could false-flag ReachCheck.
+        // (Grim's calculateIntercept clamps identically.) Normal outside-origin hits are unaffected:
+        // tmin ≥ 0 ⇒ t = tmin (entry point), unchanged.
+        val t = if (tmin >= 0.0) tmin else 0.0
         if (t < 0.0) return null
         return Vec3d(ox + dx * t, oy + dy * t, oz + dz * t)
     }

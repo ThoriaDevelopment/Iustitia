@@ -52,6 +52,94 @@ data class IustitiaConfig(
      *  uuid survives rejoin. As with mutedChecks, only chat is silenced. */
     var mutedPlayers: MutableList<String> = mutableListOf(),
 
+    // --- Phase 2 UX / operability ---
+    /** Master toggle for the roaming persistence store (`%APPDATA%/.iustitia` on Windows, game-dir
+     *  `.iustitia` elsewhere). When on, moderator notes, the tier+flag history, evidence snapshots,
+     *  and transcript/evidence exports are saved across sessions; when off, everything is
+     *  in-memory session-only as before. Detection/tiering run regardless. */
+    var persistenceEnabled: Boolean = false,
+    /** One-shot gate: the first-launch setup wizard opens until the user picks a preset (or Skip),
+     *  then this is stamped true so it never reappears. */
+    var wizardCompleted: Boolean = false,
+    /** Alert severity preset (display-only; no check logic changes). 0 = quiet (red-severity band
+     *  only), 1 = normal (orange + red), 2 = verbose (all, including the low yellow band). Driven
+     *  by the vl/setbackVL ratio, not the player tier. */
+    var alertLevel: Int = 1,
+    /** Collapse rapid same-player flags into one chat line after [alertBatchWindowTicks] of quiet.
+     *  Off = the legacy one-line-per-alert behavior. */
+    var alertBatching: Boolean = true,
+    /** Quiet window (ticks) before a pending alert batch flushes. 100 = 5s. */
+    var alertBatchWindowTicks: Int = 100,
+    /** Play a note-block cue on a flushed alert batch. Off = silent. */
+    var audioCues: Boolean = false,
+    /** Audio cue volume (0..1). */
+    var audioVolume: Double = 0.6,
+    /** Distinct "nuclear" cue when a flush reaches RED tier from ≥2 primary checks at once. */
+    var audioNuclear: Boolean = true,
+    /** During a server-lag burst (per [dev.iustitia.tracking.EntityTrackerManager.lastServerLagTick])
+     *  prefix flushed alerts with `[lag]` and, under the quiet preset, drop the non-red ones so a
+     *  noisy read doesn't spam chat. Display-only. */
+    var lagSuppressAlerts: Boolean = true,
+    /** Append the numeric confidence score `[nn]` to the nametag tier prefix. */
+    var nametagBadge: Boolean = true,
+    /** Color-pulse the nametag tier prefix for ~3s after a fresh yellow/red flag. Pure text-color
+     *  modulation (no render API) — the spark particle is a deferred Phase B render piece. */
+    var nametagBurstPulse: Boolean = true,
+    /** Reduce alert lines + history/session/transcript rows to one-line summaries. */
+    var compactMode: Boolean = false,
+    /** `/ius evidence <name>` lookback window in ticks. 200 = 10s. */
+    var evidenceWindowTicks: Int = 200,
+    /** Auto-show the transcript side panel for the crosshair target. Off = keybind/`/ius transcript` only. */
+    var transcriptPanel: Boolean = false,
+    /** Phase B HUD: draw a small top-left `⚠ lag` indicator while a server-lag burst is recent, so a
+     *  moderator sees WHY alerts are being softened (or distance flagged) without opening a screen.
+     *  Reuses [dev.iustitia.tracking.EntityTrackerManager.lastServerLagTick]/lastLagBurstTick — no TPS
+     *  estimator. Pure HUD text (HudRenderCallback), no world render. Display-only. */
+    var lagHudIcon: Boolean = true,
+    /** Phase B HUD: draw a compact panel near the crosshair showing the looked-at player's tier glyph +
+     *  confidence score + the one-line "why this tier" explanation + the FP hint for their top check.
+     *  This is the deferred nametag-hover tooltip delivered as a robust HUD overlay (the world-hover
+     *  tooltip render path is fragile on 1.21.11; a HUD that reads the crosshair target is equivalent
+     *  for the user and build-verifiable). Display-only. */
+    var confidenceHud: Boolean = true,
+
+    /** Draw a tier-colored wireframe box around the OTHER player your crosshair is on (Phase B
+     *  on-world target highlight). Render-only, depth-tested (no wallhack — hidden behind walls,
+     *  consistent with the nametag-visibility-respecting philosophy). Yellow/red always drawn; green
+     *  only when [nametagGreenEnabled] (so clean players aren't boxed unless you opted into green). */
+    var targetHighlight: Boolean = true,
+
+    /** Ghost trail: draw a fading breadcrumb trail of recent positions for suspect (yellow/red)
+     *  OTHER players, so you can see where a cheater came from / is heading. Render-only,
+     *  depth-tested (no wallhack — occluded behind walls). Clean (green) players are never
+     *  trailed; a player that drops back to green has its trail cleared. */
+    var ghostTrail: Boolean = true,
+
+    /** Watch follow-cam: pressing the `watch` keybind on a crosshair-targeted OTHER player starts a
+     *  sustained slow auto-orbit third-person camera around them (a "spectate the cheater" view);
+     *  press again to stop. Render-only — the camera auto-reverts to your view the instant you stop /
+     *  the target leaves / the world changes (vanilla re-derives the camera each frame, so it can
+     *  never get stuck on the offender). Gated by this toggle. */
+    var watchFollowCam: Boolean = true,
+
+    /** Burst sparks: spawn a brief tier-colored (red/yellow) particle burst at a player's eye when a
+     *  fresh tier-relevant alert fires — a visual "flag" cue mid-fight. Client-only particles (no
+     *  packet). Render-only; fires only on alerts that move the tier (not tier-neutral spam). */
+    var burstSparks: Boolean = true,
+
+    /** Hover tooltip: after the crosshair rests on one player for ~1.5s, show an expanded top-center
+     *  banner (tier glyph + score, "why this tier", the FP hint for their top check, and their most-
+     *  flagged checks) — the deferred nametag-hover tooltip delivered as a robust HUD overlay (the
+     *  world-space hover path is fragile on 1.21.11). Suppresses the compact crosshair panel while
+     *  up. Display-only. */
+    var hoverTooltip: Boolean = true,
+
+    /** Tab-list badge: prepend the tier glyph (+ the confidence score when nametagBadge is on) to each
+     *  OTHER player's row in the Tab (player list) HUD, so the tier is visible without looking at
+     *  them in-world. Follows the same nametag settings (nametagPrefixes / nametagBadge /
+     *  nametagGreenEnabled). Read-only mixin on the tab name; never touches your own row. */
+    var tabListBadge: Boolean = true,
+
     // --- combat ---
     var reach: CheckConfig = CheckConfig(true, 10.0, 0.25, 3.0),
     var multiTarget: CheckConfig = CheckConfig(true, 2.0, 1.0, 2.0),

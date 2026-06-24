@@ -9,6 +9,8 @@ import net.minecraft.client.render.entity.ArmorStandEntityRenderer
 import net.minecraft.client.render.entity.state.ArmorStandEntityRenderState
 import net.minecraft.entity.decoration.ArmorStandEntity
 import net.minecraft.text.Text
+import net.minecraft.util.math.Box
+import net.minecraft.util.math.Vec3d
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.injection.At
 import org.spongepowered.asm.mixin.injection.Inject
@@ -65,9 +67,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo
 @Mixin(ArmorStandEntityRenderer::class)
 class ArmorStandEntityRendererMixin {
 
-    /** Players for which we've already logged the hologram-prefix diagnostic this session. */
+    /** "uuid|source" keys for which we've already logged the hologram-prefix diagnostic this session. */
     private val loggedHologram =
-        java.util.Collections.synchronizedSet(java.util.LinkedHashSet<java.util.UUID>())
+        java.util.Collections.synchronizedSet(java.util.LinkedHashSet<String>())
 
     @Inject(method = ["updateRenderState"], at = [At("TAIL")])
     private fun iustitia_prefixHologramName(
@@ -79,11 +81,27 @@ class ArmorStandEntityRendererMixin {
         try {
             if (!ConfigManager.config.nametagPrefixes) return
 
-            // Owner = the player the hologram stand is attached to via the vehicle graph.
+            // Owner = the player the hologram stand belongs to. Two resolution strategies:
+            //  1) vehicle graph (high precision): the stand rides the player, or the player rides
+            //     the stand -> rootVehicle / firstPassenger yields the OtherClientPlayerEntity.
+            //  2) proximity (fallback for teleport-follow holograms): many nametag plugins spawn a
+            //     marker stand that teleports above the player each tick WITHOUT riding it, so the
+            //     vehicle graph yields nothing. A name hologram sits ~2 blocks above the player's
+            //     feet, horizontally centered, so a tight box + nearest-match recovers the owner.
+            //     YELLOW/RED-only + a visible custom name (gated below) keeps false positives to
+            //     near-zero (a decorative named stand would have to sit directly on a suspect's head).
             val self = MinecraftClient.getInstance().player?.uuid
-            val owner = (entity.rootVehicle as? OtherClientPlayerEntity)
+            val vOwner = (entity.rootVehicle as? OtherClientPlayerEntity)
                 ?: (entity.firstPassenger as? OtherClientPlayerEntity)
-            if (owner == null || owner.uuid == self) return
+            val owner: OtherClientPlayerEntity?
+            val source: String
+            if (vOwner != null) { owner = vOwner; source = "vehicle" }
+            else {
+                val prox = proximityOwner(entity)
+                if (prox == null) return
+                owner = prox; source = "proximity"
+            }
+            if (owner.uuid == self) return
 
             val tier = FlagHistory.tierFor(owner.uuid)
             if (tier == FlagHistory.Tier.GREEN) return   // only YELLOW/RED on holograms
@@ -102,27 +120,54 @@ class ArmorStandEntityRendererMixin {
             }
             val prefix = Text.literal("§${color}${glyph}§r ")
             acc.iustitia_setDisplayName(Text.empty().append(prefix).append(name))
-            logHologramOnce(owner.uuid, tier)
+            logHologramOnce(owner.uuid, tier, source)
         } catch (_: Throwable) {
             // fail-open: a render error never crashes the client
         }
     }
 
     /**
-     * One verbose line per player per session the first time we prefix their armor-stand hologram
-     * name — confirms which servers use vehicle-attached armor-stand holograms (and that the owner
-     * resolution + tier lookup are firing). Writes to `latest.log` via [VerboseLog], not chat.
-     * CAP-bounded. If a server uses teleport-follow (non-riding) holograms instead, this never fires
-     * → that's the signal to add the proximity follow-up.
+     * Proximity owner resolution for a teleport-follow hologram stand (no vehicle link). Scans the
+     * player entities in a tight box around the stand and returns the nearest one whose head-name
+     * position aligns with the stand (horiz < [PROX_HORIZ], |stand.y - (player.y + PROX_NAME_Y)| <
+     * [PROX_VERT]). Uses [World.getOtherEntities] (entity-section indexed) so it's cheap. Fail-open.
      */
-    private fun logHologramOnce(uuid: java.util.UUID, tier: FlagHistory.Tier) {
+    private fun proximityOwner(stand: ArmorStandEntity): OtherClientPlayerEntity? {
+        val world = MinecraftClient.getInstance().world ?: return null
+        val self = MinecraftClient.getInstance().player?.uuid
+        val box = Box.of(Vec3d(stand.x, stand.y, stand.z), PROX_BOX_X, PROX_BOX_Y, PROX_BOX_X)
+        var best: OtherClientPlayerEntity? = null
+        var bestHoriz = Double.MAX_VALUE
+        for (e in world.getOtherEntities(stand, box) { it is OtherClientPlayerEntity }) {
+            val p = e as OtherClientPlayerEntity
+            if (p.uuid == self) continue
+            val dx = p.x - stand.x
+            val dz = p.z - stand.z
+            val horiz = dx * dx + dz * dz
+            if (horiz > PROX_HORIZ * PROX_HORIZ) continue
+            val dy = stand.y - (p.y + PROX_NAME_Y)
+            if (dy * dy > PROX_VERT * PROX_VERT) continue
+            if (horiz < bestHoriz) { bestHoriz = horiz; best = p }
+        }
+        return best
+    }
+
+    /**
+     * One verbose line per player per session the first time we prefix their armor-stand hologram
+     * name. [source] is `"vehicle"` (stand rides / is ridden by the player) or `"proximity"`
+     * (teleport-follow stand matched by position) — that tag tells us which hologram style a server
+     * uses, which is exactly the unknown for mcpvp-style servers where the vanilla nametag is
+     * team-hidden. Writes to `latest.log` via [VerboseLog], not chat. CAP-bounded.
+     */
+    private fun logHologramOnce(uuid: java.util.UUID, tier: FlagHistory.Tier, source: String) {
         try {
             if (!VerboseLog.isEnabled()) return
-            if (loggedHologram.add(uuid)) {
+            val key = uuid.toString() + "|" + source
+            if (loggedHologram.add(key)) {
                 if (loggedHologram.size > CAP) loggedHologram.clear()
                 val nm = FlagHistory.nameFor(uuid) ?: uuid.toString().take(8)
                 VerboseLog.log(
-                    "nametag-hologram: prefixed armor-stand hologram name for $nm (tier=$tier)"
+                    "nametag-hologram: prefixed armor-stand hologram name for $nm (tier=$tier, owner=$source)"
                 )
             }
         } catch (_: Throwable) {}
@@ -135,5 +180,12 @@ class ArmorStandEntityRendererMixin {
         private const val YELLOW_MARK = "§e[!]§r "
         private const val RED_MARK = "§c[X]§r "
         private const val CAP = 512
+        // Proximity-match constants for teleport-follow hologram stands. A name hologram sits
+        // ~2 blocks above the player's feet, horizontally centered on the player.
+        private const val PROX_HORIZ = 0.8       // max horizontal offset (blocks) from the player
+        private const val PROX_NAME_Y = 2.0      // expected stand.y = player.y + this
+        private const val PROX_VERT = 0.7        // max vertical offset (blocks) from player.y + PROX_NAME_Y
+        private const val PROX_BOX_X = 2.0       // getOtherEntities box half-sweep x/z (±1.0)
+        private const val PROX_BOX_Y = 4.0       // box y sweep (±2.0)
     }
 }

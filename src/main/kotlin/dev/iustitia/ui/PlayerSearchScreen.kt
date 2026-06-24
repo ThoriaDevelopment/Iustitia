@@ -37,7 +37,7 @@ class PlayerSearchScreen(private val parent: Screen?) : Screen(TITLE) {
     override fun init() {
         try {
             val w = this.width
-            searchField = TextFieldWidget(this.textRenderer, 10, 28, w - 20, 16, Text.literal("Search players"))
+            searchField = TextFieldWidget(this.textRenderer, 10, 36, w - 20, 16, Text.literal("Search players"))
                 .also { it.setMaxLength(32); it.text = filter; it.setChangedListener { f -> filter = f; rebuild(); scroll = 0 } }
             addDrawableChild(searchField)
             setInitialFocus(searchField)
@@ -67,11 +67,19 @@ class PlayerSearchScreen(private val parent: Screen?) : Screen(TITLE) {
 
     override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
         try {
+            // F1-equivalent backdrop: fill the whole screen with a dark, mostly-opaque rectangle
+            // BEFORE drawing content, so the in-game HUD (hotbar/chat/crosshair) and the world
+            // behind the transparent screen don't bleed through and hurt the history's
+            // readability. Fills respect alpha (unlike drawText), so this is visible. Nothing is
+            // mutated globally — when the screen closes, normal game rendering resumes, so the
+            // "F1" state auto-restores without touching the vanilla hudHidden flag.
+            context.fill(0, 0, this.width, this.height, BG)
             super.render(context, mouseX, mouseY, delta)
             val tr = this.textRenderer
-            context.drawTextWithShadow(tr, Text.literal("§8[§diustitia§8] §f§lPlayer history"), 10, 12, 0xFFFFFF)
+            context.drawTextWithShadow(tr, Text.literal("§8[§diustitia§8] §f§lPlayer history"), 10, 10, WHITE)
+            context.drawTextWithShadow(tr, Text.literal("§7Search players by name — click a row for its flag history"), 10, 24, WHITE)
             if (rows.isEmpty()) {
-                context.drawTextWithShadow(tr, Text.literal("§7No players match. (tracked+flagged this session)"), 10, listTop + 2, 0xFFFFFF)
+                context.drawTextWithShadow(tr, Text.literal("§7No players match. (tracked+flagged this session)"), 10, listTop + 2, WHITE)
                 return
             }
             val maxScroll = maxScroll()
@@ -85,17 +93,17 @@ class PlayerSearchScreen(private val parent: Screen?) : Screen(TITLE) {
                 val hovered = mouseX in listLeft..(listLeft + rowWidth()) && mouseY in y..(y + ROW_H)
                 if (hovered) context.fill(listLeft, y, listLeft + rowWidth(), y + ROW_H, 0x40FFFFFF)
                 val glyph = glyphFor(r.tier)
-                context.drawTextWithShadow(tr, Text.literal(glyph + " §f" + r.name), listLeft + 2, y + 2, 0xFFFFFF)
+                context.drawTextWithShadow(tr, Text.literal(glyph + " §f" + r.name), listLeft + 2, y + 2, WHITE)
                 val right = listLeft + rowWidth() - 4
                 val alertsTxt = Text.literal("§7alerts §f${r.alerts}" + (r.top?.let { " §7top §b$it" } ?: ""))
-                context.drawTextWithShadow(tr, alertsTxt, right - tr.getWidth(alertsTxt), y + 2, 0xFFFFFF)
+                context.drawTextWithShadow(tr, alertsTxt, right - tr.getWidth(alertsTxt), y + 2, WHITE)
             }
             // scrollbar
             if (maxScroll > 0) drawScrollbar(context, visible, maxScroll)
             if (rows.size > visible) {
-                context.drawTextWithShadow(tr, Text.literal("§7${rows.size} players · scroll to see more · click a row"), 10, this.height - 14, 0xFFFFFF)
+                context.drawTextWithShadow(tr, Text.literal("§7${rows.size} players · scroll to see more · click a row"), 10, this.height - 14, WHITE)
             } else {
-                context.drawTextWithShadow(tr, Text.literal("§7${rows.size} players · click a row"), 10, this.height - 14, 0xFFFFFF)
+                context.drawTextWithShadow(tr, Text.literal("§7${rows.size} players · click a row"), 10, this.height - 14, WHITE)
             }
         } catch (_: Throwable) {}
     }
@@ -133,7 +141,7 @@ class PlayerSearchScreen(private val parent: Screen?) : Screen(TITLE) {
     override fun close() { client?.setScreen(parent) }
 
     // ---- layout helpers ----
-    private val listTop: Int get() = 50
+    private val listTop: Int get() = 58
     private val listBottom: Int get() = this.height - 24
     private val listLeft: Int get() = 10
     private fun rowWidth(): Int = this.width - 20
@@ -156,5 +164,14 @@ class PlayerSearchScreen(private val parent: Screen?) : Screen(TITLE) {
             FlagHistory.Tier.YELLOW -> "§e[!]§r"
             FlagHistory.Tier.RED -> "§c[X]§r"
         }
+        // Opaque white (ARGB 0xFFFFFFFF). Do NOT use 0xFFFFFF — that is 0x00FFFFFF (alpha 0),
+        // and DrawContext.drawText no-ops when ColorHelper.getAlpha(color) == 0 (verified in the
+        // 1.21.11 bytecode), so any text drawn with 0xFFFFFF is completely invisible. -1 is the
+        // signed-int form of 0xFFFFFFFF. Every drawTextWithShadow color in this screen uses this.
+        private const val WHITE = -1
+        /** Dark, ~80%-opaque backdrop (ARGB 0xCC101010) covering the HUD/world behind the screen.
+         *  `.toInt()` because the 8-hex literal's high alpha (≥0x80) makes it overflow Int→Long
+         *  in Kotlin (same gotcha as WHITE = -1 for 0xFFFFFFFF). */
+        private val BG = 0xCC101010.toInt()
     }
 }

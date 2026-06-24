@@ -185,6 +185,30 @@ object ConfigManager {
         addProperty("nametagGreenEnabled", c.nametagGreenEnabled)
         add("mutedChecks", JsonArray().apply { c.mutedChecks.forEach { add(it) } })
         add("mutedPlayers", JsonArray().apply { c.mutedPlayers.forEach { add(it) } })
+        // Phase 2 UX fields (all additive — fromJson reads them conditionally, so a pre-Phase-2
+        // config keeps its tuned check calibration and just gets these defaults).
+        addProperty("persistenceEnabled", c.persistenceEnabled)
+        addProperty("wizardCompleted", c.wizardCompleted)
+        addProperty("alertLevel", c.alertLevel)
+        addProperty("alertBatching", c.alertBatching)
+        addProperty("alertBatchWindowTicks", c.alertBatchWindowTicks)
+        addProperty("audioCues", c.audioCues)
+        addProperty("audioVolume", c.audioVolume)
+        addProperty("audioNuclear", c.audioNuclear)
+        addProperty("lagSuppressAlerts", c.lagSuppressAlerts)
+        addProperty("nametagBadge", c.nametagBadge)
+        addProperty("nametagBurstPulse", c.nametagBurstPulse)
+        addProperty("compactMode", c.compactMode)
+        addProperty("evidenceWindowTicks", c.evidenceWindowTicks)
+        addProperty("transcriptPanel", c.transcriptPanel)
+        addProperty("lagHudIcon", c.lagHudIcon)
+        addProperty("confidenceHud", c.confidenceHud)
+        addProperty("targetHighlight", c.targetHighlight)
+        addProperty("ghostTrail", c.ghostTrail)
+        addProperty("watchFollowCam", c.watchFollowCam)
+        addProperty("burstSparks", c.burstSparks)
+        addProperty("hoverTooltip", c.hoverTooltip)
+        addProperty("tabListBadge", c.tabListBadge)
         for ((key, cc) in c.checks()) add(key, checkToJson(cc))
     }
 
@@ -219,6 +243,29 @@ object ConfigManager {
             if (o.has("nametagGreenEnabled")) c.nametagGreenEnabled = o.get("nametagGreenEnabled").asBoolean
             readStringList(o, "mutedChecks", c.mutedChecks)
             readStringList(o, "mutedPlayers", c.mutedPlayers)
+            // Phase 2 UX fields (conditional — a pre-Phase-2 config simply keeps the defaults).
+            if (o.has("persistenceEnabled")) c.persistenceEnabled = o.get("persistenceEnabled").asBoolean
+            if (o.has("wizardCompleted")) c.wizardCompleted = o.get("wizardCompleted").asBoolean
+            if (o.has("alertLevel")) c.alertLevel = o.get("alertLevel").asInt
+            if (o.has("alertBatching")) c.alertBatching = o.get("alertBatching").asBoolean
+            if (o.has("alertBatchWindowTicks")) c.alertBatchWindowTicks = o.get("alertBatchWindowTicks").asInt
+            if (o.has("audioCues")) c.audioCues = o.get("audioCues").asBoolean
+            if (o.has("audioVolume")) c.audioVolume = o.get("audioVolume").asDouble
+            if (o.has("audioNuclear")) c.audioNuclear = o.get("audioNuclear").asBoolean
+            if (o.has("lagSuppressAlerts")) c.lagSuppressAlerts = o.get("lagSuppressAlerts").asBoolean
+            if (o.has("nametagBadge")) c.nametagBadge = o.get("nametagBadge").asBoolean
+            if (o.has("nametagBurstPulse")) c.nametagBurstPulse = o.get("nametagBurstPulse").asBoolean
+            if (o.has("compactMode")) c.compactMode = o.get("compactMode").asBoolean
+            if (o.has("evidenceWindowTicks")) c.evidenceWindowTicks = o.get("evidenceWindowTicks").asInt
+            if (o.has("transcriptPanel")) c.transcriptPanel = o.get("transcriptPanel").asBoolean
+            if (o.has("lagHudIcon")) c.lagHudIcon = o.get("lagHudIcon").asBoolean
+            if (o.has("confidenceHud")) c.confidenceHud = o.get("confidenceHud").asBoolean
+            if (o.has("targetHighlight")) c.targetHighlight = o.get("targetHighlight").asBoolean
+            if (o.has("ghostTrail")) c.ghostTrail = o.get("ghostTrail").asBoolean
+            if (o.has("watchFollowCam")) c.watchFollowCam = o.get("watchFollowCam").asBoolean
+            if (o.has("burstSparks")) c.burstSparks = o.get("burstSparks").asBoolean
+            if (o.has("hoverTooltip")) c.hoverTooltip = o.get("hoverTooltip").asBoolean
+            if (o.has("tabListBadge")) c.tabListBadge = o.get("tabListBadge").asBoolean
             for ((key, cc) in c.checks()) {
                 if (o.has(key)) readCheck(o.getAsJsonObject(key), cc, resetCalibration)
             }

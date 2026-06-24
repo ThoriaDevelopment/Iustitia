@@ -20,14 +20,16 @@ import java.util.concurrent.ConcurrentHashMap
  * Tiering (user-confirmed "strict + corroboration + decay" — calibrated so a yellow/red
  * nametag implies ≥95% confidence the player is actually cheating, to avoid false
  * hackusations; this is display logic only, the checks themselves are untouched):
- *  - **RED** — ≥ [RED_DISTINCT] (3) DISTINCT red-capable checks alerted on this player.
- *    Independent cross-check corroboration — only blatant multi-signal cheaters reach red.
- *    [CORROBORATOR] checks (killAura) count toward the 3 only alongside ≥1 primary
+ *  - **RED** — ≥ [RED_DISTINCT] (2) DISTINCT red-capable checks alerted on this player.
+ *    Independent cross-check corroboration — blatant multi-signal cheaters reach red.
+ *    [CORROBORATOR] checks (killAura) count toward the 2 only alongside ≥1 primary
  *    red-capable alert; they never initiate a tier on their own.
- *  - **YELLOW** — ≥1 primary [DEFINITIVE] (red-capable) check alerted. A lone killAura, or
- *    any tier-NEUTRAL signal (rotationTracking / noFallDamage / speedEnvelope / …), does
- *    NOT yellow — those are FP-prone on legit play (intense combat, KitPvP arena-drop, dash)
- *    and must not mark a legit player suspect.
+ *  - **YELLOW** — ≥1 primary [DEFINITIVE] (red-capable) check alerted, OR a lone
+ *    [CORROBORATOR] (killAura) alert. The lone-corroborator→YELLOW path is a deliberate
+ *    loosening (was GREEN): a player the silent-aim suite alone alerted on is a suspect
+ *    worth a yellow prefix. Any tier-NEUTRAL signal (rotationTracking / noFallDamage /
+ *    speedEnvelope / …) still does NOT yellow — those are FP-prone on legit play (intense
+ *    combat, KitPvP arena-drop, dash) and must not mark a legit player suspect.
  *  - **GREEN** — no red-capable alert this session.
  *  - **Decay** — a tier fades one level (red→yellow→green) per [DECAY_MS] (~10 min) with no
  *    red-capable alert, so a stale / one-off flag does not persist as a false accusation.
@@ -80,8 +82,11 @@ object FlagHistory {
      */
     val CORROBORATOR: Set<String> = setOf("killAura")
 
-    /** Distinct red-capable (primary + corroborating) checks that must alert to mark RED. */
-    private const val RED_DISTINCT = 3
+    /** Distinct red-capable (primary + corroborating) checks that must alert to mark RED.
+     *  Loosened 3→2 (display-only) so a 2-signal-corroborated cheater reaches RED instead of
+     *  stalling at YELLOW — the strict ≥3 rarely fired on quiet servers. The smallest integer
+     *  step available; revert to 3 if RED prefixes become too common. */
+    private const val RED_DISTINCT = 2
 
     /** Idle window after which a tier fades one level (red→yellow→green). ~10 min. */
     private const val DECAY_MS = 10L * 60 * 1000
@@ -93,6 +98,10 @@ object FlagHistory {
     private val alertedChecksByUuid = ConcurrentHashMap<UUID, HashSet<String>>()
     /** Wall-clock of the last red-capable alert per player — the decay clock (idle since this). */
     private val lastAlertWallMsByUuid = ConcurrentHashMap<UUID, Long>()
+    /** Game tick of the last red-capable (DEFINITIVE ∪ CORROBORATOR) alert per player — drives the
+     *  nametag burst-pulse ("fresh flag within last 3s") and the `/ius evidence`/snapshot "fresh"
+     *  marker. Read cross-thread from the render mixin; benign one-tick staleness, fail-open. */
+    val lastRedAlertTick = ConcurrentHashMap<UUID, Int>()
     private val nameByUuid = ConcurrentHashMap<UUID, String>()
 
     /** Accurate per-(player, check) flag COUNT this session. Unlike [flagsByUuid] (capped at
@@ -119,6 +128,8 @@ object FlagHistory {
             // Accurate count + peak VL (fail-open: an aggregation error never blocks a flag).
             flagCounts.getOrPut(uuid) { ConcurrentHashMap() }.merge(checkId, 1) { a, b -> a + b }
             maxVlByUuidCheck.getOrPut(uuid) { ConcurrentHashMap() }.merge(checkId, vl) { a, b -> kotlin.math.max(a, b) }
+            // Keep the roaming persistence store in sync (debounced, no-op when the toggle is off).
+            try { dev.iustitia.persistence.PersistenceManager.saveHistory() } catch (_: Throwable) {}
         } catch (_: Throwable) {
             // fail-open: history must never block a flag
         }
@@ -139,7 +150,9 @@ object FlagHistory {
                 val set = alertedChecksByUuid.computeIfAbsent(uuid) { HashSet() }
                 synchronized(set) { set.add(checkId) }
                 lastAlertWallMsByUuid[uuid] = System.currentTimeMillis()
+                lastRedAlertTick[uuid] = tick
             }
+            try { dev.iustitia.persistence.PersistenceManager.saveHistory() } catch (_: Throwable) {}
         } catch (_: Throwable) {
             // fail-open
         }
@@ -211,6 +224,113 @@ object FlagHistory {
         "$body, $alerts alert${if (alerts == 1) "" else "s"}"
     } catch (_: Throwable) { "clean (no red-capable alerts)" }
 
+    /**
+     * Numeric cheat-confidence score 0–99 for the nametag badge + `/ius session` "who peaked
+     * highest". A weighted blend of the tier base (green 15 / yellow 55 / red 82), a recency bonus
+     * (0–12, fresh at the last red-capable alert, decaying to 0 over [DECAY_MS]), a diversity bonus
+     * (0–8, +2 per distinct red-capable check up to 4), and a +3 corroborator bonus. Capped at 99.
+     * Display-only — derives from the existing tier/alert state, changes no check logic. Fail-open.
+     */
+    fun confidenceScore(uuid: UUID): Int = try {
+        val tier = tierFor(uuid)
+        val base = when (tier) { Tier.GREEN -> 15; Tier.YELLOW -> 55; Tier.RED -> 82 }
+        val lastMs = lastAlertWallMsByUuid[uuid] ?: 0L
+        val recency = if (lastMs > 0) {
+            val frac = ((System.currentTimeMillis() - lastMs).toDouble() / DECAY_MS).coerceIn(0.0, 1.0)
+            (12 * (1.0 - frac)).toInt().coerceIn(0, 12)
+        } else 0
+        val set = alertedChecksByUuid[uuid]
+        val primary = set?.count { it in DEFINITIVE } ?: 0
+        val hasCorr = set?.any { it in CORROBORATOR } ?: false
+        val distinct = primary + if (hasCorr) 1 else 0
+        val diversity = minOf(distinct, 4) * 2
+        val corr = if (hasCorr) 3 else 0
+        (base + recency + diversity + corr).coerceIn(0, 99)
+    } catch (_: Throwable) { 0 }
+
+    /**
+     * One-line "why this tier" explanation for the (deferred render) nametag-hover tooltip and the
+     * transcript/snapshot exports, e.g. `"RED: 3 primary checks (reach, backtrack, multiTarget)
+     * within 12s"`. Built from the alerted-check set + the flag tick span. Fail-open.
+     */
+    fun confidenceExplanation(uuid: UUID): String = try {
+        val set = alertedChecksByUuid[uuid]
+        if (set == null || set.isEmpty()) {
+            return if (sessionAlertCount(uuid) > 0) "tier-neutral signals only (no red-capable alert)" else "clean (no red-capable alerts)"
+        }
+        val primaries = set.filter { it in DEFINITIVE }
+        val tier = tierFor(uuid)
+        val tierName = when (tier) { Tier.GREEN -> "GREEN"; Tier.YELLOW -> "YELLOW"; Tier.RED -> "RED" }
+        val sp = span(uuid)
+        val window = if (sp == null) "" else " within ${(sp.second - sp.first) / 20}s"
+        if (primaries.isEmpty()) {
+            "$tierName: corroborator only (${set.joinToString(", ")})$window"
+        } else {
+            "$tierName: ${primaries.size} primary check${if (primaries.size == 1) "" else "s"} " +
+                "(${primaries.joinToString(", ")})$window"
+        }
+    } catch (_: Throwable) { "clean (no red-capable alerts)" }
+
+    // --- persistence accessors (read by PersistenceManager, written by mergePersisted) ---
+
+    /** The red-capable alerted-check set for [uuid] (primary ∪ corroborator). Read-only copy. */
+    fun alertedChecksOf(uuid: UUID): Set<String> = try {
+        alertedChecksByUuid[uuid]?.toSet() ?: emptySet()
+    } catch (_: Throwable) { emptySet() }
+
+    /** Wall-clock ms of the last red-capable alert for [uuid] (the decay clock), or 0. */
+    fun lastAlertWallMsOf(uuid: UUID): Long = try { lastAlertWallMsByUuid[uuid] ?: 0L } catch (_: Throwable) { 0L }
+
+    /** Every uuid known to FlagHistory (union of all backing-map keys) — for the persistable sweep. */
+    fun knownUuids(): Set<UUID> = try {
+        val s = LinkedHashSet<UUID>()
+        s.addAll(flagsByUuid.keys); s.addAll(alertCountByUuid.keys); s.addAll(alertedChecksByUuid.keys)
+        s.addAll(nameByUuid.keys); s.addAll(flagCounts.keys); s.addAll(maxVlByUuidCheck.keys)
+        s
+    } catch (_: Throwable) { emptySet() }
+
+    /**
+     * Restore persisted state for [uuid] (loaded by [dev.iustitia.persistence.PersistenceManager] on
+     * startup when persistence is on). Merges into every backing map so `/ius hist`/`/ius note`/the
+     * tier show pre-restart data. The tier itself decays naturally from [lastAlertWallMs] (a restart
+     * usually exceeds [DECAY_MS], so a stale RED fades to GREEN until the player re-alerts — the flag
+     * timeline + counts persist regardless). Fail-open.
+     */
+    fun mergePersisted(
+        uuid: UUID, name: String, alertCount: Int, alertedChecks: Set<String>,
+        lastAlertWallMs: Long, flagCountMap: Map<String, Int>, maxVlMap: Map<String, Double>,
+        persistedFlags: List<Flag>,
+    ) {
+        try {
+            if (name.isNotEmpty()) nameByUuid[uuid] = name
+            if (alertCount > 0) alertCountByUuid[uuid] = alertCount
+            if (alertedChecks.isNotEmpty()) {
+                val set = alertedChecksByUuid.computeIfAbsent(uuid) { HashSet() }
+                synchronized(set) { set.addAll(alertedChecks) }
+            }
+            if (lastAlertWallMs > 0) lastAlertWallMsByUuid[uuid] = lastAlertWallMs
+            if (flagCountMap.isNotEmpty()) {
+                val m = flagCounts.computeIfAbsent(uuid) { ConcurrentHashMap() }
+                flagCountMap.forEach { (cid, c) -> m.merge(cid, c) { a, b -> a + b } }
+            }
+            if (maxVlMap.isNotEmpty()) {
+                val m = maxVlByUuidCheck.computeIfAbsent(uuid) { ConcurrentHashMap() }
+                maxVlMap.forEach { (cid, v) -> m.merge(cid, v) { a, b -> kotlin.math.max(a, b) } }
+            }
+            if (persistedFlags.isNotEmpty()) {
+                val dq = flagsByUuid.getOrPut(uuid) { ArrayDeque() }
+                synchronized(dq) {
+                    // persistedFlags are oldest→newest; insert at the tail (oldest end) so live
+                    // flags (added at head) stay newest. Cap to [CAP].
+                    persistedFlags.forEach { dq.addLast(it) }
+                    while (dq.size > CAP) dq.removeLast()
+                }
+            }
+        } catch (_: Throwable) {
+            // fail-open: a bad persisted record never blocks the session
+        }
+    }
+
     fun tierFor(uuid: UUID): Tier = try {
         val set = alertedChecksByUuid[uuid]
         if (set == null || set.isEmpty()) return Tier.GREEN
@@ -220,13 +340,12 @@ object FlagHistory {
             primary = set.count { it in DEFINITIVE }
             hasCorroborator = set.any { it in CORROBORATOR }
         }
-        // Lone corroborator (killAura) with no primary → not enough to accuse: GREEN.
-        if (primary == 0) return Tier.GREEN
-        // killAura corroborates the primaries (counts as +1 distinct toward RED's ≥3).
+        // killAura corroborates the primaries (counts as +1 distinct toward RED's ≥RED_DISTINCT).
         val distinct = primary + (if (hasCorroborator) 1 else 0)
         val peak = when {
             distinct >= RED_DISTINCT -> Tier.RED
             primary >= 1 -> Tier.YELLOW
+            hasCorroborator -> Tier.YELLOW  // loosened: lone killAura now YELLOW (was GREEN)
             else -> Tier.GREEN
         }
         if (peak == Tier.GREEN) return Tier.GREEN
@@ -281,6 +400,7 @@ object FlagHistory {
             alertCountByUuid.clear()
             alertedChecksByUuid.clear()
             lastAlertWallMsByUuid.clear()
+            lastRedAlertTick.clear()
             nameByUuid.clear()
             flagCounts.clear()
             maxVlByUuidCheck.clear()

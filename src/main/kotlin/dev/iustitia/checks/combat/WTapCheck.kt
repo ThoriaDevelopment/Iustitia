@@ -61,8 +61,13 @@ class WTapCheck : Check() {
 
     private class WTapContext : CheckContext() {
         var prevSprinting: Boolean = false
-        val transitions = java.util.ArrayDeque<Int>()
-        /** Per-attack "did this hit carry ≥threshold sprint transitions within ±1 tick". */
+        // transitions is mutated in process (client-tick thread: add / removeAll) AND read in
+        // onAttack (network thread: count) — AttackEvent is published from the packet handler.
+        // A plain ArrayDeque under concurrent modify+iterate can throw CME / corrupt; use a
+        // concurrent deque (weakly-consistent iterator, fail-open already covers the rest).
+        val transitions = java.util.concurrent.ConcurrentLinkedDeque<Int>()
+        /** Per-attack "did this hit carry ≥threshold sprint transitions within ±1 tick".
+         *  Mutated only in onAttack (network thread) — single-threaded, ArrayDeque is fine. */
         val recent = java.util.ArrayDeque<Boolean>()
     }
 

@@ -50,6 +50,16 @@ class JumpOnHurtCheck : Check() {
             if (tp.inVehicle || tp.gliding || tp.riptide) return
             if (tick - tp.lastTeleportTick < 5) return
             val ctx = contextOf(tp.uuid) as JumpOnHurtContext
+            // totalHits/coincidentHits used to accumulate all-session, so the coincidence ratio
+            // went stale: a cheater who toggled JumpReset on late could never climb back to
+            // 0.9 against a huge all-time denominator (fail-negative), and a one-off early
+            // coincidence was permanently baked in. Reset the per-fight counters once the
+            // player has been out of combat (no hit) for SESSION_RESET_TICKS, so the ratio
+            // reflects the current fight — the documented "≥5 hits / ≥90% coincidence" bar.
+            if (ctx.lastHitTick != -10000 && tick - ctx.lastHitTick > SESSION_RESET_TICKS) {
+                ctx.totalHits = 0
+                ctx.coincidentHits = 0
+            }
             if (!ctx.pendingHit) return
             val since = tick - ctx.lastHitTick
             if (since in 0..1 && tp.deltaY > 0.3) {
@@ -82,5 +92,8 @@ class JumpOnHurtCheck : Check() {
         const val MIN_HITS = 5
         /** Coincidence rate required to flag (above the legit anti-KB-hop ceiling). */
         const val COINCIDENCE = 0.9
+        /** Idle window (no hit taken) after which the per-fight total/coincident counters reset,
+         *  so the coincidence ratio reflects the current fight instead of an all-time average. */
+        const val SESSION_RESET_TICKS = 140
     }
 }

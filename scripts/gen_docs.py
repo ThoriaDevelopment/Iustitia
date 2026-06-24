@@ -21,8 +21,8 @@ REPO = "https://github.com/ThoriaDevelopment/Iustitia"
 # Never-stale install / release links — point at /releases/latest so we never
 # have to bump a version string here when a new jar ships.
 RELEASES_LATEST = f"{REPO}/releases/latest"
-RELEASE_PAGE = f"{REPO}/releases/tag/v0.2.0"
-JAR_URL = f"{REPO}/releases/download/v0.2.0/iustitia-v0.2.0.jar"
+RELEASE_PAGE = f"{REPO}/releases/tag/v1.0.0"
+JAR_URL = f"{REPO}/releases/download/v1.0.0/iustitia-v1.0.0.jar"
 BRANCH = "main"
 
 GROUP_ORDER = ["Combat", "Movement", "Rotation", "Packet"]
@@ -77,7 +77,7 @@ def footer(depth: int) -> str:
         <a href="{RELEASES_LATEST}" target="_blank" rel="noopener">Releases</a>
       </div>
       <div class="footer-disclaimer">
-        v0.2.0 &middot; For Minecraft 1.21.11 (Fabric). Not affiliated with or endorsed by Mojang or Microsoft.
+        v1.0.0 &middot; For Minecraft 1.21.11 (Fabric). Not affiliated with or endorsed by Mojang or Microsoft.
         Minecraft is a trademark of Mojang Synergies AB. No telemetry, no outgoing packets &mdash; the mod only observes.
       </div>
     </div>

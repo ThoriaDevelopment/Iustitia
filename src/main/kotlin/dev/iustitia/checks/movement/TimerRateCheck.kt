@@ -35,10 +35,16 @@ class TimerRateCheck : Check() {
     override fun process(tp: TrackedPlayer, tick: Int) {
         try {
             if (tp.inVehicle || tp.gliding || tp.riptide || tp.swimming) return
-            if (tick - tp.lastTeleportTick < 10) return
+            val ctx = contextOf(tp.uuid) as TimerContext
+            // Teleport exemption: a server teleport (kit-equip, /tpa, respawn) injects a huge bps
+            // sample — AND a server-lag catch-up burst registers as a >8-block jump, setting
+            // lastTeleportTick too. Skip AND clear the streak so a pre-teleport partial run can't
+            // carry into the post-teleport catch-up overspeed and reach 3 (the false flag).
+            // Mirrors SpeedEnvelope's clear-on-teleport. Done before the lag-clear below because
+            // a catch-up burst sets BOTH signals, and the teleport return would otherwise shadow it.
+            if (tick - tp.lastTeleportTick < 10) { ctx.streak = 0; return }
             if (tick - tp.hurtTick < 5) return
             if (tick - tp.velocityTick < 40) return
-            val ctx = contextOf(tp.uuid) as TimerContext
             // Server-lag exemption: skip AND clear the streak so a pre-lag partial run can't
             // combine with the post-lag catch-up to reach 3. Matches SpeedEnvelope's windows.
             if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||

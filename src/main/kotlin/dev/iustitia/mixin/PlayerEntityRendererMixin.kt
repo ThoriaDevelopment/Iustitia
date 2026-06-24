@@ -44,21 +44,23 @@ import java.util.IdentityHashMap
  * straight off `state` via `getfield`, so a HEAD inject that mutates `displayName` is seen by the
  * draw.)
  *
- * ## Server coverage (investigated + concluded)
+ * ## Server coverage
  *
- * - **minemen.club + 1.8.9 servers**: vanilla populates `displayName` for living players → prefix
- *   renders. ✅
- * - **stray.gg**: server hides the vanilla nametag (`displayName` never populated — team
- *   `nametagVisibility` = hideForOtherTeams) and shows a team-stylized custom hologram. Unfixable
- *   here — there's no `displayName` to prefix. ✗ (by design)
- * - **mcpvp.club**: `displayName` is NULL during live play (confirmed — the draw-site inject's DRAW
- *   diagnostic only ever fired at the instant of death, never during combat). The black-bg label
- *   you see during play is `playerName` — the server's BELOW_NAME health-indicator — not the name.
- *   Same unfixable class as stray.gg. ✗ (by design — user accepted; prefixing the health indicator
- *   was rejected as semantically wrong.)
+ * - **minemen.club + 1.8.9 servers**: vanilla populates `displayName` for living players and the
+ *   base renderer calls `renderLabelIfPresent` → the vanilla path prefixes it. ✅
+ * - **Team-hidden-nametag servers (mcpvp.club, stray.gg)**: the team sets `nametagVisibility` so
+ *   `LivingEntityRenderer.hasLabel` returns false and the base renderer does NOT call
+ *   `renderLabelIfPresent` during live play (the diagnostic only ever fired at death). This HEAD
+ *   therefore never runs during combat, so prefixing `playerName` here would change nothing on
+ *   screen — the on-screen name is a HOLOGRAM entity the server spawns, not the player's own
+ *   label. The tier cue on these servers comes from [ArmorStandEntityRendererMixin] (vehicle-graph
+ *   + proximity owner match), NOT this branch. The `playerName` fallback below only helps on the
+ *   rarer servers that DO call `renderLabelIfPresent` with a null `displayName` but a populated
+ *   BELOW_NAME score line.
  *
- * So the prefix only appears on servers that populate vanilla `displayName`. That's the intended
- * behavior; mcpvp/stray are left without a tier cue.
+ * Which case a given server hits is disambiguated by the verbose `nametag-fallback-probe` log:
+ * if it fires, this inject is being called; if it never fires on a server, the name is a hologram
+ * and the armor-stand mixin is the only path.
  *
  * ## Tier lookup at draw time
  *
@@ -118,6 +120,10 @@ class PlayerEntityRendererMixin {
     private val loggedFallback =
         java.util.Collections.synchronizedSet(java.util.LinkedHashSet<java.util.UUID>())
 
+    /** Players for which we've already emitted the fallback-probe diagnostic this session. */
+    private val loggedProbe =
+        java.util.Collections.synchronizedSet(java.util.LinkedHashSet<java.util.UUID>())
+
     @Inject(method = ["updateRenderState"], at = [At("TAIL")])
     private fun iustitia_recordTier(
         entity: PlayerLikeEntity,
@@ -157,32 +163,59 @@ class PlayerEntityRendererMixin {
             val tier = entry.tier
             if (tier == FlagHistory.Tier.GREEN && !cfg.nametagGreenEnabled) return
 
-            val (color, glyph, mark) = when (tier) {
-                FlagHistory.Tier.GREEN -> Triple("a", "[+]", GREEN_MARK)
-                FlagHistory.Tier.YELLOW -> Triple("e", "[!]", YELLOW_MARK)
-                FlagHistory.Tier.RED -> Triple("c", "[X]", RED_MARK)
+            val (color, glyph, _) = when (tier) {
+                FlagHistory.Tier.GREEN -> Triple("a", "+", GREEN_MARK)
+                FlagHistory.Tier.YELLOW -> Triple("e", "!", YELLOW_MARK)
+                FlagHistory.Tier.RED -> Triple("c", "X", RED_MARK)
             }
-            val prefix = Text.literal("§${color}${glyph}§r ")
+            // Burst pulse: for ~3s (60 ticks) after a fresh red-capable alert, alternate the glyph
+            // color between the tier color and white (§f) on a ~400ms cycle so the prefix "pulses"
+            // mid-fight — a visual flag-burst cue. Pure text-color modulation, no render API. The
+            // double-prefix guard below is color-agnostic so the §f pulse variant still blocks
+            // intra-frame multi-pass re-prefixing.
+            val glyphColor = if (cfg.nametagBurstPulse) {
+                val lastRed = try { FlagHistory.lastRedAlertTick[entry.uuid] ?: -10000 } catch (_: Throwable) { -10000 }
+                if (dev.iustitia.Iustitia.tickCounter - lastRed <= 60) {
+                    if ((System.currentTimeMillis() / 200L) % 2L == 0L) color else "f"
+                } else color
+            } else color
+            // Prefix: the tier glyph and the confidence score share ONE bracketed group in the tier
+            // color (the score copies the glyph color — including the burst-pulse §f white), directly
+            // adjacent with no gap: `[X 82]` rather than the old `[X] §7[82]` (gray, separated).
+            // nametagBadge off → just the glyph `[X]`.
+            val inner = if (cfg.nametagBadge) {
+                try { "$glyph " + FlagHistory.confidenceScore(entry.uuid) } catch (_: Throwable) { glyph }
+            } else glyph
+            val prefix = Text.literal("§${glyphColor}[$inner]§r ")
 
             val dnAcc = state as? EntityRenderStateAccessor ?: return
             val displayName = dnAcc.iustitia_getDisplayName()
             if (displayName != null) {
                 // Vanilla path: prefix the name. The BELOW_NAME score line (playerName) is left
                 // untouched. Double-prefix guard: skip if already prefixed this frame (multi-pass).
-                val s = displayName.string
-                if (s.startsWith(GREEN_MARK) || s.startsWith(YELLOW_MARK) || s.startsWith(RED_MARK)) return
+                // Color-agnostic so the burst-pulse §f variant (and the §7 badge) still match.
+                if (alreadyPrefixed(displayName.string)) return
                 dnAcc.iustitia_setDisplayName(Text.empty().append(prefix).append(displayName))
             } else {
                 // FALLBACK: the server hid the vanilla name (displayName null via team
-                // nametagVisibility — e.g. mcpvp.club / stray.gg). The only label the vanilla
-                // player renderer still draws here is the BELOW_NAME score line (playerName), so we
-                // prefix that as a tier cue. Skip GREEN — we don't want [+] on every clean player's
-                // score line; only YELLOW/RED surface a cue on the fallback path.
+                // nametagVisibility). WHEN renderLabelIfPresent is being called, the only label the
+                // vanilla player renderer still draws is the BELOW_NAME score line (playerName), so
+                // we prefix that as a tier cue. On team-hidden servers the base renderer may skip
+                // renderLabelIfPresent entirely (hasLabel == false) — then this HEAD never runs and
+                // the on-screen name is a HOLOGRAM entity; the tier cue there comes from
+                // ArmorStandEntityRendererMixin, not this branch. Skip GREEN — no [+] on every clean
+                // player's score line; only YELLOW/RED surface a cue on the fallback path.
+                val pnAcc = state as? PlayerEntityRenderStateAccessor
+                val score = pnAcc?.iustitia_getPlayerName()
+                // Probe (one-per-player, verbose-only): confirms (a) renderLabelIfPresent IS being
+                // called for this player on this server, and (b) whether a BELOW_NAME score line
+                // exists. If this never logs on a server, the base renderer is skipping
+                // renderLabelIfPresent → the visible name is a hologram → the armor-stand mixin is
+                // the only path. This is the diagnostic that pins the mcpvp/stray case.
+                logFallbackProbeOnce(entry.uuid, tier, score != null)
                 if (tier == FlagHistory.Tier.GREEN) return
-                val pnAcc = state as? PlayerEntityRenderStateAccessor ?: return
-                val score = pnAcc.iustitia_getPlayerName() ?: return   // null = no BELOW_NAME objective
-                val s = score.string
-                if (s.startsWith(GREEN_MARK) || s.startsWith(YELLOW_MARK) || s.startsWith(RED_MARK)) return
+                if (pnAcc == null || score == null) return   // no BELOW_NAME objective → nothing to prefix
+                if (alreadyPrefixed(score.string)) return
                 pnAcc.iustitia_setPlayerName(Text.empty().append(prefix).append(score))
                 logFallbackOnce(entry.uuid, tier)
             }
@@ -211,6 +244,33 @@ class PlayerEntityRendererMixin {
         } catch (_: Throwable) {}
     }
 
+    /**
+     * One verbose line per player per session the first time we reach the displayName==null branch —
+     * i.e. the first time `renderLabelIfPresent` is called for a player whose vanilla nametag the
+     * server has hidden. Reports whether a BELOW_NAME score line (`playerName`) exists. This is the
+     * diagnostic that disambiguates team-hidden-nametag servers:
+     *  - if it fires → `renderLabelIfPresent` IS called here, so the visible label is the player's
+     *    own `playerName` and the fallback (or GREEN-skip) explains what's on screen;
+     *  - if it NEVER fires on a server → the base renderer is skipping `renderLabelIfPresent`
+     *    (hasLabel==false), so the on-screen name is a hologram entity and the armor-stand mixin is
+     *    the only path (and if that also never logs, the hologram is a TextDisplay — uncovered).
+     * Verbose-only, writes to `latest.log` via [VerboseLog], not chat. CAP-bounded.
+     */
+    private fun logFallbackProbeOnce(uuid: java.util.UUID, tier: FlagHistory.Tier, hasScore: Boolean) {
+        try {
+            if (!VerboseLog.isEnabled()) return
+            if (loggedProbe.add(uuid)) {
+                if (loggedProbe.size > CAP) loggedProbe.clear()
+                val name = FlagHistory.nameFor(uuid) ?: uuid.toString().take(8)
+                VerboseLog.log(
+                    "nametag-fallback-probe: $name displayName hidden by server (tier=$tier); " +
+                        "BELOW_NAME score=${if (hasScore) "present" else "null"}; " +
+                        "renderLabelIfPresent IS called for this player"
+                )
+            }
+        } catch (_: Throwable) {}
+    }
+
     private companion object {
         // Mixin requires all static fields to be private (it rejects non-private static fields at
         // apply time with InvalidMixinException). These are companion-object vals/consts = static
@@ -221,4 +281,24 @@ class PlayerEntityRendererMixin {
         /** Backstop size for [stateTier] — far above any realistic per-frame live-entity count. */
         private const val CAP = 512
     }
+
+    /**
+     * Color-agnostic "already prefixed" guard: strips any leading `§<code>` formatting codes then
+     * checks for our tier-glyph bracket opening — `[` + one of `+`/`!`/`X` + either `]` (no-badge
+     * form `[X]`) or a space (badge form `[X 82]`). The burst-pulse modulates the glyph color (tier
+     * color ↔ `§f` white) and the badge appends the score, so the old explicit `startsWith("[+]")` /
+     * `startsWith("[X ")` list MISSED the green/yellow badge forms `[+ ` / `[! ` — on the shadow +
+     * main multi-pass per frame that re-prefixed them, stacking `[! 82][! 82] Name`. This form-based
+     * match covers all six glyph×badge combinations and any leading color. Fail-safe: on any parse
+     * error returns false (prefix — safe side is to prefix; worst case a one-frame double glyph,
+     * not a dropped tier cue).
+     */
+    private fun alreadyPrefixed(s: String): Boolean = try {
+        var i = 0
+        val n = s.length
+        while (i + 1 < n && s[i] == '§' && s[i + 1] in "0123456789abcdefklmnorABCDEFKLMNOR") i += 2
+        // `[` + glyph(+/!/X) + (`]` or ` `)  — covers [+] [!] [X] and [+ 82] [! 82] [X 82].
+        n - i >= 3 && s[i] == '[' && (s[i + 1] == '+' || s[i + 1] == '!' || s[i + 1] == 'X') &&
+            (s[i + 2] == ']' || s[i + 2] == ' ')
+    } catch (_: Throwable) { false }
 }

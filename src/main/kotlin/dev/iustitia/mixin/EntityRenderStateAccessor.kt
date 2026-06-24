@@ -24,7 +24,7 @@ import org.spongepowered.asm.mixin.gen.Accessor
 @Mixin(EntityRenderState::class)
 interface EntityRenderStateAccessor {
     @Accessor("displayName")
-    fun iustitia_getDisplayName(): Text
+    fun iustitia_getDisplayName(): Text?
 
     @Accessor("displayName")
     fun iustitia_setDisplayName(value: Text)

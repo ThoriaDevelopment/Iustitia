@@ -134,7 +134,6 @@ class KillAuraCheck : Check() {
     private val TRAIL_LEN = 5
 
     // consume component
-    private val EAT_TIMEOUT = 33
     private val MIN_USE_TIME = 6
 
     // ---- VL weights scaled to our 0–10 setback economy (Rain 0–400 pool / ~10) ----
@@ -167,15 +166,15 @@ class KillAuraCheck : Check() {
             // consume: an inferred attack while a consumable (eat/drink) has been held for
             // >MIN_USE_TIME. Gated on isUsingConsumable, not bare usingItem — shields (BLOCK)
             // and bows (BOW) also set usingItem but are not the killaura-while-eating signal,
-            // and bare usingItem double-flags a legit shield-blocker with AutoBlock. The
-            // lastEatTick gate is a post-eat cooldown; guard the subtraction because
-            // lastEatTick starts at NO_TICK (Int.MIN_VALUE) — `ev.tick - Int.MIN_VALUE`
-            // overflows Int and wraps negative, which would make this always true (flagging
-            // before any real eat). The NO_TICK case = still in the first eat, where
-            // attacking-while-eating IS the consume signal, so we flag there too.
-            if (attacker.isUsingConsumable && ctx.useItemTicks > MIN_USE_TIME &&
-                (ctx.lastEatTick == NO_TICK || ev.tick - ctx.lastEatTick < EAT_TIMEOUT)
-            ) {
+            // and bare usingItem double-flags a legit shield-blocker with AutoBlock.
+            // The earlier `lastEatTick`/EAT_TIMEOUT gate (flag only within 33 ticks of the
+            // *previous* eat ending) was a bug: on a re-eat session that started >33 ticks
+            // after the last eat ended, it suppressed the flag even though the player IS
+            // currently eating (useItemTicks > MIN_USE_TIME already proves sustained eating),
+            // so a killaura-while-eating cheater who toggled eat off/on evaded after one cycle.
+            // `useItemTicks > MIN_USE_TIME` alone is the correct, sufficient signal — the
+            // player is actively sustaining a consumable at the attack tick.
+            if (attacker.isUsingConsumable && ctx.useItemTicks > MIN_USE_TIME) {
                 flag(attacker, ctx, VL_CONSUME, "Consume", ev.tick, Evidence(
                     pos = attacker.pos, extra = "useTicks=${ctx.useItemTicks}"))
             }
@@ -197,7 +196,6 @@ class KillAuraCheck : Check() {
             if (tp.isUsingConsumable) {
                 ctx.useItemTicks++
             } else {
-                if (ctx.useItemTicks > 0) ctx.lastEatTick = tick
                 ctx.useItemTicks = 0
             }
 
@@ -460,7 +458,7 @@ class KillAuraCheck : Check() {
         // Ice keeps momentum pointing off-yaw for many ticks even for legit players — skip it.
         val world = MinecraftClient.getInstance().world
         val ground = WorldQueries.blockStateAt(
-            world, tp.pos.x.toInt(), Math.floor(tp.pos.y - 0.5).toInt(), tp.pos.z.toInt()
+            world, Math.floor(tp.pos.x).toInt(), Math.floor(tp.pos.y - 0.5).toInt(), Math.floor(tp.pos.z).toInt()
         )
         if (ground == null) return // chunk unloaded — fail-negative, never FP
         if (ground.isOf(Blocks.ICE) || ground.isOf(Blocks.PACKED_ICE) || ground.isOf(Blocks.BLUE_ICE)) return
@@ -658,6 +656,5 @@ class KillAuraCheck : Check() {
         var moveTickCounter: Int = 0
         // consume component
         var useItemTicks: Int = 0
-        var lastEatTick: Int = NO_TICK
     }
 }

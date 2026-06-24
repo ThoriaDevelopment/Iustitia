@@ -71,36 +71,42 @@ class PlayerHistoryScreen(private val uuid: java.util.UUID, private val parent: 
 
     override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
         try {
+            // F1-equivalent backdrop: a dark, mostly-opaque fill behind the content so the
+            // in-game HUD (hotbar/chat) and world don't bleed through this transparent screen
+            // and hurt the report's readability. Fills respect alpha (unlike drawText), so this
+            // is visible. No global state is touched — closing the screen resumes normal
+            // rendering, so the "F1" effect auto-restores.
+            context.fill(0, 0, this.width, this.height, BG)
             super.render(context, mouseX, mouseY, delta)
             val tr = this.textRenderer
             val x = 10
             var y = 12
             // ---- profile card (#2) ----
-            context.drawTextWithShadow(tr, Text.literal(glyphFor(tier) + " §f§l" + name + " §7(" + tierLabel(tier) + ")"), x, y, 0xFFFFFF); y += 14
+            context.drawTextWithShadow(tr, Text.literal(glyphFor(tier) + " §f§l" + name + " §7(" + tierLabel(tier) + ")"), x, y, WHITE); y += 14
             val sp = FlagHistory.span(uuid)
             val spanTxt = if (sp == null) "§7no flags this session" else "§7first §f@t${sp.first} §7last §f@t${sp.second}"
-            context.drawTextWithShadow(tr, Text.literal(spanTxt), x, y, 0xFFFFFF); y += 12
+            context.drawTextWithShadow(tr, Text.literal(spanTxt), x, y, WHITE); y += 12
             val total = counts.values.sum()
             val maxVl = maxVlMap.values.maxOrNull() ?: 0.0
             context.drawTextWithShadow(tr, Text.literal(
                 "§7alerts §f${FlagHistory.sessionAlertCount(uuid)} §7flags §f$total §7max vl §f${"%.1f".format(maxVl)}" +
-                    (FlagHistory.topCheck(uuid)?.let { " §7top §b$it" } ?: "")), x, y, 0xFFFFFF); y += 12
-            context.drawTextWithShadow(tr, Text.literal("§7confidence: §f" + FlagHistory.confidenceLine(uuid)), x, y, 0xFFFFFF); y += 14
+                    (FlagHistory.topCheck(uuid)?.let { " §7top §b$it" } ?: "")), x, y, WHITE); y += 12
+            context.drawTextWithShadow(tr, Text.literal("§7confidence: §f" + FlagHistory.confidenceLine(uuid)), x, y, WHITE); y += 14
             // max vl per check bar (top 8)
-            context.drawTextWithShadow(tr, Text.literal("§7max vl per check:"), x, y, 0xFFFFFF); y += 11
+            context.drawTextWithShadow(tr, Text.literal("§7max vl per check:"), x, y, WHITE); y += 11
             val maxVlForScale = (maxVlMap.values.maxOrNull() ?: 0.0).coerceAtLeast(0.001)
             maxVlMap.entries.take(8).forEach { (cid, vl) ->
                 val filled = (vl / maxVlForScale * 10.0).toInt().coerceIn(0, 10)
                 val bar = "▓".repeat(filled) + "░".repeat(10 - filled)
-                context.drawTextWithShadow(tr, Text.literal("§b" + cid.padEnd(16).take(16) + " §7$bar §f${"%.1f".format(vl)}"), x, y, 0xFFFFFF); y += 11
+                context.drawTextWithShadow(tr, Text.literal("§b" + cid.padEnd(16).take(16) + " §7$bar §f${"%.1f".format(vl)}"), x, y, WHITE); y += 11
             }
             y += 4
             // ---- filter row ----
             val checkLabel = "§7[§fCheck: ${checkFilter ?: "all"}§7]"
             val timeLabel = "§7[§fTime: ${timeLabel()}§7]"
             val checkW = tr.getWidth(Text.literal(checkLabel)) + 2
-            context.drawTextWithShadow(tr, Text.literal(checkLabel), x, y, 0xFFFFFF)
-            context.drawTextWithShadow(tr, Text.literal(timeLabel), x + checkW + 12, y, 0xFFFFFF)
+            context.drawTextWithShadow(tr, Text.literal(checkLabel), x, y, WHITE)
+            context.drawTextWithShadow(tr, Text.literal(timeLabel), x + checkW + 12, y, WHITE)
             filterY = y
             filterCheckX = x; filterCheckW = checkW
             filterTimeX = x + checkW + 12; filterTimeW = tr.getWidth(Text.literal(timeLabel)) + 2
@@ -122,14 +128,14 @@ class PlayerHistoryScreen(private val uuid: java.util.UUID, private val parent: 
                 when (item) {
                     is Item.Group -> {
                         if (hovered) context.fill(x, ry, this.width - 4, ry + ROW_H, 0x30FFFF00)
-                        context.drawTextWithShadow(tr, Text.literal("§e§l${item.checkId} §r§7(${item.count} flags, max ${"%.1f".format(item.maxVl)})"), x + 2, ry + 4, 0xFFFFFF)
+                        context.drawTextWithShadow(tr, Text.literal("§e§l${item.checkId} §r§7(${item.count} flags, max ${"%.1f".format(item.maxVl)})"), x + 2, ry + 4, WHITE)
                     }
                     is Item.Row -> {
                         if (hovered) context.fill(x, ry, this.width - 4, ry + ROW_H, 0x20FFFFFF)
                         val f = item.flag
-                        context.drawTextWithShadow(tr, Text.literal("§7  @t${f.tick} §f${f.label} §7vl§f${"%.1f".format(f.vl)}"), x + 2, ry + 2, 0xFFFFFF)
+                        context.drawTextWithShadow(tr, Text.literal("§7  @t${f.tick} §f${f.label} §7vl§f${"%.1f".format(f.vl)}"), x + 2, ry + 2, WHITE)
                         val ev = f.evidence
-                        if (ev != null) context.drawTextWithShadow(tr, Text.literal("§7    " + evidenceLine(ev)), x + 2, ry + 12, 0xFFFFFF)
+                        if (ev != null) context.drawTextWithShadow(tr, Text.literal("§7    " + evidenceLine(ev)), x + 2, ry + 12, WHITE)
                     }
                 }
             }
@@ -141,7 +147,7 @@ class PlayerHistoryScreen(private val uuid: java.util.UUID, private val parent: 
                 val sx = this.width - 6
                 context.fill(sx, bodyTop, sx + 3, bodyBottom, 0x33FFFFFF)
                 context.fill(sx, knobY, sx + 3, knobY + knobH, 0x66FFFFFF)
-                context.drawTextWithShadow(tr, Text.literal("§7scroll"), x, this.height - 11, 0xFFFFFF)
+                context.drawTextWithShadow(tr, Text.literal("§7scroll"), x, this.height - 11, WHITE)
             }
         } catch (_: Throwable) {}
     }
@@ -165,6 +171,8 @@ class PlayerHistoryScreen(private val uuid: java.util.UUID, private val parent: 
     }
 
     override fun mouseScrolled(x: Double, y: Double, h: Double, v: Double): Boolean {
+        // Lower clamp only here; render() recomputes maxScroll from the live layout and re-clamps
+        // to [0, maxScroll] before drawing each frame, so an over-scroll never produces empty frames.
         try { scroll = (scroll - v.toInt()).coerceAtLeast(0); return true } catch (_: Throwable) {}
         return super.mouseScrolled(x, y, h, v)
     }
@@ -191,6 +199,14 @@ class PlayerHistoryScreen(private val uuid: java.util.UUID, private val parent: 
 
     companion object {
         private const val ROW_H = 20
+        // Opaque white (ARGB 0xFFFFFFFF). 0xFFFFFF is 0x00FFFFFF (alpha 0) and DrawContext.drawText
+        // no-ops when getAlpha(color)==0 (verified in 1.21.11), so 0xFFFFFF text is invisible. -1
+        // is the signed-int form of 0xFFFFFFFF.
+        private const val WHITE = -1
+        /** Dark, ~80%-opaque backdrop (ARGB 0xCC101010) covering the HUD/world behind the screen.
+         *  `.toInt()` because the 8-hex literal's high alpha (≥0x80) makes it overflow Int→Long
+         *  in Kotlin (same gotcha as WHITE = -1 for 0xFFFFFFFF). */
+        private val BG = 0xCC101010.toInt()
         private fun glyphFor(t: FlagHistory.Tier): String = when (t) {
             FlagHistory.Tier.GREEN -> "§a[+]§r"; FlagHistory.Tier.YELLOW -> "§e[!]§r"; FlagHistory.Tier.RED -> "§c[X]§r"
         }

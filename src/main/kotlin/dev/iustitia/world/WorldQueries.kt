@@ -205,15 +205,23 @@ object WorldQueries {
      * see-through and vanilla melee reaches entities poking past them, so flagging a hit
      * "through" them was a map-dependent false positive. A real wall (opaque full cube:
      * stone/planks/…) still blocks. A clean MISS (or a hit essentially at the endpoint)
-     * counts as line-of-sight. Chunk-gated per endpoint block; fail-open on any error
-     * (returns false = "blocked", which makes [ThroughWallsCheck] simply not flag — safe).
+     * counts as line-of-sight.
+     *
+     * Fail-open = LOS (true): on an unloaded endpoint chunk or any raycast error, this
+     * returns `true` ("can see"), so [ThroughWallsCheck] (which flags only when ALL victim
+     * body rays are `!hasLineOfSight`) does NOT flag. (The old `false`-on-error return was
+     * an inverted fail-open — it made ThroughWalls *more* likely to flag on a raycast
+     * error, the opposite of the documented intent. ThroughWalls also pre-gates both
+     * endpoint chunks via [isChunkLoaded], so the common unloaded case returns early there;
+     * this just closes the rare exception path.) Coordinates are floored (not truncated
+     * via toInt) so negative X/Z map to the correct chunk.
      */
     fun hasLineOfSight(world: ClientWorld?, from: Vec3d, to: Vec3d): Boolean {
-        if (world == null) return false
+        if (world == null) return true
         return try {
-            if (!isChunkLoaded(world, from.x.toInt(), from.z.toInt()) ||
-                !isChunkLoaded(world, to.x.toInt(), to.z.toInt())
-            ) return false
+            if (!isChunkLoaded(world, Math.floor(from.x).toInt(), Math.floor(from.z).toInt()) ||
+                !isChunkLoaded(world, Math.floor(to.x).toInt(), Math.floor(to.z).toInt())
+            ) return true
             val ctx = RaycastContext(
                 from, to,
                 RaycastContext.ShapeType.COLLIDER,
@@ -230,7 +238,7 @@ object WorldQueries {
             }
             hit.getPos().squaredDistanceTo(to) < 1.0E-6
         } catch (_: Throwable) {
-            false
+            true
         }
     }
 }

@@ -15,7 +15,7 @@ object CheckInfo {
         ?: "Iustitia check '$checkId'."
 
     /** Whether a check is primary red-capable: its alert can self-standing mark a player YELLOW
-     *  (and contributes toward RED, which needs ≥3 distinct red-capable checks — see
+     *  (and contributes toward RED, which needs ≥2 distinct red-capable checks — see
      *  [dev.iustitia.history.FlagHistory.tierFor]). killAura is a corroborator, not primary. */
     fun isDefinitive(checkId: String): Boolean = dev.iustitia.history.FlagHistory.DEFINITIVE.contains(checkId)
 

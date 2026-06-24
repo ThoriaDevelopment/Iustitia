@@ -72,6 +72,13 @@ class NoKnockbackCheck : Check() {
             ctx.windowDisp = 0.0
             ctx.windowTicks = 0
             ctx.evaluated = false
+            // Reset the captured impulse too: a stale VelocitySignal from before this hit (a prior
+            // hit's KB, an environmental launch) must NOT be used as this hit's expected-impulse
+            // denominator — evaluate() falls back to ASSUMED_SPRINT_KB until a fresh velocity for
+            // THIS hit arrives within its 3-tick window. (kbTick −10000 ⇒ the `tick - kbTick <= 3`
+            // test is false ⇒ ASSUMED_SPRINT_KB fallback.)
+            ctx.kbTick = -10000
+            ctx.kbImpulseH = 0.0
         } catch (_: Throwable) {}
     }
 
@@ -91,6 +98,14 @@ class NoKnockbackCheck : Check() {
     override fun process(tp: TrackedPlayer, tick: Int) {
         try {
             val ctx = contextOf(tp.uuid) as NoKnockbackContext
+            // No attack recorded yet (fresh context: lastHitTick=-10000). Without this guard the
+            // first process() tick for every newly-tracked player computes `since = tick - (-10000)`
+            // (huge) ≥ WINDOW with windowDisp still 0.0 (the 1..WINDOW accumulation never ran) and
+            // evaluated=false → evaluate() runs → 0.0 < threshold*expectedDisp → a bogus NoKB flag
+            // on EVERY player's first tick. (It never crossed setbackVL so no alert/tier corruption,
+            // but it polluted the /ius hist flag timeline + VerboseLog counts. Real anti-KB detection
+            // is unaffected: a real hit sets lastHitTick ≥ 0 first.) Fail-open.
+            if (ctx.lastHitTick < 0) return
             val since = tick - ctx.lastHitTick
             if (since < 1) return // before the KB window
             // accumulate horizontal displacement over the post-hit window (KB spreads across
@@ -110,6 +125,12 @@ class NoKnockbackCheck : Check() {
     private fun evaluate(tp: TrackedPlayer, ctx: NoKnockbackContext, tick: Int) {
         if (tp.inVehicle || tp.gliding || tp.riptide) return
         if (tick - tp.lastTeleportTick < 5) return
+        // Shield exemption: a player holding up a shield (UseAction.BLOCK on main/off hand) takes
+        // NO knockback from a sprint hit — vanilla shields negate sprint-KB. Without this gate a
+        // legit blocker's ~0 windowDisp trips the under-threshold NoKB test → false flag. (A
+        // cheater toggling shield while hit is also exempted here, but shield use is visibly
+        // animated — accepted tradeoff for removing a clean FP class.)
+        if (tp.isBlocking) return
         // Server-lag exemption: a server-wide freeze makes the victim legitimately not move,
         // looking exactly like a Velocity cancel. Bail within the shared lag window.
         if (tick - EntityTrackerManager.lastServerLagTick <= 4 ||

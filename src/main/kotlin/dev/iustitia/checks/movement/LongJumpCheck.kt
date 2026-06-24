@@ -8,7 +8,6 @@ import dev.iustitia.world.WorldQueries
 import net.minecraft.block.Blocks
 import net.minecraft.client.MinecraftClient
 import java.util.UUID
-import kotlin.math.abs
 import kotlin.math.hypot
 
 /**
@@ -35,8 +34,15 @@ class LongJumpCheck : Check() {
             if (tick - tp.hurtTick < 5) return
             if (tick - tp.velocityTick < 40) return
             val ctx = contextOf(tp.uuid) as LongJumpContext
-            // a real jump impulse starts the air phase
-            if (abs(tp.prevDeltaY - 0.42) < 0.08) ctx.airborneStart = tick
+            // a real jump impulse starts the air phase. Arm on the 2nd airborne tick of ANY
+            // jump arc — the prior `abs(prevDeltaY - 0.42) < 0.08` armed only a vanilla 0.42
+            // jump, so a Jump Boost jump (impulse 0.52/0.62/…) never armed and LongJump was
+            // dead for anyone under Jump Boost. Generalize: prevDeltaY is a plausible jump
+            // impulse (0.3..0.9 covers vanilla through high Jump Boost) and Δy is descending
+            // (gravity, < prevDeltaY) — the 2nd-tick signature of a real jump, any boost level.
+            if (tp.prevDeltaY > 0.3 && tp.prevDeltaY < 0.9 && tp.deltaY < tp.prevDeltaY) {
+                ctx.airborneStart = tick
+            }
             if (ctx.airborneStart >= 0 && tick - ctx.airborneStart in 1..6 && !tp.groundedProxy) {
                 val horiz = hypot(tp.delta.x, tp.delta.z)
                 // effective cap mirrors SpeedEnvelope: Speed effect (+20%/level) + ice/slime

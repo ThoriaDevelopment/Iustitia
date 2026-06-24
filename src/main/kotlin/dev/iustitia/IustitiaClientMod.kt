@@ -33,6 +33,9 @@ import dev.iustitia.checks.movement.TeleportCheck
 import dev.iustitia.checks.movement.TimerRateCheck
 import dev.iustitia.checks.movement.WaterWalkCheck
 import dev.iustitia.command.IustitiaCommand
+import dev.iustitia.config.ConfigManager
+import dev.iustitia.keybind.Keybinds
+import dev.iustitia.ui.SetupWizardScreen
 import net.fabricmc.api.ClientModInitializer
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
@@ -52,6 +55,27 @@ class IustitiaClientMod : ClientModInitializer {
 
     override fun onInitializeClient() {
         Iustitia.init()
+
+        // Phase 2 keybinds (snapshot/transcript/session/keybinds/config/note/compact/watch-stub).
+        // Registered with Fabric so they appear in Controls → Iustitia; polled each tick below.
+        try { Keybinds.register() } catch (_: Throwable) {}
+
+        // Phase B HUD overlays (crosshair confidence panel + server-lag indicator) via the stable
+        // HudRenderCallback — no mixin, launch-safe, display-only. Gated by their own config toggles.
+        try { dev.iustitia.hud.HudOverlay.register() } catch (_: Throwable) {}
+
+        // Phase B offender-selfie: hooks WorldRenderEvents.END_MAIN to grab the framebuffer on the
+        // one frame the CameraMixin repoints the camera at the offender. (The CameraMixin itself is
+        // wired via iustitia.mixins.json.)
+        try { dev.iustitia.render.SelfieRenderer.register() } catch (_: Throwable) {}
+
+        // Phase B on-world target highlight: tier-colored wireframe box around the crosshair-target
+        // player, drawn at WorldRenderEvents.AFTER_ENTITIES (depth-tested, no wallhack).
+        try { dev.iustitia.render.TargetHighlightRenderer.register() } catch (_: Throwable) {}
+
+        // Phase B ghost trail: fading breadcrumb trail of recent positions for suspect players
+        // (sampled on END_CLIENT_TICK, drawn on AFTER_ENTITIES; depth-tested, no wallhack).
+        try { dev.iustitia.render.GhostTrailRenderer.register() } catch (_: Throwable) {}
 
         // Full check registry — combat (14) + movement/rotation/packet (18).
         Iustitia.register(ReachCheck())
@@ -93,6 +117,23 @@ class IustitiaClientMod : ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(ClientTickEvents.EndTick {
             tick++
             Iustitia.onClientTick(tick)
+            try { Keybinds.poll() } catch (_: Throwable) {}
+        })
+
+        // First-launch setup wizard: opens once (until wizardCompleted is stamped) on the first
+        // tick the player is actually in-game. Guarded so it never fires from a non-foreground
+        // context; a failure to open is non-fatal (the user can re-run /ius wizard).
+        ClientTickEvents.END_CLIENT_TICK.register(ClientTickEvents.EndTick {
+            try {
+                if (!ConfigManager.config.wizardCompleted) {
+                    val mc = net.minecraft.client.MinecraftClient.getInstance()
+                    if (mc.currentScreen == null && mc.world != null && mc.player != null) {
+                        ConfigManager.config.wizardCompleted = true
+                        try { ConfigManager.save() } catch (_: Throwable) {}
+                        mc.execute { try { mc.setScreen(SetupWizardScreen(null)) } catch (_: Throwable) {} }
+                    }
+                }
+            } catch (_: Throwable) {}
         })
 
         ClientCommandRegistrationCallback.EVENT.register { dispatcher, _ ->
