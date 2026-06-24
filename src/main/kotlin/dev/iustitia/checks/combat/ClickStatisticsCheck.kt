@@ -91,7 +91,7 @@ class ClickStatisticsCheck : Check() {
 
         // StDev window (40 samples)
         if (ctx.tickIntervals.size >= 40) {
-            val sample = ctx.tickIntervals.take(40).map { it.toDouble() }.toDoubleArray()
+            val sample = newestDoubles(ctx.tickIntervals, 40)
             if (MathUtil.populationStDev(sample) < 0.45) {
                 flag(tp, ctx, 1.0, "ClickStats(StDev)", tick)
             }
@@ -100,7 +100,7 @@ class ClickStatisticsCheck : Check() {
         // Kurtosis window — blatant fixed-delay autoclicker only. Strict bar + transition gate
         // + one-shot level: one flag (one alert) per autoclicker episode, not every swing.
         if (ctx.tickIntervals.size >= KURT_WINDOW) {
-            val sample = ctx.tickIntervals.take(KURT_WINDOW).map { it.toDouble() }.toDoubleArray()
+            val sample = newestDoubles(ctx.tickIntervals, KURT_WINDOW)
             val k = MathUtil.excessKurtosis(sample)
             if (k < KURT_STRICT) {
                 if (!ctx.kurtActive) {
@@ -114,6 +114,23 @@ class ClickStatisticsCheck : Check() {
                 ctx.kurtActive = false
             }
         }
+    }
+
+    /**
+     * Snapshot the newest [n] tick-intervals into a primitive DoubleArray, newest-first.
+     *
+     * Bit-identical to `deque.take(n).map { it.toDouble() }.toDoubleArray()` (the deque is
+     * newest-first via [pushFront]/addFirst, and its iterator walks head→tail = newest→oldest,
+     * exactly what `take(n)` yields), but skips the boxed-Double intermediate `List<Double>`
+     * that `.map` allocates — up to 600 boxed doubles per swing on the autoclicker combat path.
+     * Caller guarantees `deque.size >= n` (the call sites gate on it), so the array fills fully.
+     */
+    private fun newestDoubles(deque: ArrayDeque<Int>, n: Int): DoubleArray {
+        val arr = DoubleArray(n)
+        var i = 0
+        val iter = deque.iterator()
+        while (i < n && iter.hasNext()) { arr[i++] = iter.next().toDouble() }
+        return arr
     }
 
     private fun <T> pushFront(deque: ArrayDeque<T>, value: T, cap: Int) {

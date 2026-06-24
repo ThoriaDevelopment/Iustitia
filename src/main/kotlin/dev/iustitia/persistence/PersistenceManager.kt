@@ -43,15 +43,17 @@ object PersistenceManager {
     }
     private val notesPath: Path get() = dataDir.resolve("notes.json")
     private val historyPath: Path get() = dataDir.resolve("history.json")
+    private val exemptionsPath: Path get() = dataDir.resolve("exemptions.json")
     private val snapshotsDir: Path get() = dataDir.resolve("snapshots")
     private val exportsDir: Path get() = dataDir.resolve("exports")
 
     private val enabled: Boolean get() = try { ConfigManager.config.persistenceEnabled } catch (_: Throwable) { false }
 
-    // --- debounced writer (notes + history share one writer thread) ---
+    // --- debounced writer (notes + history + exemptions share one writer thread) ---
     private val queueLock = Object()
     @Volatile private var notesDirty = false
     @Volatile private var historyDirty = false
+    @Volatile private var exemptionsDirty = false
     @Volatile private var writerStarted = false
     private val writerThread: Thread by lazy {
         Thread(::writerLoop, "Iustitia-PersistenceWriter").apply { isDaemon = true }
@@ -65,11 +67,12 @@ object PersistenceManager {
         if (!enabled) return
         try { loadNotes() } catch (_: Throwable) {}
         try { loadHistory() } catch (_: Throwable) {}
+        try { loadExemptions() } catch (_: Throwable) {}
     }
 
     /** React to the persistence toggle changing: on → load + schedule a full save; off → stop. */
     fun onToggle(nowEnabled: Boolean) {
-        if (nowEnabled) { try { loadOnStartup(); saveNote(); saveHistory() } catch (_: Throwable) {} }
+        if (nowEnabled) { try { loadOnStartup(); saveNote(); saveHistory(); saveExemptions() } catch (_: Throwable) {} }
         // when turning off we simply stop scheduling saves; existing in-memory state stays.
     }
 
@@ -107,6 +110,33 @@ object PersistenceManager {
 
     // ---- history ----
     fun saveHistory() { if (enabled) schedule(historyDirty = true) }
+
+    // ---- exemptions ----
+    fun saveExemptions() { if (enabled) schedule(exemptionsDirty = true) }
+    private fun loadExemptions() {
+        val p = exemptionsPath
+        if (!Files.exists(p)) return
+        val arr = JsonParser.parseString(Files.readString(p)).asJsonArray
+        arr.forEach { e ->
+            try {
+                val o = e.asJsonObject
+                val uuid = UUID.fromString(o.get("uuid").asString)
+                dev.iustitia.exempt.Exemptions.load(uuid, o.get("name")?.asString ?: uuid.toString().take(8))
+            } catch (_: Throwable) {}
+        }
+    }
+    private fun writeExemptionsNow() {
+        try {
+            val arr = JsonArray()
+            dev.iustitia.exempt.Exemptions.all().forEach { (uuid, name) ->
+                val o = JsonObject()
+                o.addProperty("uuid", uuid.toString())
+                o.addProperty("name", name)
+                arr.add(o)
+            }
+            writeText(exemptionsPath, gson.toJson(arr))
+        } catch (_: Throwable) {}
+    }
     private fun loadHistory() {
         val p = historyPath
         if (!Files.exists(p)) return
@@ -237,11 +267,12 @@ object PersistenceManager {
     }
 
     // ---- debounced writer plumbing ----
-    private fun schedule(notesDirty: Boolean = false, historyDirty: Boolean = false) {
+    private fun schedule(notesDirty: Boolean = false, historyDirty: Boolean = false, exemptionsDirty: Boolean = false) {
         try {
             synchronized(queueLock) {
                 if (notesDirty) this.notesDirty = true
                 if (historyDirty) this.historyDirty = true
+                if (exemptionsDirty) this.exemptionsDirty = true
                 if (!writerStarted) { writerStarted = true; writerThread.start() }
                 if (!hookAdded) {
                     hookAdded = true
@@ -257,19 +288,20 @@ object PersistenceManager {
         while (true) {
             try {
                 synchronized(queueLock) {
-                    while (!notesDirty && !historyDirty) {
+                    while (!notesDirty && !historyDirty && !exemptionsDirty) {
                         @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
                         (queueLock as Object).wait()
                     }
                 }
                 Thread.sleep(DEBOUNCE_MS)
-                val doNotes: Boolean; val doHistory: Boolean
+                val doNotes: Boolean; val doHistory: Boolean; val doExemptions: Boolean
                 synchronized(queueLock) {
-                    doNotes = notesDirty; doHistory = historyDirty
-                    notesDirty = false; historyDirty = false
+                    doNotes = notesDirty; doHistory = historyDirty; doExemptions = exemptionsDirty
+                    notesDirty = false; historyDirty = false; exemptionsDirty = false
                 }
                 if (doNotes) writeNotesNow()
                 if (doHistory) writeHistoryNow()
+                if (doExemptions) writeExemptionsNow()
             } catch (_: Throwable) {
                 // a daemon writer must never die
             }
@@ -279,13 +311,14 @@ object PersistenceManager {
     /** Force any pending debounced write to disk (shutdown hook). */
     fun flush() {
         try {
-            val doNotes: Boolean; val doHistory: Boolean
+            val doNotes: Boolean; val doHistory: Boolean; val doExemptions: Boolean
             synchronized(queueLock) {
-                doNotes = notesDirty; doHistory = historyDirty
-                notesDirty = false; historyDirty = false
+                doNotes = notesDirty; doHistory = historyDirty; doExemptions = exemptionsDirty
+                notesDirty = false; historyDirty = false; exemptionsDirty = false
             }
             if (doNotes) writeNotesNow()
             if (doHistory) writeHistoryNow()
+            if (doExemptions) writeExemptionsNow()
         } catch (_: Throwable) {}
     }
 

@@ -59,6 +59,14 @@ object Keybinds {
             "Toggle compact one-line alerts + condensed screens."),
         bind("watch", GLFW.GLFW_KEY_F9, "Watch (Phase B)",
             "Follow-cam orbit — reserved; enabled in the Phase B render pass."),
+        bind("replayPause", GLFW.GLFW_KEY_KP_5, "Replay pause/resume",
+            "Pause or resume an active instant-replay (/ius replay). Default: numpad 5."),
+        bind("replaySeekFwd", GLFW.GLFW_KEY_KP_ADD, "Replay seek +5s",
+            "Jump an active replay 5 seconds forward (works while playing). Default: numpad +."),
+        bind("replaySeekBack", GLFW.GLFW_KEY_KP_SUBTRACT, "Replay seek −5s",
+            "Jump an active replay 5 seconds back (works while playing). Default: numpad −."),
+        bind("replayExit", GLFW.GLFW_KEY_KP_0, "Replay exit",
+            "Stop the active replay/clip-playback and restore the live view. Default: numpad 0."),
     )
 
     private fun bind(id: String, defaultKey: Int, label: String, description: String): Bind =

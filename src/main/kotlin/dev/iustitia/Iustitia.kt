@@ -63,6 +63,15 @@ object Iustitia {
         try {
             bus.subscribe<HurtSignal> { EntityTrackerManager.markHurt(it.victim, it.tick) }
         } catch (_: Throwable) {}
+        // Wire per-check context purging to despawns so a long single-world session doesn't
+        // leak one CheckContext per unique joiner per check (Check.purge existed but was never
+        // called). The listener closes over `checks` (live list, not a snapshot), so despawns
+        // after this point purge every registered check. Despawns are rare → cheap fan-out.
+        try {
+            EntityTrackerManager.onDespawn { uuid ->
+                for (c in checks) { try { c.purge(uuid) } catch (_: Throwable) {} }
+            }
+        } catch (_: Throwable) {}
         // individual checks self-subscribe to the bus in their constructors.
     }
 
@@ -78,6 +87,18 @@ object Iustitia {
 
             // decay every check's per-player VL by one tick (clean-tick drift to 0)
             for (c in checks) { try { c.decayAll() } catch (_: Throwable) {} }
+
+            // Phase 2 instant-replay capture: record one tick of the scene into the rolling buffer
+            // (gated by config.replayCapture inside). Runs before the replay playhead advance so a
+            // live recordTick and a playback tick never overlap on the same frame confusingly.
+            try { dev.iustitia.replay.ReplayBuffer.recordTick(tick, tracked) } catch (_: Throwable) {}
+
+            // Phase 2 instant-replay playback: advance the playhead one tick; if the replay just
+            // finished, chat the reason + restore rendering (hide-live snaps back automatically).
+            try {
+                val done = dev.iustitia.replay.ReplayState.tick()
+                if (done != null) chat(client, "§8[§diustitia§8] §7replay §c$done§7 — live view restored.")
+            } catch (_: Throwable) {}
 
             // verbose heartbeat: confirms the tracker is polling and how many players are
             // observed, plus the per-interval swing/hurt/attack/flag counts. Console-only.
@@ -179,6 +200,26 @@ object Iustitia {
                         chat(mc, "§8[§diustitia§8] §7watching §f${t.second}§7 — orbit follow-cam §aON§7. Mouse to look around; move or get hit to stop.")
                     }
                 }
+                "replayPause" -> {
+                    if (!dev.iustitia.replay.ReplayState.active) return
+                    val paused = dev.iustitia.replay.ReplayState.togglePause()
+                    chat(mc, "§8[§diustitia§8] §7replay ${if (paused) "§e⏸ paused" else "§aresumed"}§7.")
+                }
+                "replaySeekBack" -> {
+                    if (!dev.iustitia.replay.ReplayState.active) return
+                    dev.iustitia.replay.ReplayState.seekBy(-5f)
+                    chat(mc, "§8[§diustitia§8] §7replay §e−5s§7.")
+                }
+                "replaySeekFwd" -> {
+                    if (!dev.iustitia.replay.ReplayState.active) return
+                    dev.iustitia.replay.ReplayState.seekBy(5f)
+                    chat(mc, "§8[§diustitia§8] §7replay §e+5s§7.")
+                }
+                "replayExit" -> {
+                    if (!dev.iustitia.replay.ReplayState.active) return
+                    dev.iustitia.replay.ReplayState.stop("stopped")
+                    chat(mc, "§8[§diustitia§8] §7replay §cstopped§7 — live view restored.")
+                }
                 else -> { /* unknown id: no-op */ }
             }
         } catch (_: Throwable) {
@@ -207,6 +248,39 @@ object Iustitia {
         catch (_: Throwable) {}
     }
 
+    /**
+     * Wipe one player's flags mid-session (`/ius clear <player>`): purges every check's per-player
+     * VL context, clears the flag timeline + tier + alert routing for [uuid], and persists the
+     * cleared history. Tracking/replay/render keep running (the player is still tracked); only the
+     * detection record is reset, so the player's tier snaps to GREEN. Exemption is untouched —
+     * clearing does not exempt. Fail-open; the result message is returned for the command to chat.
+     */
+    fun clearPlayerFlags(uuid: UUID): String = try {
+        for (c in checks) { try { c.purge(uuid) } catch (_: Throwable) {} }
+        dev.iustitia.history.FlagHistory.clearPlayer(uuid)
+        AlertManager.clearPlayer(uuid)
+        try { dev.iustitia.persistence.PersistenceManager.saveHistory() } catch (_: Throwable) {}
+        val name = dev.iustitia.history.FlagHistory.nameFor(uuid) ?: uuid.toString().take(8)
+        "§8[§diustitia§8] §7cleared all flags for §f$name§7 — tier reset to §aGREEN§7."
+    } catch (_: Throwable) {
+        "§8[§diustitia§8] §cclear failed."
+    }
+
+    /**
+     * Wipe EVERY player's flags mid-session (`/ius clear all`): resets every check, the full flag
+     * timeline + tiers, and the alert routing, then persists. A clean slate for the whole session.
+     * Exemptions are NOT touched (a trusted-player list shouldn't wipe on a flag clear). Fail-open.
+     */
+    fun clearAllFlags(): String = try {
+        for (c in checks) { try { c.resetAll() } catch (_: Throwable) {} }
+        dev.iustitia.history.FlagHistory.reset()
+        AlertManager.reset()
+        try { dev.iustitia.persistence.PersistenceManager.saveHistory() } catch (_: Throwable) {}
+        "§8[§diustitia§8] §7cleared §fall§7 flags — every player's tier reset to §aGREEN§7."
+    } catch (_: Throwable) {
+        "§8[§diustitia§8] §cclear failed."
+    }
+
     /** Full reset on dimension change / game-join. */
     fun resetAll() {
         try {
@@ -227,6 +301,14 @@ object Iustitia {
             // player from the previous dimension (vanilla re-derives next frame, but this keeps it
             // tidy and clears the toggle state). disableNow restores the saved HUD/perspective state.
             try { dev.iustitia.render.WatchState.disableNow("world changed") } catch (_: Throwable) {}
+            // Stop any active instant-replay + clear the rolling capture buffer so a world/dimension
+            // change can't play back ghosts from the previous dimension (the hide-live mixin snaps
+            // back to live rendering the instant active flips false).
+            try { dev.iustitia.replay.ReplayState.stop("world changed") } catch (_: Throwable) {}
+            try { dev.iustitia.replay.ReplayBuffer.reset() } catch (_: Throwable) {}
+            // Drop the per-UUID skin cache — skins are per-server (tab list changes), so a world
+            // change shouldn't keep the previous server's resolved skins around.
+            try { dev.iustitia.render.ReplaySkins.reset() } catch (_: Throwable) {}
             // When persistence is on, flush any pending write then reload the cross-session history
             // + notes so a world-join reset doesn't wipe the persisted record (live detection vl is
             // still reset; only the historical timeline is reloaded from disk).

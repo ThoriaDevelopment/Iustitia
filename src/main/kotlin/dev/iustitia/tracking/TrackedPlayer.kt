@@ -66,6 +66,11 @@ class TrackedPlayer(val uuid: UUID, var entityId: Int, val joinTick: Int) {
      *  follows a hit, so a recent hurt marks the knockback peak we must not flag. */
     var hurtTick: Int = -10000
 
+    /** Last client-ticked hand-swing phase for this player (vanilla `LivingEntity.handSwingTicks`,
+     *  0 when not mid-swing; advanced client-side in `OtherClientPlayerEntity.tickMovement`). Captured
+     *  into the replay/clip buffer so a replay ghost's arm swings when the player attacked/mined. */
+    var handSwingTicks: Int = 0
+
     /** Tick of the last tick this player actually moved (|delta|² >= 0.0001). Idle-since-join
      *  players keep the default -10000 so they never inflate the EntityTrackerManager mass-
      *  freeze (server-lag) signal — an AFK player frozen next to a Blinker must not exempt

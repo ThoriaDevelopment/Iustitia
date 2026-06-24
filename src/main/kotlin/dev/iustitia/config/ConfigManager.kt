@@ -209,6 +209,12 @@ object ConfigManager {
         addProperty("burstSparks", c.burstSparks)
         addProperty("hoverTooltip", c.hoverTooltip)
         addProperty("tabListBadge", c.tabListBadge)
+        // Phase 2 instant-replay / sonar / clip (additive; fromJson reads them conditionally).
+        addProperty("replayCapture", c.replayCapture)
+        addProperty("replayHideLive", c.replayHideLive)
+        addProperty("replayPlayerModels", c.replayPlayerModels)
+        addProperty("sonarAlerts", c.sonarAlerts)
+        addProperty("sonarVolume", c.sonarVolume)
         for ((key, cc) in c.checks()) add(key, checkToJson(cc))
     }
 
@@ -266,6 +272,11 @@ object ConfigManager {
             if (o.has("burstSparks")) c.burstSparks = o.get("burstSparks").asBoolean
             if (o.has("hoverTooltip")) c.hoverTooltip = o.get("hoverTooltip").asBoolean
             if (o.has("tabListBadge")) c.tabListBadge = o.get("tabListBadge").asBoolean
+            if (o.has("replayCapture")) c.replayCapture = o.get("replayCapture").asBoolean
+            if (o.has("replayHideLive")) c.replayHideLive = o.get("replayHideLive").asBoolean
+            if (o.has("replayPlayerModels")) c.replayPlayerModels = o.get("replayPlayerModels").asBoolean
+            if (o.has("sonarAlerts")) c.sonarAlerts = o.get("sonarAlerts").asBoolean
+            if (o.has("sonarVolume")) c.sonarVolume = o.get("sonarVolume").asDouble
             for ((key, cc) in c.checks()) {
                 if (o.has(key)) readCheck(o.getAsJsonObject(key), cc, resetCalibration)
             }

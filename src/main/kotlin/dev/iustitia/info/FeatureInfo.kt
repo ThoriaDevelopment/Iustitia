@@ -35,5 +35,13 @@ object FeatureInfo {
             "The watch keybind (default F9) toggles the follow-cam on your crosshair target — same as /ius spectate. It forces F1 (HUD hidden) and a third-party view of the target with all entities — including yourself — visible; move the mouse to orbit (the target stays centered), walk or get hit to stop, press the bind again to exit. Auto-reverts if the target leaves render range.",
         "spectate" to
             "/ius spectate [name] starts the watch follow-cam on the named player (or your crosshair target when no name is given) — same as the watch keybind (default F9) but works by name without needing them under your crosshair. /ius spectate off (or bare /ius spectate while already watching) stops it. Forces F1, third-party view of the target with all entities (including yourself) visible; mouse to orbit, move or get hit to stop.",
+        "replay" to
+            "/ius replay <player> <seconds> [0.5|0.25] reconstructs an instant replay from the rolling 60s capture buffer: translucent ghost copies of every tracked player at their buffered positions, played back at half or quarter speed, with the live world hidden (rewind feel). The named player is the highlighted focus ghost. Auto-stops at the end; /ius replay off stops early. Needs the Replay capture buffer on in config.",
+        "clip" to
+            "/ius clip <seconds> [name] exports the last N seconds of every tracked player's positions + every alert to a portable .iusclip file under %APPDATA%/.iustitia/clips — an evidence clip you can play back later with /ius playclip, not just a screenshot. [name] tags the focus player into the clip. Always writes (explicit export, independent of the persist-across-sessions toggle).",
+        "playclip" to
+            "/ius playclip [name] plays a saved .iusclip back in-world as ghost positions at 0.5×, exactly like /ius replay but from a file. No name = list your saved clips. /ius playclip off stops a playing clip early.",
+        "sonar" to
+            "/ius sonar [on|off] toggles directional audio alerts: on a flushed alert, a note plays at the offender's last-known position so the PAN tells you the direction and the PITCH tells you the distance (closer = higher). Eyes-free alerting — keep fighting and listen for cheats. Additive to chat; volume in /ius config.",
     )
 }

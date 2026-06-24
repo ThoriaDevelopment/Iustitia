@@ -66,6 +66,11 @@ object IustitiaCommand {
         "session" to "session summary: tracked players, tier counts, who peaked highest",
         "snapshot" to "evidence snapshot of your crosshair target: /ius snapshot [name]",
         "spectate" to "watch follow-cam on a player: /ius spectate [name]  (no name = crosshair target; /ius spectate off to stop; same as the watch keybind)",
+        "replay" to "instant replay: /ius replay [<player>|<seconds>] [<seconds>] [1|0.5|0.25]  — rewinds the world and plays back ghost positions+look at FULL speed by default (add 0.5 or 0.25 for slow-mo). Examples: /ius replay 60 (60s, no focus), /ius replay thoria 60 0.5 (focus thoria, 60s, slow-mo). Controls while running: /ius replay pause|resume|seek <s>|step +|-|speed <1|0.5|0.25>|cam <free|follow|pov>|off  (numpad 5 = pause, +/- = seek 5s, numpad 0 = exit)",
+        "clip" to "export the last N seconds to a .iusclip file: /ius clip <seconds> [name]  (name = the clip's filename; also sets the focus player if name matches someone online; omit for scene_<tick>)",
+        "playclip" to "play back a saved .iusclip in-world at FULL speed by default: /ius playclip <name> [1|0.5|0.25]  (no name = list saved clips)",
+        "clips" to "open the clip manager screen: list saved .iusclip files, play or delete each",
+        "sonar" to "toggle directional audio alerts: /ius sonar [on|off]  (pan = direction, pitch = distance)",
         "wizard" to "re-run the first-launch setup wizard",
         "keybinds" to "open the keybind hub screen (lists binds, highlights conflicts)",
         "help" to "this help, or /ius help <check|subcommand|feature>",
@@ -76,6 +81,8 @@ object IustitiaCommand {
         "verbose" to "toggle verbose console logging",
         "reload" to "reload config from disk",
         "reset" to "reset all tracker/check/alert/history state",
+        "clear" to "reset one player's flags (tier→green) or everyone's: /ius clear <name|all>",
+        "exempt" to "exempt a player from all checks: /ius exempt [name [on|off]]  (bare = list exempted)",
     )
 
     fun register(dispatcher: CommandDispatcher<FabricClientCommandSource>) {
@@ -147,6 +154,57 @@ object IustitiaCommand {
                 .then(ClientCommandManager.argument("name", StringArgumentType.word())
                     .suggests { _, b -> suggestNames(b); b.buildFuture() }
                     .executes { spectate(it, StringArgumentType.getString(it, "name")) }))
+            .then(ClientCommandManager.literal("replay")
+                .executes { replay(it, null, null) }
+                .then(ClientCommandManager.literal("off").executes { replayStop(it) })
+                .then(ClientCommandManager.literal("pause").executes { replayPause(it) })
+                .then(ClientCommandManager.literal("resume").executes { replayResume(it) })
+                .then(ClientCommandManager.literal("seek")
+                    .then(ClientCommandManager.argument("seconds", DoubleArgumentType.doubleArg(0.0, 60.0))
+                        .executes { replaySeek(it) }))
+                .then(ClientCommandManager.literal("step")
+                    .then(ClientCommandManager.literal("+").executes { replayStep(it, 1) })
+                    .then(ClientCommandManager.literal("-").executes { replayStep(it, -1) }))
+                .then(ClientCommandManager.literal("speed")
+                    .then(ClientCommandManager.argument("speed", StringArgumentType.word())
+                        .suggests { _, b -> suggestFiltered(b, listOf("1", "0.5", "0.25")); b.buildFuture() }
+                        .executes { replaySpeed(it, StringArgumentType.getString(it, "speed")) }))
+                .then(ClientCommandManager.literal("cam")
+                    .then(ClientCommandManager.argument("mode", StringArgumentType.word())
+                        .suggests { _, b -> suggestFiltered(b, listOf("free", "follow", "pov")); b.buildFuture() }
+                        .executes { replayCam(it, StringArgumentType.getString(it, "mode")) }))
+                // <target> is overloaded: a NUMBER = the seconds to replay (no focus, 1×), e.g.
+                // `/ius replay 60`; a NAME = the focus player, optionally followed by <seconds> [speed],
+                // e.g. `/ius replay thoria 60 0.5`. A bare `/ius replay` replays the default window.
+                .then(ClientCommandManager.argument("target", StringArgumentType.word())
+                    .suggests { _, b -> suggestNames(b); b.buildFuture() }
+                    .executes { replay(it, StringArgumentType.getString(it, "target"), null) }
+                    .then(ClientCommandManager.argument("seconds", DoubleArgumentType.doubleArg(1.0, 60.0))
+                        .executes { replay(it, StringArgumentType.getString(it, "target"), null) }
+                        .then(ClientCommandManager.argument("speed", StringArgumentType.word())
+                            .suggests { _, b -> suggestFiltered(b, listOf("1", "0.5", "0.25")); b.buildFuture() }
+                            .executes { replay(it, StringArgumentType.getString(it, "target"), StringArgumentType.getString(it, "speed")) }))))
+            .then(ClientCommandManager.literal("clip")
+                .then(ClientCommandManager.argument("seconds", DoubleArgumentType.doubleArg(1.0, 60.0))
+                    .executes { clip(it, null) }
+                    .then(ClientCommandManager.argument("name", StringArgumentType.word())
+                        .suggests { _, b -> suggestFiltered(b, dev.iustitia.replay.ClipStore.list()); b.buildFuture() }
+                        .executes { clip(it, StringArgumentType.getString(it, "name")) })))
+            .then(ClientCommandManager.literal("playclip")
+                .executes { playclip(it, null, null) }
+                .then(ClientCommandManager.literal("off").executes { replayStop(it) })
+                .then(ClientCommandManager.argument("name", StringArgumentType.word())
+                    .suggests { _, b -> suggestFiltered(b, dev.iustitia.replay.ClipStore.list()); b.buildFuture() }
+                    .executes { playclip(it, StringArgumentType.getString(it, "name"), null) }
+                    .then(ClientCommandManager.argument("speed", StringArgumentType.word())
+                        .suggests { _, b -> suggestFiltered(b, listOf("1", "0.5", "0.25")); b.buildFuture() }
+                        .executes { playclip(it, StringArgumentType.getString(it, "name"), StringArgumentType.getString(it, "speed")) })))
+            .then(ClientCommandManager.literal("clips").executes { clipsScreen(it) })
+            .then(ClientCommandManager.literal("sonar")
+                .executes { sonarToggle(it, null) }
+                .then(ClientCommandManager.argument("state", StringArgumentType.word())
+                    .suggests { _, b -> suggestFiltered(b, listOf("on", "off")); b.buildFuture() }
+                    .executes { sonarToggle(it, StringArgumentType.getString(it, "state")) }))
             .then(ClientCommandManager.literal("wizard").executes { wizard(it) })
             .then(ClientCommandManager.literal("keybinds").executes { keybinds(it) })
             .then(ClientCommandManager.literal("alerts")
@@ -166,8 +224,22 @@ object IustitiaCommand {
                 .executes { thresholdUsage(it) }
                 .then(ClientCommandManager.argument("check", StringArgumentType.word())
                     .suggests { _, b -> suggestFiltered(b, checkIds); b.buildFuture() }
-                    .then(ClientCommandManager.argument("value", DoubleArgumentType.doubleArg())
+                    .then(ClientCommandManager.argument("value", DoubleArgumentType.doubleArg(0.0, 1000.0))
                         .executes { threshold(it) })))
+            .then(ClientCommandManager.literal("clear")
+                .executes { clearUsage(it) }
+                .then(ClientCommandManager.literal("all").executes { clearAll(it) })
+                .then(ClientCommandManager.argument("name", StringArgumentType.word())
+                    .suggests { _, b -> suggestNames(b); b.buildFuture() }
+                    .executes { clearPlayer(it) }))
+            .then(ClientCommandManager.literal("exempt")
+                .executes { exemptList(it) }
+                .then(ClientCommandManager.argument("name", StringArgumentType.word())
+                    .suggests { _, b -> suggestExempt(b); b.buildFuture() }
+                    .executes { exemptToggle(it, null) }
+                    .then(ClientCommandManager.argument("state", StringArgumentType.word())
+                        .suggests { _, b -> suggestFiltered(b, listOf("on", "off")); b.buildFuture() }
+                        .executes { exemptToggle(it, StringArgumentType.getString(it, "state")) })))
 
     // ---- feedback helper ----
     private fun send(ctx: CommandContext<FabricClientCommandSource>, line: String) {
@@ -280,6 +352,59 @@ object IustitiaCommand {
         send(ctx, "$tag §7usage: §f/ius threshold <check> <value>")
         send(ctx, " §7checks: §f${checkIds.joinToString(" ")}")
         return 0
+    }
+
+    // ---- clear (reset a player's or everyone's flags) ----
+    /** Bare `/ius clear` — print usage (a bare clear is too easy to fat-finger into a wipe). */
+    private fun clearUsage(ctx: CommandContext<FabricClientCommandSource>): Int {
+        send(ctx, "$tag §7usage: §f/ius clear <name>§7 (reset one player's flags → §agreen§7) or §f/ius clear all§7 (everyone).")
+        send(ctx, " §7detection vl, flag timeline, tier + alert routing are wiped; tracking/replay keep running. Exemptions are untouched.")
+        return 0
+    }
+
+    private fun clearAll(ctx: CommandContext<FabricClientCommandSource>): Int {
+        send(ctx, dev.iustitia.Iustitia.clearAllFlags())
+        return 1
+    }
+
+    private fun clearPlayer(ctx: CommandContext<FabricClientCommandSource>): Int {
+        val name = StringArgumentType.getString(ctx, "name")
+        val uuid = resolveUuid(name)
+        if (uuid == null) { send(ctx, "$tag §cno data for §f$name§7 (must be tracked or have flagged first)."); return 0 }
+        send(ctx, dev.iustitia.Iustitia.clearPlayerFlags(uuid))
+        return 1
+    }
+
+    // ---- exempt (skip a player at the Check.flag chokepoint) ----
+    /** Bare `/ius exempt` — list currently-exempted players. */
+    private fun exemptList(ctx: CommandContext<FabricClientCommandSource>): Int {
+        val all = try { dev.iustitia.exempt.Exemptions.all() } catch (_: Throwable) { emptyList() }
+        if (all.isEmpty()) { send(ctx, "$tag §7no exempted players. §f/ius exempt <name>§7 to exempt one (they stop flagging)."); return 1 }
+        send(ctx, "$tag §7exempted players §8(${all.size})§7 — invisible to every check:")
+        all.forEach { (uuid, name) -> send(ctx, " §f$name §8$uuid") }
+        send(ctx, " §7toggle with §f/ius exempt <name>§7 or §f/ius exempt <name> off§7. Persists with the persistence toggle; not cleared on world change.")
+        return 1
+    }
+
+    /** `/ius exempt <name> [on|off]` — set or toggle a player's exemption. Bare name = toggle. */
+    private fun exemptToggle(ctx: CommandContext<FabricClientCommandSource>, stateArg: String?): Int {
+        val name = StringArgumentType.getString(ctx, "name")
+        val uuid = resolveUuid(name)
+        // Exempting a not-yet-tracked player is allowed (you may pre-exempt a trusted regular by
+        // name before they join); but toggling OFF a name we can't resolve is ambiguous — bail.
+        if (uuid == null) {
+            send(ctx, "$tag §cno data for §f$name§7. To exempt a player who isn't tracked yet, they must have flagged or be online first.")
+            return 0
+        }
+        val want = when (stateArg?.lowercase()) { "on" -> true; "off" -> false; else -> null }
+        val nowOn = when (want) {
+            true -> dev.iustitia.exempt.Exemptions.set(uuid, name, true)
+            false -> dev.iustitia.exempt.Exemptions.set(uuid, name, false)
+            null -> dev.iustitia.exempt.Exemptions.toggle(uuid, name)
+        }
+        send(ctx, "$tag §7player §f$name §7exempt ${if (nowOn) "§aON§7 (no check will flag them)" else "§cOFF§7 (checks run normally again)"}.")
+        if (nowOn) send(ctx, " §7existing flags were §fnot§7 cleared — use §f/ius clear $name§7 to reset their tier.")
+        return 1
     }
 
     // ---- history ----
@@ -714,6 +839,236 @@ object IustitiaCommand {
         return 1
     }
 
+    // ---- replay / clip / playclip / sonar (Phase 2 instant-replay suite) ----
+    /** `/ius replay off` + `/ius playclip off` — stop any active replay/clip-playback; live rendering
+     *  snaps back immediately (hide-live mixin re-enables). Idempotent. */
+    private fun replayStop(ctx: CommandContext<FabricClientCommandSource>): Int {
+        val active = try { dev.iustitia.replay.ReplayState.active } catch (_: Throwable) { false }
+        if (!active) { send(ctx, "$tag §7no replay running."); return 1 }
+        dev.iustitia.replay.ReplayState.stop("stopped")
+        send(ctx, "$tag §7replay §cstopped§7 — live view restored.")
+        return 1
+    }
+
+    // ---- replay playback controls (pause/seek/step/speed/cam) — all no-op + chat if no replay running ----
+
+    private fun replayPause(ctx: CommandContext<FabricClientCommandSource>): Int {
+        if (!replayActive(ctx)) return 1
+        val paused = dev.iustitia.replay.ReplayState.togglePause()
+        send(ctx, "$tag §7replay ${if (paused) "§e⏸ paused§7 (§f/ius replay resume§7)" else "§aresumed§7"}.")
+        return 1
+    }
+
+    private fun replayResume(ctx: CommandContext<FabricClientCommandSource>): Int {
+        if (!replayActive(ctx)) return 1
+        if (dev.iustitia.replay.ReplayState.isPaused()) { dev.iustitia.replay.ReplayState.togglePause(); send(ctx, "$tag §7replay §aresumed§7.") }
+        else send(ctx, "$tag §7replay was already playing.")
+        return 1
+    }
+
+    private fun replaySeek(ctx: CommandContext<FabricClientCommandSource>): Int {
+        if (!replayActive(ctx)) return 1
+        val secs = DoubleArgumentType.getDouble(ctx, "seconds").toFloat()
+        dev.iustitia.replay.ReplayState.seekTo(secs)
+        send(ctx, "$tag §7seeked to §f${"%.1f".format(secs)}s§7.")
+        return 1
+    }
+
+    private fun replayStep(ctx: CommandContext<FabricClientCommandSource>, dir: Int): Int {
+        if (!replayActive(ctx)) return 1
+        if (!dev.iustitia.replay.ReplayState.isPaused()) {
+            send(ctx, "$tag §7step works while §epaused§7 (§f/ius replay pause§7 first)."); return 1
+        }
+        dev.iustitia.replay.ReplayState.step(dir)
+        send(ctx, "$tag §7stepped ${if (dir > 0) "forward" else "back"} one frame.")
+        return 1
+    }
+
+    private fun replaySpeed(ctx: CommandContext<FabricClientCommandSource>, speedArg: String): Int {
+        if (!replayActive(ctx)) return 1
+        val sp = when (speedArg) { "1", "1.0" -> dev.iustitia.replay.ReplayState.SPEED_FULL
+            "0.25" -> dev.iustitia.replay.ReplayState.SPEED_QUARTER
+            "0.5" -> dev.iustitia.replay.ReplayState.SPEED_HALF
+            else -> { send(ctx, "$tag §7speed must be §f1§7/§f0.5§7/§f0.25§7."); return 0 } }
+        dev.iustitia.replay.ReplayState.setSpeed(sp)
+        send(ctx, "$tag §7replay speed §f${"%.2f".format(sp)}×§7.")
+        return 1
+    }
+
+    private fun replayCam(ctx: CommandContext<FabricClientCommandSource>, modeArg: String): Int {
+        if (!replayActive(ctx)) return 1
+        val mode = when (modeArg.lowercase()) {
+            "free" -> dev.iustitia.replay.ReplayState.CameraMode.FREE
+            "follow" -> dev.iustitia.replay.ReplayState.CameraMode.FOLLOW
+            "pov" -> dev.iustitia.replay.ReplayState.CameraMode.POV
+            else -> { send(ctx, "$tag §7camera mode must be §ffree§7/§ffollow§7/§fpov§7."); return 0 } }
+        dev.iustitia.replay.ReplayState.setCameraMode(mode)
+        val label = when (mode) { dev.iustitia.replay.ReplayState.CameraMode.FREE -> "free (your view)"
+            dev.iustitia.replay.ReplayState.CameraMode.FOLLOW -> "follow (orbit the focus ghost)"
+            dev.iustitia.replay.ReplayState.CameraMode.POV -> "POV (the focus ghost's eyes)" }
+        send(ctx, "$tag §7replay camera: §f$label§7.")
+        return 1
+    }
+
+    /** Common guard for the control subcommands: chat + return false if no replay is running. */
+    private fun replayActive(ctx: CommandContext<FabricClientCommandSource>): Boolean {
+        val active = try { dev.iustitia.replay.ReplayState.active } catch (_: Throwable) { false }
+        if (!active) send(ctx, "$tag §7no replay running (start one with §f/ius replay <sec>§7 or §f/ius replay <name> <sec>§7).")
+        return active
+    }
+
+    /** Map a "1"/"0.5"/"0.25" speed arg to a [dev.iustitia.replay.ReplayState] speed. `null` (and "1")
+     *  → FULL speed — the default for both `/ius replay` and `/ius playclip`. Any other value sends a
+     *  usage error and returns null (caller aborts). Shared by [replay] and [playclip]. */
+    private fun parseSpeed(ctx: CommandContext<FabricClientCommandSource>, speedArg: String?): Float? = when (speedArg) {
+        null, "1", "1.0" -> dev.iustitia.replay.ReplayState.SPEED_FULL
+        "0.5" -> dev.iustitia.replay.ReplayState.SPEED_HALF
+        "0.25" -> dev.iustitia.replay.ReplayState.SPEED_QUARTER
+        else -> { send(ctx, "$tag §cspeed must be §f1§7, §f0.5 §7or §f0.25§7."); null }
+    }
+
+    /** Default window (seconds) when none is given — bare `/ius replay` or `/ius replay <name>`. */
+    private val DEFAULT_REPLAY_SECS: Int = 30
+
+    /** `/ius replay [<target>] [<seconds>] [1|0.5|0.25]` — reconstruct an "instant replay" from the rolling
+     *  capture buffer: ghosts of every tracked player at their buffered positions, played back at FULL
+     *  speed by default (add 0.5 or 0.25 for slow-mo), with the live world hidden (rewind feel) by
+     *  default.
+     *
+     *  `<target>` is overloaded so the player arg is OPTIONAL:
+     *   - `/ius replay 60`        → 60s, no focus, 1× (a NUMBER = the duration).
+     *   - `/ius replay thoria`    → default window, focus thoria, 1× (a NAME = the focus player).
+     *   - `/ius replay thoria 60` → 60s, focus thoria, 1×; add a speed for slow-mo.
+     *   - `/ius replay`            → default window, no focus, 1×.
+     *  A name that isn't tracked/online still replays everyone (no focus) with a warning. Stops on
+     *  finish / world-change / re-run. Fail-open, client-only. */
+    private fun replay(ctx: CommandContext<FabricClientCommandSource>, target: String?, speedArg: String?): Int {
+        val cfg = ConfigManager.config
+        if (!cfg.replayCapture) {
+            send(ctx, "$tag §7replay capture is §cdisabled§7 in config (enable via §f/ius config§7) — nothing buffered.")
+            return 0
+        }
+        val speed = parseSpeed(ctx, speedArg) ?: return 0
+        // Resolve focus + seconds from the overloaded <target>:
+        //   null → default window, no focus · a number → that many seconds, no focus · a name → focus
+        //   (if tracked) + the optional <seconds> arg (or default), no focus if the name is unknown.
+        val focus: java.util.UUID?
+        val secs: Int
+        val focusTxt: String
+        when {
+            target == null -> { focus = null; secs = DEFAULT_REPLAY_SECS; focusTxt = "everyone" }
+            target.toIntOrNull() != null -> {
+                focus = null
+                secs = target.toInt().coerceIn(1, dev.iustitia.replay.ReplayBuffer.MAX_SECONDS)
+                focusTxt = "everyone"
+            }
+            else -> {
+                val uuid = resolveUuid(target)
+                focus = uuid
+                val s = try { DoubleArgumentType.getDouble(ctx, "seconds") } catch (_: Throwable) { -1.0 }
+                secs = if (s >= 1.0) s.toInt().coerceIn(1, dev.iustitia.replay.ReplayBuffer.MAX_SECONDS) else DEFAULT_REPLAY_SECS
+                if (uuid == null) {
+                    send(ctx, "$tag §7no tracked data for §f$target§7 — replaying everyone (no focus).")
+                    focusTxt = "everyone"
+                } else {
+                    focusTxt = target
+                }
+            }
+        }
+        val now = dev.iustitia.Iustitia.tickCounter
+        val window = try { dev.iustitia.replay.ReplayBuffer.snapshot(secs, now) } catch (_: Throwable) {
+            dev.iustitia.replay.ReplayBuffer.Window(emptyList(), emptyList())
+        }
+        if (window.frames.isEmpty()) {
+            send(ctx, "$tag §7no buffered data for the last §f${secs}s§7 (not tracked yet).")
+            return 0
+        }
+        val started = try { dev.iustitia.replay.ReplayState.start(window, focus, speed, cfg.replayHideLive) } catch (_: Throwable) { false }
+        if (!started) { send(ctx, "$tag §7couldn't start the replay (empty window)."); return 0 }
+        val hideTxt = if (cfg.replayHideLive) " §7(live players hidden)" else ""
+        send(ctx, "$tag §7replaying last §f${secs}s §7for §f$focusTxt§7 at §f${"%.2f".format(speed)}×§7 — ghosts drawn in-world$hideTxt. Auto-stops at the end (or §f/ius replay off§7).")
+        return 1
+    }
+
+    /** `/ius clip <seconds> [name]` — dump the last N seconds of positions + alerts to a portable
+     *  `.iusclip` file under `%APPDATA%/.iustitia/clips` (explicit export, always writes regardless
+     *  of the persistence toggle). [name] is the clip's FILENAME (verbatim) so `/ius playclip <name>`
+     *  round-trips; it also sets the focus player when it matches someone online. Omitted → `scene_<tick>`. Fail-open. */
+    private fun clip(ctx: CommandContext<FabricClientCommandSource>, nameArg: String?): Int {
+        val cfg = ConfigManager.config
+        if (!cfg.replayCapture) {
+            send(ctx, "$tag §7replay capture is §cdisabled§7 in config — nothing to export.")
+            return 0
+        }
+        val secs = DoubleArgumentType.getDouble(ctx, "seconds").toInt().coerceIn(1, dev.iustitia.replay.ReplayBuffer.MAX_SECONDS)
+        val focus: java.util.UUID? = if (nameArg != null) resolveUuid(nameArg) else null
+        val now = dev.iustitia.Iustitia.tickCounter
+        val window = try { dev.iustitia.replay.ReplayBuffer.snapshot(secs, now) } catch (_: Throwable) {
+            dev.iustitia.replay.ReplayBuffer.Window(emptyList(), emptyList())
+        }
+        if (window.frames.isEmpty()) {
+            send(ctx, "$tag §7no buffered data for the last §f${secs}s§7 (not tracked yet).")
+            return 0
+        }
+        // The clip FILENAME is the user's [name] verbatim — so `/ius playclip <name>` round-trips.
+        // Only auto-name (scene_<tick>) when [name] is omitted. [name] ALSO doubles as the focus
+        // player: resolveUuid returns null for a non-player string, so `/ius clip 10 myclip` saves
+        // `myclip.iusclip` with no focus, while `/ius clip 10 thoria` saves `thoria.iusclip` AND
+        // highlights thoria if they're online. Filename is sanitized in ClipStore.save.
+        val clipName = nameArg ?: "scene_${now}"
+        val saved = try { dev.iustitia.replay.ClipStore.save(clipName, window, focus) } catch (_: Throwable) { null }
+        if (saved == null) {
+            send(ctx, "$tag §cfailed to write clip (disk error).")
+            return 0
+        }
+        val frames = window.frames.size
+        val alerts = window.alerts.size
+        send(ctx, "$tag §7clip saved: §f$saved§7 §8($frames frames, $alerts alerts, ${secs}s) §7→ §f${dev.iustitia.replay.ClipStore.dirDisplay()}")
+        send(ctx, " §7play it back with §f/ius playclip $saved§7.")
+        return 1
+    }
+
+    /** `/ius playclip [name] [1|0.5|0.25]` — load a `.iusclip` and play it back in-world as ghost
+     *  positions at FULL speed by default (like `/ius replay` but from a saved file). No name = list
+     *  saved clips. Fail-open. */
+    private fun playclip(ctx: CommandContext<FabricClientCommandSource>, nameArg: String?, speedArg: String?): Int {
+        if (nameArg == null) {
+            val clips = try { dev.iustitia.replay.ClipStore.list() } catch (_: Throwable) { emptyList() }
+            if (clips.isEmpty()) { send(ctx, "$tag §7no saved clips yet. Save one with §f/ius clip <seconds> [name]§7."); return 1 }
+            send(ctx, "$tag §7saved clips §8(${dev.iustitia.replay.ClipStore.dirDisplay()}§8)§7:")
+            clips.forEach { send(ctx, " §f$it §7— §f/ius playclip $it") }
+            return 1
+        }
+        val clip = try { dev.iustitia.replay.ClipStore.load(nameArg) } catch (_: Throwable) { null }
+        if (clip == null || clip.window.frames.isEmpty()) {
+            send(ctx, "$tag §cno clip §f$nameArg§7 (save one with /ius clip; check the name with /ius playclip).")
+            return 0
+        }
+        val speed = parseSpeed(ctx, speedArg) ?: return 0
+        val cfg = ConfigManager.config
+        val started = try {
+            dev.iustitia.replay.ReplayState.start(clip.window, clip.focus, speed, cfg.replayHideLive)
+        } catch (_: Throwable) { false }
+        if (!started) { send(ctx, "$tag §ccouldn't start the clip (empty)."); return 0 }
+        val focusTxt = clip.focus?.let { " §7focus §f${FlagHistory.nameFor(it) ?: it.toString().take(8)}" } ?: ""
+        send(ctx, "$tag §7playing clip §f$nameArg§7 at §f${"%.2f".format(speed)}×§7 — ${clip.window.frames.size} frames$focusTxt. Auto-stops at the end (or §f/ius playclip off§7 to stop).")
+        return 1
+    }
+
+    /** `/ius sonar [on|off]` — toggle the directional audio alert cue (additive to chat). Bare = toggle. */
+    private fun sonarToggle(ctx: CommandContext<FabricClientCommandSource>, stateArg: String?): Int {
+        val cfg = ConfigManager.config
+        val want = when (stateArg?.lowercase()) { "on" -> true; "off" -> false; else -> null }
+        val nowOn = when (want) {
+            true -> { cfg.sonarAlerts = true; true }
+            false -> { cfg.sonarAlerts = false; false }
+            null -> { cfg.sonarAlerts = !cfg.sonarAlerts; cfg.sonarAlerts }
+        }
+        try { ConfigManager.save() } catch (_: Throwable) {}
+        send(ctx, "$tag §7sonar alerts ${if (nowOn) "§aON" else "§cOFF"}§7 §8(pan = direction, pitch = distance, vol ${"%.2f".format(cfg.sonarVolume)}; additive to chat).")
+        return 1
+    }
+
     // ---- wizard (#13) + keybinds (#14) ----
     private fun wizard(ctx: CommandContext<FabricClientCommandSource>): Int {
         val mc = MinecraftClient.getInstance()
@@ -724,6 +1079,13 @@ object IustitiaCommand {
     private fun keybinds(ctx: CommandContext<FabricClientCommandSource>): Int {
         val mc = MinecraftClient.getInstance()
         mc.execute { try { mc.setScreen(KeybindHubScreen(mc.currentScreen)) } catch (_: Throwable) {} }
+        return 1
+    }
+
+    /** `/ius clips` — open the clip manager (list saved `.iusclip` files with Play + Delete). */
+    private fun clipsScreen(ctx: CommandContext<FabricClientCommandSource>): Int {
+        val mc = MinecraftClient.getInstance()
+        mc.execute { try { mc.setScreen(dev.iustitia.ui.ClipManagerScreen(mc.currentScreen)) } catch (_: Throwable) {} }
         return 1
     }
 
@@ -846,6 +1208,18 @@ object IustitiaCommand {
     private fun suggestTargets(b: SuggestionsBuilder) {
         suggestFiltered(b, checkIds)
         suggestNames(b)
+    }
+
+    /** Suggest known player names + already-exempted names (so toggling off an exempted player
+     *  tab-completes even after they leave the tab list). */
+    private fun suggestExempt(b: SuggestionsBuilder) {
+        suggestNames(b)
+        try {
+            dev.iustitia.exempt.Exemptions.all().forEach { (_, name) ->
+                val q = b.remaining
+                if (q.isEmpty() || name.startsWith(q, ignoreCase = true)) b.suggest(name)
+            }
+        } catch (_: Throwable) {}
     }
 
     private fun suggestHelpTopics(b: SuggestionsBuilder) {

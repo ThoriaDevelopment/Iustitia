@@ -77,6 +77,12 @@ class IustitiaClientMod : ClientModInitializer {
         // (sampled on END_CLIENT_TICK, drawn on AFTER_ENTITIES; depth-tested, no wallhack).
         try { dev.iustitia.render.GhostTrailRenderer.register() } catch (_: Throwable) {}
 
+        // Phase 2 instant-replay renderer: while a replay (/ius replay or /ius playclip) is active,
+        // draws translucent ghost copies of every player at the playhead frame's buffered positions
+        // (AFTER_ENTITIES, depth-tested) + a bottom-center progress HUD. The hide-live mixin (in
+        // iustitia.mixins.json) suppresses the real players during a hide-live replay. Render-only.
+        try { dev.iustitia.render.ReplayRenderer.register() } catch (_: Throwable) {}
+
         // Full check registry — combat (14) + movement/rotation/packet (18).
         Iustitia.register(ReachCheck())
         Iustitia.register(MultiTargetCheck())

@@ -24,7 +24,7 @@ You need Minecraft **Java Edition 1.21.11** with **Fabric**.
    - **Fabric API**
    - **fabric-language-kotlin**
    - **Yet Another Config Lib** (YACL)
-3. Copy **`iustitia-1.0.0.jar`** into the same `mods` folder. (Download it from the [latest release](https://github.com/ThoriaDevelopment/Iustitia/releases/latest).)
+3. Copy **`iustitia-1.1.0.jar`** into the same `mods` folder. (Download it from the [latest release](https://github.com/ThoriaDevelopment/Iustitia/releases/latest).)
 4. *(Optional but useful)* If you want Iustitia to also catch cheaters on **old 1.8-era servers** (like classic PvP servers), install **ViaFabricPlus** too. Without it, Iustitia still works perfectly on 1.21.11 servers.
 5. Launch the game with your Fabric profile and join any server with other players.
 
@@ -134,6 +134,107 @@ While watching, Iustitia:
 
 It's a tool for a closer look, not a permanent spectator mode. Move or get hit and you're right back to playing.
 
+### 5. Instant replay, sonar & evidence clips
+
+Three more moderator tools that go beyond a nametag or a chat line — a rewind of the scene, an eyes-free audio cue, and a portable evidence file. All three are **render/sound-only**: they show or play information, they never change detection, and they send nothing anywhere.
+
+#### Instant replay — `/ius replay`
+
+After something suspicious happens (a kill that looked snapped, a hit that looked too far), you can **rewind the last few seconds and watch it again**:
+
+```
+/ius replay                  → replay the last 30s (default), no focus, full speed
+/ius replay 60               → 60s, no focus, full speed (a number = the duration)
+/ius replay Steve            → default 30s, focus on Steve, full speed
+/ius replay Steve 10         → 10s around Steve, full speed
+/ius replay Steve 10 0.25    → same, but quarter speed (slower, more detail)
+/ius replay off              → stop the replay early
+```
+
+What you see:
+- **Translucent "ghost" models** of every tracked player at where they *were* during those seconds — drawn as little humanoid figures (head, body, arms, legs) so you can tell a person from a crate, not just a box.
+- Each ghost is **colored by that player's tier** (green / yellow / red, same colors as the nametags) and has their **name floating above them**, so you can read who is who. The player you named (Steve, above) is highlighted in **cyan** with a `▶` marker.
+- A small **facing nub** on each ghost's head points the way they were facing at that tick.
+- By default, the **live players are hidden** during the replay, so only the ghosts show — a "rewind the world" feel. (You can turn that off in `/ius config` if you'd rather see the ghosts overlaid on the live scene.)
+- A small banner at the bottom-center shows the focus name, the speed, and a **progress bar** so you know where you are in the rewind.
+
+**Playback controls** while a replay runs — so you can scrub and inspect without re-running it:
+
+```
+/ius replay pause        → freeze the replay (and /ius replay resume to play on)
+/ius replay seek 5       → jump to 5s into the window
+/ius replay step +       → step one frame forward (only while paused; use - for back)
+/ius replay speed 0.5    → change speed on the fly (1 / 0.5 / 0.25)
+/ius replay cam follow   → camera mode: free (your view) / follow (orbit the focus) / pov (the focus's eyes)
+```
+
+There are also **four numpad keybinds** so you don't have to open chat mid-replay:
+- **Numpad 5** — pause / resume
+- **Numpad +** — jump 5s forward (works while playing)
+- **Numpad −** — jump 5s back
+- **Numpad 0** — stop the replay and restore the live view
+
+The replay plays through the buffered frames at the speed you picked, then stops on its own and the live view snaps straight back. The live game and detection keep running underneath the whole time — only rendering is swapped. It needs the **Replay capture buffer** toggle on (it's on by default; turn it off in `/ius config` if you never use replays and want to skip the per-tick recording).
+
+#### Sonar — `/ius sonar`
+
+```
+/ius sonar        → toggle directional audio alerts on/off
+/ius sonar on     → explicitly on
+/ius sonar off    → explicitly off
+```
+
+When sonar is on, every time a player's alert batch flushes, Iustitia plays a short **note positioned at that player's last-known location**. Your ears do the work:
+
+- **Which side it comes from** = the direction to the cheater (stereo pan).
+- **The pitch** = how far away they are (closer = higher pitch, farther = lower pitch).
+
+So you can keep your eyes on the fight and just *listen* for cheats — a high ping to your right means someone close on your right just flagged. It's **additive to chat**, not a replacement: you still get chat lines unless you mute them. There's a separate **Sonar volume** slider in `/ius config`. The note's sound matches the tier (same vocabulary as the audio cues: bass = red, pling = yellow, harp = green).
+
+#### Evidence clips — `/ius clip` & `/ius playclip`
+
+A screenshot only captures one frame. A **clip** captures the last N seconds of *movement + alerts* as a portable file you can play back later:
+
+```
+/ius clip 15                → save the last 15s of everyone's positions + alerts
+/ius clip 15 Steve          → same, but the clip is saved as "Steve" (and focuses Steve if he's online)
+/ius playclip               → list your saved clips
+/ius playclip Steve         → play the "Steve" clip back in-world as ghost models (full speed)
+/ius playclip Steve 0.5     → same, but half speed
+/ius playclip off           → stop a playing clip early
+/ius clips                  → open the clip manager screen (browse / play / delete)
+```
+
+The name you give `/ius clip` is the clip's **filename** (so `/ius playclip <same name>` round-trips), and it doubles as the focus player when it matches someone online. If you leave the name off, Iustitia names it `scene_<tick>` for you.
+
+Clips are saved as `.iusclip` files in `%APPDATA%/.iustitia/clips` (or the game-folder `.iustitia/clips` on other platforms). They always write when you ask — **not** gated by the "Persist across sessions" toggle, since exporting a clip is an explicit action. Playing one back looks exactly like a `/ius replay` (ghost models + names + focus highlight + progress bar, plus the same playback controls and numpad keybinds), just from a file instead of the live buffer. Handy for reviewing a clip after the fact, or sharing the file with another moderator who also runs Iustitia. The **clip manager** (`/ius clips`) lists every saved clip with its focus + frame/alert counts — left-click to play, right-click to delete.
+
+`/ius help replay`, `/ius help sonar`, `/ius help clip`, `/ius help playclip`, and `/ius help clips` each explain their command in one paragraph.
+
+### 6. Managing players — `/ius clear` & `/ius exempt`
+
+Two tools for keeping your tier history honest when you *know* a flag was bogus, or a player is trusted:
+
+**Reset a player's flags** — when you've decided a red/yellow tag was a false alarm (lag, arena drop, a legit PvP exchange) and you don't want it sitting on their record:
+```
+/ius clear Steve    → wipe Steve's flags: detection vl, timeline, tier, alert routing → green
+/ius clear all      → same for everyone
+```
+Their nametag drops back to green right away. Tracking and replay keep running underneath, and **exemptions are not touched**. A bare `/ius clear` just prints the usage (so you can't fat-finger a wipe).
+
+**Exempt a trusted player** — stops a player from flagging *at all*. The check that would flag them stops before it even counts a violation, so a regular you trust (or a test account) stays green forever:
+```
+/ius exempt Steve    → exempt Steve (he stops flagging); toggle again to un-exempt
+/ius exempt Steve on → explicitly exempt
+/ius exempt Steve off → checks run normally again on Steve
+/ius exempt          → list everyone who's currently exempt
+```
+Things to know:
+- Exempting does **not** clear existing flags — pair it with `/ius clear Steve` if you want a clean slate.
+- Exemptions are saved to `exemptions.json` and survive restarts (when persistence is on) and **server hops / world changes** — the trusted player stays exempt across sessions. (Clips and exemptions always save, since exempting a player is an explicit action.)
+- It's per-player, not per-check: an exempt player is skipped by *every* check.
+
+
 ## The `/ius` command
 
 Everything is controlled with the `/ius` command (or `/iustitia` — same thing). Type it and you'll get a list of checks. Here are the ones you'll actually use:
@@ -190,18 +291,22 @@ When you want to actually write up a report or keep track of a suspect, these pu
 
 ### Keybinds
 
-There are eight configurable keybinds, all settable under Minecraft's **Options → Controls → Iustitia**:
+There are twelve configurable keybinds, all settable under Minecraft's **Options → Controls → Miscellaneous**:
 
-| keybind | what it does |
-|---|---|
-| `snapshot` | evidence snapshot of your crosshair target (chat + clipboard) |
-| `transcript` | toggle the live transcript side panel on your crosshair target |
-| `session` | open the session screen |
-| `keybinds` | open the keybind hub screen |
-| `config` | open the settings screen |
-| `note` | add a note to your crosshair target |
-| `compact` | toggle compact mode |
-| `watch` | toggle the watch follow-cam (default F9) |
+| keybind | default | what it does |
+|---|---|---|
+| `snapshot` | K | evidence snapshot of your crosshair target (chat + clipboard) |
+| `transcript` | J | toggle the live transcript side panel on your crosshair target |
+| `session` | Home | open the session screen |
+| `keybinds` | End | open the keybind hub screen |
+| `config` | F8 | open the settings screen |
+| `note` | N | add a note to your crosshair target |
+| `compact` | F7 | toggle compact mode |
+| `watch` | F9 | toggle the watch follow-cam |
+| `replayPause` | Numpad 5 | pause / resume an active instant replay |
+| `replaySeekFwd` | Numpad + | jump an active replay 5s forward (works while playing) |
+| `replaySeekBack` | Numpad − | jump an active replay 5s back |
+| `replayExit` | Numpad 0 | stop the active replay and restore the live view |
 
 `/ius keybinds` opens a **keybind hub screen** that lists all of them with their current key and a description, and highlights in red any bind that conflicts with another binding so you can fix it.
 
@@ -267,6 +372,16 @@ What the number means depends on the check (reach = max distance, autoclicker = 
 /ius reset       → clears all session history and resets everyone's
                    nametag back to green. Use if things feel stale.
 /ius spectate    → watch follow-cam on your crosshair target (see above).
+/ius replay      → instant-replay the scene (see section 5). Also:
+                   /ius replay pause|resume|seek <s>|step +|-
+                   |speed 1|0.5|0.25|cam free|follow|pov|off
+                   (numpad 5/+/-/0 mirror these without opening chat).
+/ius clip        → export the last N seconds to a .iusclip file (section 5).
+/ius playclip     → play a saved .iusclip back in-world (section 5).
+/ius clips       → open the clip manager screen (browse / play / delete).
+/ius sonar       → toggle directional audio alerts (section 5).
+/ius clear       → reset one player's flags (→green) or everyone's (section 6).
+/ius exempt      → exempt a trusted player from all checks (section 6).
 ```
 
 ## Recommended workflow
@@ -309,7 +424,7 @@ That's what verbose is for — it logs everything. `/ius verbose` to turn it off
 
 Iustitia reads the packets your client already gets from the server, thinks about them locally, and writes to your chat and config file. **Nothing is ever sent anywhere.** No telemetry, no uploads, no reporting.
 
-By default, everything — tier data, flag history, moderator notes, evidence — lives **in memory** and is cleared when you close the game (or `/ius reset`). If you turn on **Persist across sessions** in `/ius config` (the Moderation wizard preset does this for you), then your notes, tier/flag history, evidence snapshots, and transcript/evidence exports are saved to `%APPDATA%/.iustitia` on your own machine so they survive a restart. That's still local — it's never uploaded anywhere.
+By default, everything — tier data, flag history, moderator notes, evidence — lives **in memory** and is cleared when you close the game (or `/ius reset`). If you turn on **Persist across sessions** in `/ius config` (the Moderation wizard preset does this for you), then your notes, tier/flag history, evidence snapshots, transcript/evidence exports, and the player exemption list are saved to `%APPDATA%/.iustitia` on your own machine so they survive a restart. Evidence clips (`.iustitia/clips`) and the exemption list (`exemptions.json`) always save when you create them, even with persistence off. That's still local — it's never uploaded anywhere.
 
 ## Need the technical details?
 

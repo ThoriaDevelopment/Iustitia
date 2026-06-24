@@ -140,6 +140,34 @@ data class IustitiaConfig(
      *  nametagGreenEnabled). Read-only mixin on the tab name; never touches your own row. */
     var tabListBadge: Boolean = true,
 
+    // --- Phase 2 instant-replay / sonar / clip ---
+    /** Master toggle for the rolling replay capture buffer ([dev.iustitia.replay.ReplayBuffer]). On by
+     *  default — the per-tick work is tiny (≤64 players × ≤1200 frames), and turning it off only
+     *  disables `/ius replay` + `/ius clip` (no in-world ghost playback, no `.iusclip` export). The
+     *  live game + detection run regardless. Flip off if you never use replay/clip and want the
+     *  per-tick capture skipped entirely. */
+    var replayCapture: Boolean = true,
+    /** "Rewind feel" for `/ius replay` + `/ius playclip`: while a replay is active, hide every live
+     *  OTHER player so only the buffered ghost copies render (a rewind-the-world look). Off = overlay
+     *  the ghosts on top of the live players instead. Render-only — the live game keeps running. */
+    var replayHideLive: Boolean = true,
+    /** Render replay/clip ghosts as the actual Minecraft player MODEL with each player's REAL skin
+     *  (resolved per-UUID from the tab-list [net.minecraft.client.network.PlayerListEntry] vanilla keeps
+     *  warm; Steve/Alex fallback for players not in the tab list — see [dev.iustitia.render.ReplaySkins]),
+     *  driven via the vanilla [net.minecraft.client.render.entity.PlayerEntityRenderer] model, instead
+     *  of the tier-colored humanoid box outline. ON by default. This path drives a render-state model
+     *  outside the vanilla entity pipeline, whose exact block scale + pose transforms are
+     *  runtime-only-verifiable (see [dev.iustitia.render.ReplayRenderer]). The box outline remains the
+     *  fail-open fallback per ghost, so a render error never blanks a replay. Display-only — adds NO detection. */
+    var replayPlayerModels: Boolean = true,
+    /** Sonar alerting: on a flushed alert batch, play a DIRECTIONAL note positioned at the offender's
+     *  last-known world position (pan = direction, pitch = distance) so you can keep fighting and
+     *  listen for cheats. Additive to chat alerts; gated by the same mute/preset rules. */
+    var sonarAlerts: Boolean = true,
+    /** Sonar cue volume (0..1). Independent of the chat audio-cue volume — sonar pings are quieter by
+     *  design (positional, frequent). */
+    var sonarVolume: Double = 0.7,
+
     // --- combat ---
     var reach: CheckConfig = CheckConfig(true, 10.0, 0.25, 3.0),
     var multiTarget: CheckConfig = CheckConfig(true, 2.0, 1.0, 2.0),

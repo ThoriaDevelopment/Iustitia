@@ -8,6 +8,7 @@
     "PlayerEntityRenderStateAccessor",
     "ArmorStandEntityRendererMixin",
     "EntityRenderStateAccessor",
+    "EntityRendererMixin",
     "CameraMixin",
     "PlayerListHudMixin"
   ],

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Iustitia &mdash; client-sided Fabric anticheat for Minecraft 1.21.11</title>
-  <meta name="description" content="Iustitia is a free, open-source, client-sided Fabric anticheat for Minecraft 1.21.11. 32 read-only checks, lag-aware false-positive guards, in-game YACL config, nametag cheat-tier prefixes, evidence tools (/ius transcript, evidence, note, session), and Phase B render overlays (watch follow-cam, target highlight, ghost trail, offender selfie). Zero outgoing packets, zero telemetry.">
+  <meta name="description" content="Iustitia is a free, open-source, client-sided Fabric anticheat for Minecraft 1.21.11. 32 read-only checks, lag-aware false-positive guards, in-game YACL config, nametag cheat-tier prefixes, and a full moderator suite &mdash; instant replay (/ius replay), directional sonar audio, portable evidence clips (/ius clip, /ius playclip), player exemptions, and Phase B render overlays (watch follow-cam, target highlight, ghost trail, offender selfie). Zero outgoing packets, zero telemetry.">
   <link rel="stylesheet" href="assets/iustitia.css">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='4' y='2' width='8' height='8' rx='1.5' transform='rotate(45 8 6)' fill='%238b5cf6'/%3E%3C/svg%3E">
 </head>
@@ -46,7 +46,7 @@
           <div class="line"><span class="prompt">&gt; </span>iustitia --status</div>
           <div class="line"><span class="ok">32 checks loaded across 4 groups</span></div>
           <div class="line"><span class="ok">protocol: 1.21.11 + 1.8.9 combat ready</span></div>
-          <div class="line"><span class="dim">keybinds: 8 binds · transcript · watch · selfie</span></div>
+          <div class="line"><span class="dim">keybinds: 12 binds · replay · sonar · clips</span></div>
           <div class="line"><span class="dim">0 outgoing packets sent. 0 telemetry.</span></div>
         </div>
       </div>
@@ -70,31 +70,36 @@
   <!-- What's new -->
   <section class="section whats-new" id="whats-new" style="padding-bottom:0">
     <div class="container">
-      <div class="section-label fade-in-scroll">What's new</div>
-      <h2 class="section-title fade-in-scroll">Observer tooling, <span class="grad">rendered in world.</span></h2>
-      <p class="section-lead fade-in-scroll">Recent releases added the control surface and visual overlays that turn raw detections into a moderation workflow &mdash; all still read-only and client-sided.</p>
+      <div class="section-label fade-in-scroll">What's new in 1.1</div>
+      <h2 class="section-title fade-in-scroll">Moderation tools, <span class="grad">rendered in world.</span></h2>
+      <p class="section-lead fade-in-scroll">v1.1.0 adds a full moderator suite &mdash; an instant-replay of the scene, eyes-free directional sonar, portable evidence clips, and player exemptions &mdash; turning raw detections into a moderation workflow. All still read-only and client-sided.</p>
       <div class="grid grid-4" style="margin-top:36px">
         <div class="card slide-in-bottom delay-1">
-          <div class="icon">🎯</div>
-          <h3>Confidence score &amp; burst pulse</h3>
-          <p>Every flagged nametag now shows a 0-99 confidence score (e.g. <span style="color:#f87171">[X 87]</span>) and briefly pulses when a fresh red-capable alert lands &mdash; no more guessing how strong the signal is.</p>
+          <div class="icon">🎬</div>
+          <h3>Instant replay</h3>
+          <p><code>/ius replay &lt;player&gt; &lt;sec&gt;</code> rewinds the last 60s and replays it in-world as translucent <em>humanoid ghost models</em> of every tracked player at their buffered positions. Scrub with <code>/ius replay pause|seek|step|speed</code>, switch cameras (free / follow / POV), or use the numpad keybinds &mdash; the live game keeps running underneath and snaps back the instant it stops.</p>
         </div>
         <div class="card slide-in-bottom delay-2">
-          <div class="icon">📜</div>
-          <h3>Evidence commands</h3>
-          <p><code>/ius transcript</code>, <code>/ius evidence</code>, <code>/ius note</code>, <code>/ius session</code>, and <code>/ius report</code> give you Discord-ready timelines, moderator notes, and full player report cards without leaving the game.</p>
+          <div class="icon">🔊</div>
+          <h3>Sonar audio</h3>
+          <p><code>/ius sonar</code> plays a directional note on every flushed alert &mdash; <strong>pan tells you the direction</strong>, <strong>pitch tells you the distance</strong>. Keep your eyes on the fight and just listen for cheats. Additive to chat, with its own volume, never a replacement.</p>
         </div>
         <div class="card slide-in-bottom delay-3">
-          <div class="icon">⌨</div>
-          <h3>Keybind hub</h3>
-          <p>Eight configurable binds for snapshot, transcript, session, notes, config, compact mode, and watch follow-cam. The keybind hub screen lists them all and highlights conflicts in red.</p>
+          <div class="icon">📦</div>
+          <h3>Evidence clips</h3>
+          <p><code>/ius clip &lt;sec&gt; [name]</code> exports the last N seconds of positions + alerts to a portable <code>.iusclip</code> file. Play it back later with <code>/ius playclip</code> or browse, play, and delete from the <code>/ius clips</code> manager. An evidence clip, not just a screenshot &mdash; share the file with another moderator.</p>
         </div>
         <div class="card slide-in-bottom delay-4">
+          <div class="icon">🚫</div>
+          <h3>Player exemptions</h3>
+          <p><code>/ius exempt &lt;name&gt;</code> skips a trusted player at the check chokepoint so they never flag &mdash; or <code>/ius clear &lt;name&gt;</code> wipes a bogus tier back to green. Exemptions persist across sessions and server hops, so a trusted regular stays exempt.</p>
+        </div>
+        <div class="card slide-in-bottom delay-1">
           <div class="icon">👁</div>
           <h3>Phase B render overlays</h3>
           <p>Target-highlight wireframe, ghost-trail breadcrumbs, burst sparks, nametag-hover tooltips, tab-list tier badges, watch follow-cam, and offender selfie screenshots &mdash; all drawn on the client render thread, no wallhack.</p>
         </div>
-        <div class="card slide-in-bottom delay-1">
+        <div class="card slide-in-bottom delay-2">
           <div class="icon">⚡</div>
           <h3>Wizard, audio cues &amp; persistence</h3>
           <p>A first-launch preset wizard (General / Moderation / Ranked), smart alert batching, audio cues, compact mode, FP hover hints, and optional persistence to <code>%APPDATA%/.iustitia</code> so notes and history survive restarts.</p>

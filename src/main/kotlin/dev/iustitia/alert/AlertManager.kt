@@ -68,6 +68,13 @@ object AlertManager {
             // Tier/history always update (mute/preset are chat-suppression only, not detection).
             FlagHistory.recordAlert(player, checkId, name, tick)
 
+            // Phase 2 instant-replay: record this real alert event into the rolling buffer so a later
+            // /ius replay or /ius clip includes the alert timeline, not just positions. Recorded
+            // here (after the throttle passes = a real alert event) so mute/preset suppression does
+            // not strip it from the replay timeline — a replay shows every real flag regardless of
+            // the current chat filter. Gated by config.replayCapture inside. Fail-open.
+            try { dev.iustitia.replay.ReplayBuffer.recordAlert(tick, player, name, checkId, check, vl) } catch (_: Throwable) {}
+
             // Phase B burst-spark: on a fresh tier-relevant alert (the ones that move the tier),
             // spawn a tier-colored particle burst at the offender's eye. Tier-neutral alerts
             // (noFall / speedEnvelope / rotationTracking / minor signals) don't burst — they don't
@@ -151,6 +158,10 @@ object AlertManager {
                 // 6. audio cue (gated by the same mute/preset rules — a muted/preset-dropped alert
                 //    is silent too).
                 if (cfg.audioCues) playCue(uuid, batch.primaries.size)
+                // 6b. sonar: directional cue positioned at the offender (pan = direction, pitch =
+                //     distance). Additive to chat — gated by sonarAlerts + the same mute/preset rules
+                //     the chat line above already passed. Fail-open inside.
+                try { dev.iustitia.alert.Sonar.cue(uuid) } catch (_: Throwable) {}
             }
         } catch (_: Throwable) {
             // fail-open
@@ -205,5 +216,23 @@ object AlertManager {
 
     fun reset() {
         try { lastAlertTick.clear(); batches.clear() } catch (_: Throwable) {}
+    }
+
+    /**
+     * Wipe one player's in-flight alert state (used by `/ius clear <player>`). Drops the pending
+     * batch + every per-(player,check) throttle key so a freshly-cleared player isn't immediately
+     * re-alered by a straggling buffered flag. The tier/history wipe is [FlagHistory.clearPlayer]'s
+     * job; this only clears the alert-routing layer. Fail-open.
+     */
+    fun clearPlayer(uuid: UUID) {
+        try {
+            batches.remove(uuid)
+            val prefix = "$uuid|"
+            // lastAlertTick keys are "$uuid|$checkId" — drop only this player's.
+            val it = lastAlertTick.keys.iterator()
+            while (it.hasNext()) { val k = it.next(); if (k.startsWith(prefix)) it.remove() }
+        } catch (_: Throwable) {
+            // fail-open
+        }
     }
 }

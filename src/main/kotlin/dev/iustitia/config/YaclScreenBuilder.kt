@@ -63,6 +63,16 @@ object YaclScreenBuilder {
                     .option(bool("Persist across sessions", "Save notes, tier/flag history, snapshots & exports to %APPDATA%/.iustitia. Off = session-only.", { cfg.persistenceEnabled }) { cfg.persistenceEnabled = it })
                     .build()
             )
+            .group(
+                OptionGroup.createBuilder()
+                    .name(Text.literal("Replay, Sonar & Clip"))
+                    .option(bool("Replay capture buffer", "Keep a rolling 60s buffer of every tracked player's position + every alert, so /ius replay and /ius clip can rewind/export the last N seconds. Off = skip the per-tick capture (disables replay + clip; detection keeps running).", { cfg.replayCapture }) { cfg.replayCapture = it })
+                    .option(bool("Replay hides live players", "While a replay (/ius replay or /ius playclip) is active, hide every live OTHER player so only the buffered ghost copies render — a rewind-the-world feel. Off = overlay ghosts on the live scene. Render-only.", { cfg.replayHideLive }) { cfg.replayHideLive = it })
+                    .option(bool("Replay player models", "Render replay/clip ghosts as the real Minecraft player model wearing each player's REAL skin (fetched from the tab list; Steve/Alex fallback) instead of the tier-colored humanoid box outline. On by default. The block scale + pose transforms are runtime-verified only — if a ghost renders at the wrong size or not at all, the box outline shows as fallback.", { cfg.replayPlayerModels }) { cfg.replayPlayerModels = it })
+                    .option(bool("Sonar alerts", "On a flushed alert, play a DIRECTIONAL note at the offender's last position (pan = direction, pitch = distance) so you can keep fighting and listen for cheats. Additive to chat; gated by the same mute/preset rules.", { cfg.sonarAlerts }) { cfg.sonarAlerts = it })
+                    .option(double("Sonar volume", "Sonar cue volume (0..1). Quieter than chat cues by design — positional pings are frequent.", { cfg.sonarVolume }, 0.0, 1.0) { cfg.sonarVolume = it })
+                    .build()
+            )
         for ((id, cc) in cfg.checks()) {
             category.group(checkGroup(id, cc))
         }

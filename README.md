@@ -43,7 +43,7 @@ All three library mods (Fabric API, fabric-language-kotlin, YACL) are standard a
 
 1. Install Fabric Loader 0.19.3+ for Minecraft 1.21.11.
 2. Drop **Fabric API**, **fabric-language-kotlin**, and **YACL** into your `mods/` folder.
-3. Drop `iustitia-1.0.0.jar` into your `mods/` folder.
+3. Drop `iustitia-1.1.0.jar` into your `mods/` folder.
 4. (To detect cheats on 1.8-era servers) Install **ViaFabricPlus** so your 1.21.11 client can join them.
 5. Launch. A one-time **first-launch wizard** asks how you use Iustitia (General / Moderation / Ranked Player) and pre-sets sensible defaults. Join any server with other players.
 
@@ -65,12 +65,20 @@ That's it. Alerts appear in chat; other players get a colored tier prefix (with 
 /ius session         # session summary: tracked players, tier counts, who peaked highest
 /ius report <name>   # full report card → clipboard (markdown or json)
 /ius snapshot [name] # one-line evidence snapshot of your crosshair target → clipboard
+/ius replay <name> <sec> [1|0.5|0.25]  # rewind the last N seconds in-world as ghost models (1× by default; 0.5/0.25 = slow-mo)
+/ius replay pause|resume|seek <s>|step +|-|speed 1|0.5|0.25|cam free|follow|pov|off  # playback controls while a replay runs
+/ius clip <sec> [name]  # export the last N seconds of positions + alerts to a portable .iusclip file
+/ius playclip [name] [1|0.5|0.25]  # play a saved clip back in-world (/ius playclip off to stop; bare = list clips)
+/ius clips           # open the clip manager screen (list / play / delete saved .iusclip files)
+/ius sonar [on|off]   # directional audio alerts — pan = direction, pitch = distance (additive to chat)
+/ius clear <name|all> # reset one player's flags (tier→green) or everyone's (exemptions untouched)
+/ius exempt [name [on|off]]  # exempt a player from all checks (bare = list exempted); persists across sessions
 /ius alerts          # mute/unmute all chat alerts (detection keeps running)
 /ius keybinds        # open the keybind hub screen
 /ius config          # open the YACL config screen
 ```
 
-There are also **eight keybinds** (snapshot, transcript, session, keybinds, config, note, compact, watch) — configurable in vanilla Controls → Iustitia, and listed with conflict-detection in the keybind hub (`/ius keybinds`).
+There are also **twelve keybinds** (snapshot, transcript, session, keybinds, config, note, compact, watch, plus four **numpad replay controls**: pause/resume, seek +5s, seek −5s, exit) — configurable in vanilla Controls → Miscellaneous, and listed with conflict-detection in the keybind hub (`/ius keybinds`).
 
 See **[USERMANUAL.md](USERMANUAL.md)** for a non-developer walkthrough.
 
@@ -106,6 +114,7 @@ See **[USERMANUAL.md](USERMANUAL.md)** for a non-developer walkthrough.
                   │  ArmorStandEntityRendererMx │  nametag fallback for armor-stand holograms
                   │  PlayerListHudMixin          │  tab-list tier badge
                   │  CameraMixin                │  offender-selfie + watch follow-cam (auto-reverting)
+                  │  EntityRendererMixin         │  hides live players during an instant replay
                   └─────────────────────────────┘  (all render-only, no visibility hack, no send path)
 ```
 
@@ -117,6 +126,7 @@ See **[USERMANUAL.md](USERMANUAL.md)** for a non-developer walkthrough.
 - `PlayerListHudMixin` — prepends the tier glyph (+ score) to each OTHER player's row in the Tab list. `@Inject` on `getPlayerName` at RETURN, fail-open.
 - `EntityRenderStateAccessor` — `@Accessor` for `displayName` / `playerName` on `EntityRenderState`.
 - `CameraMixin` — the offender-selfie (single-frame) and watch follow-cam (sustained) camera overrides. Both rely on vanilla re-deriving the camera before the `@At("TAIL")` inject each frame, so the override only persists while actively re-applied — the instant it stops, the view reverts to the local player (the safe state).
+- `EntityRendererMixin` — the "rewind feel" hide-live for instant replay: cancels `shouldRender` for every OTHER player while a replay is active with hide-live on (the base `EntityRenderer` is the target because `PlayerEntityRenderer` inherits `shouldRender` and doesn't override it). Render-only, fail-open; a cheap volatile-read early-out when no replay is running.
 
 No `@Redirect` or `@Overwrite` is used anywhere. No send-path mixins. No local-player mutation (the watch follow-cam overrides the *camera* only, and is the sole deliberate exception — see above).
 
@@ -206,7 +216,7 @@ The prefix is written at the HEAD of `PlayerEntityRenderer.renderLabelIfPresent`
 
 ## Observer tooling & render overlays
 
-v1.0.0 adds a control surface and a visual layer that turn raw detections into a moderation workflow — all still read-only and client-sided.
+v1.1.0 adds a control surface and a visual layer that turn raw detections into a moderation workflow — all still read-only and client-sided.
 
 ### Evidence commands
 - `/ius transcript <name>` — a Discord-copyable session timeline (swings, inferred hits, reach samples, velocity received, checks fired). `/ius transcript panel <name>` toggles a live side panel.
@@ -217,10 +227,25 @@ v1.0.0 adds a control surface and a visual layer that turn raw detections into a
 - `/ius snapshot [name]` — a one-line evidence snapshot of your crosshair target, copied to clipboard.
 
 ### Keybinds
-Eight configurable binds (snapshot, transcript, session, keybinds, config, note, compact, watch) registered in vanilla Controls → Iustitia. `/ius keybinds` opens a hub screen that lists them all and highlights any that conflict with another bind in red.
+Twelve configurable binds registered in vanilla Controls → Miscellaneous: `snapshot`, `transcript`, `session`, `keybinds`, `config`, `note`, `compact`, `watch` (default F9), plus four **numpad replay controls** — `replayPause` (numpad 5), `replaySeekFwd` (numpad +, +5s, works while playing), `replaySeekBack` (numpad −, −5s), and `replayExit` (numpad 0). `/ius keybinds` opens a hub screen that lists them all and highlights any that conflict with another bind in red.
 
 ### Watch follow-cam
 `/ius spectate [name]` (or the `watch` keybind, default F9) starts a sustained follow-cam on a player: it forces F1, shows a third-party view of the target (all entities — including yourself — still rendered), and lets you orbit with the mouse (the target stays centered). It auto-stops when you move >0.5 blocks, get hit, or the target leaves render range; `/ius spectate off` (or the bind again) stops it manually. The camera auto-reverts to your view the instant it stops (vanilla re-derives it each frame, so it can never get stuck).
+
+### Instant replay, sonar & evidence clips
+A moderator-style "instant replay" of the scene, an eyes-free directional audio alert, and a portable evidence-clip format — all client-side, all render/sound-only (no detection logic touched):
+
+- **`/ius replay [<player>|<seconds>] [<seconds>] [1|0.5|0.25]`** — reconstructs the last N seconds (≤60) from a rolling 60 s capture buffer and plays it back in-world as translucent **humanoid ghost models** of every tracked player at their buffered positions, at **full (1×) speed by default** (add `0.5` or `0.25` for slow-mo). The named player is the highlighted focus (cyan + `▶` name marker). Ghosts are colored by that player's cheat tier (green/yellow/red) with a floating name tag so you can read who is who, and a facing nub shows each one's buffered yaw. By default **the live players are hidden** during a replay ("rewind feel" — only the ghosts render); the live game + detection keep running underneath and rendering snaps back the instant the replay stops. The `<player>` arg is **optional and overloaded**: a number = the duration with no focus (`/ius replay 60`); a name = the focus player, optionally followed by `<seconds> [speed]` (`/ius replay thoria 60 0.5`); bare `/ius replay` = the default 30 s window, no focus. **Playback controls** while a replay runs: `/ius replay pause` / `resume`, `seek <s>`, `step +|−` (frame-step, while paused), `speed 1|0.5|0.25`, `cam free|follow|pov` (free = your view; follow = orbit the focus ghost; pov = the focus ghost's eyes), and `off`. Four **numpad keybinds** mirror the controls without leaving the game: numpad 5 = pause/resume, numpad +/− = seek ±5 s (works while playing), numpad 0 = exit. Needs the **Replay capture buffer** toggle on (default on).
+- **`/ius sonar [on|off]`** — on a flushed alert, plays a *directional* note positioned at the offender's last-known world position: the **pan tells you the direction** and the **pitch tells you the distance** (closer = higher). Eyes-free alerting — keep fighting and just listen for cheats. Additive to chat (not a replacement), gated by the same mute/preset rules, with its own volume in `/ius config`.
+- **`/ius clip <seconds> [name]`** — exports the last N seconds of every tracked player's positions + every alert to a portable binary **`.iusclip`** file under `%APPDATA%/.iustitia/clips`. An evidence clip you can play back later, not just a screenshot. `[name]` is the clip's filename (verbatim, so `/ius playclip <name>` round-trips) and also sets the focus player when it matches someone online; omit for `scene_<tick>`. Always writes (explicit export — independent of the Persist-across-sessions toggle).
+- **`/ius playclip [name] [1|0.5|0.25]`** — loads a saved `.iusclip` and plays it back in-world as ghost models, at **full (1×) speed by default** (pass `0.5` or `0.25` for slow-mo), exactly like `/ius replay` but from a file. Bare `/ius playclip` lists your saved clips; `/ius playclip off` stops a playing clip.
+- **`/ius clips`** — opens a **clip manager screen** listing every saved `.iusclip` with its focus + frame/alert counts; left-click to play, right-click to delete. Same data as bare `/ius playclip`, but browsable.
+
+### Player management
+- **`/ius clear <name|all>`** — wipes one player's flags (detection vl, flag timeline, tier, and alert routing → nametag back to green) or, with `all`, everyone's. Tracking and replay keep running; **exemptions are untouched**. A bare `/ius clear` prints usage (a bare clear is too easy to fat-finger into a wipe).
+- **`/ius exempt [name [on|off]]`** — exempts a player from **every** check at the `Check.flag` chokepoint (the very first line, before vl is incremented), so they stop flagging entirely. Bare `/ius exempt` lists the currently-exempted players; a bare name toggles; `on`/`off` set explicitly. Exemptions persist to `exemptions.json` (under `%APPDATA%/.iustitia` when persistence is on) and are **not** cleared on world change, so a trusted regular stays exempt across sessions and server hops. Exempting does **not** clear existing flags — pair with `/ius clear <name>` to reset the tier.
+
+All four instant-replay tools have toggles in `/ius config` (Replay capture buffer / Replay hides live players / Sonar alerts / Sonar volume).
 
 ### World/HUD overlays (all render-only, depth-tested — no wallhack)
 - **Target highlight** — a tier-colored wireframe box around the player your crosshair is on.
@@ -239,7 +264,7 @@ Each overlay has its own toggle in `/ius config` and is off-able independently.
 - **In-game:** `/ius config` opens a YACL screen with a toggle per check plus all the global switches — master, chat alerts, nametag prefixes / confidence badge / burst pulse / green-tick, alert presets, smart batching, audio cues, lag-soften, compact mode, the render/HUD overlays, persistence, and the first-launch wizard.
 - **Commands:** `/ius toggle <check>`, `/ius threshold <check> <value>`, `/ius alerts <check|name> [on|off]`, `/ius verbose`, `/ius reload`, `/ius reset`, `/ius wizard` (re-run the setup wizard).
 - **On disk:** `config/iustitia.json` (hand-rolled JSON via Gson; no extra serialization dependency). Edited live values are saved automatically (debounced, off the render thread).
-- **Optional persistence:** when **Persist across sessions** is on, moderator notes, tier/flag history, evidence snapshots, and transcript/evidence exports are saved to `%APPDATA%/.iustitia` (roaming) and reappear after a restart. Off by default — everything is in-memory session-only otherwise.
+- **Optional persistence:** when **Persist across sessions** is on, moderator notes, tier/flag history, evidence snapshots, transcript/evidence exports, and the player exemption list are saved to `%APPDATA%/.iustitia` (roaming) and reappear after a restart. Off by default — everything is in-memory session-only otherwise. (Evidence clips under `.iustitia/clips` and exemptions under `exemptions.json` always write, since exporting a clip or exempting a player is an explicit action.)
 - **Alert presets (`alertLevel`):** 0 = quiet (red-severity band only), 1 = normal (orange + red), 2 = verbose (all). Display-only — no check logic changes. **Smart batching** collapses rapid same-player flags into one line after a quiet window; **audio cues** play a note-block chime per flushed batch (distinct "nuclear" cue for RED from ≥2 primary checks); **lag-soften** prefixes `[lag]` and (under quiet) drops non-red alerts during a server-lag burst. **Compact mode** shortens alert lines and screen rows to one-liners.
 
 Each check's `threshold` is check-specific (Reach→max reach, MultiTarget→min victims, ClickStatistics→CPS cap, SpeedEnvelope→bps cap, Triggerbot→min fast-hits, etc.). `/ius help <check>` prints the live config + description for any check.
@@ -262,7 +287,7 @@ The built mod jar is at `build/libs/iustitia-<version>.jar`. A sources jar is al
 
 Iustitia is **purely client-sided**. It reads incoming server packets that your client already receives, runs detection locally, and writes to your local chat and your local config file. It does **not** transmit, upload, or report anything to any server, endpoint, or third party. There is no telemetry, no analytics, no network code beyond reading what the server sends you.
 
-By default, muting, tiering, flag history, moderator notes, and evidence data are all **in-memory** and cleared on restart (or `/ius reset`). The optional **Persist across sessions** toggle (`persistenceEnabled`) writes moderator notes, tier/flag history, evidence snapshots, and transcript/evidence exports to `%APPDATA%/.iustitia` on your own machine so they survive a restart — still local, still never uploaded. Nothing else is written to disk unless you turn that on.
+By default, muting, tiering, flag history, moderator notes, and evidence data are all **in-memory** and cleared on restart (or `/ius reset`). The optional **Persist across sessions** toggle (`persistenceEnabled`) writes moderator notes, tier/flag history, evidence snapshots, transcript/evidence exports, and the player exemption list to `%APPDATA%/.iustitia` on your own machine so they survive a restart — still local, still never uploaded. Evidence clips (`.iustitia/clips`) and the exemption list (`exemptions.json`) always write when you explicitly create them. Nothing else is written to disk unless you turn persistence on.
 
 ## Known limitations
 

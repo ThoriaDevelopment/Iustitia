@@ -210,17 +210,26 @@ object FlagHistory {
      * 3 alerts"`, `"ThroughWalls, 1 alert"`, or `"clean (no red-capable alerts)"`.
      */
     fun confidenceLine(uuid: UUID): String = try {
-        val set = alertedChecksByUuid[uuid]
         val alerts = sessionAlertCount(uuid)
-        if (set == null || set.isEmpty()) {
+        val set = alertedChecksByUuid[uuid]
+        if (set == null) {
             return if (alerts > 0) "tier-neutral signals only ($alerts alerts)" else "clean (no red-capable alerts)"
         }
-        val primaries = set.filter { it in DEFINITIVE }
-        val corroborators = set.filter { it in CORROBORATOR }
-        val parts = ArrayList<String>(2)
-        if (primaries.isNotEmpty()) parts += primaries.joinToString(" + ")
-        if (corroborators.isNotEmpty()) parts += "${corroborators.joinToString(" + ")} corroborated"
-        val body = if (parts.isEmpty()) "no red-capable alerts" else parts.joinToString(", ")
+        // Snapshot the set under its lock: recordAlert adds to this set from the network thread
+        // while these readers run on the render thread, and an unsynchronized iterate would CME
+        // (caught by the outer fail-open, but it flashed a wrong tier for one frame). tierFor
+        // already locks; the readers now do too. Display-only.
+        val body = synchronized(set) {
+            if (set.isEmpty()) return@confidenceLine (
+                if (alerts > 0) "tier-neutral signals only ($alerts alerts)" else "clean (no red-capable alerts)"
+            )
+            val primaries = set.filter { it in DEFINITIVE }
+            val corroborators = set.filter { it in CORROBORATOR }
+            val parts = ArrayList<String>(2)
+            if (primaries.isNotEmpty()) parts += primaries.joinToString(" + ")
+            if (corroborators.isNotEmpty()) parts += "${corroborators.joinToString(" + ")} corroborated"
+            if (parts.isEmpty()) "no red-capable alerts" else parts.joinToString(", ")
+        }
         "$body, $alerts alert${if (alerts == 1) "" else "s"}"
     } catch (_: Throwable) { "clean (no red-capable alerts)" }
 
@@ -239,9 +248,10 @@ object FlagHistory {
             val frac = ((System.currentTimeMillis() - lastMs).toDouble() / DECAY_MS).coerceIn(0.0, 1.0)
             (12 * (1.0 - frac)).toInt().coerceIn(0, 12)
         } else 0
+        // Read the set under its lock (recordAlert mutates it cross-thread; see confidenceLine).
         val set = alertedChecksByUuid[uuid]
-        val primary = set?.count { it in DEFINITIVE } ?: 0
-        val hasCorr = set?.any { it in CORROBORATOR } ?: false
+        val (primary, hasCorr) = if (set == null) 0 to false
+        else synchronized(set) { set.count { it in DEFINITIVE } to set.any { it in CORROBORATOR } }
         val distinct = primary + if (hasCorr) 1 else 0
         val diversity = minOf(distinct, 4) * 2
         val corr = if (hasCorr) 3 else 0
@@ -255,16 +265,23 @@ object FlagHistory {
      */
     fun confidenceExplanation(uuid: UUID): String = try {
         val set = alertedChecksByUuid[uuid]
-        if (set == null || set.isEmpty()) {
+        if (set == null) {
             return if (sessionAlertCount(uuid) > 0) "tier-neutral signals only (no red-capable alert)" else "clean (no red-capable alerts)"
         }
-        val primaries = set.filter { it in DEFINITIVE }
+        // Snapshot the set contents under its lock (recordAlert mutates cross-thread; see
+        // confidenceLine). primaries + the full-CSV are local snapshots safe to use outside.
+        val (empty, primaries, allCsv) = synchronized(set) {
+            Triple(set.isEmpty(), set.filter { it in DEFINITIVE }, set.joinToString(", "))
+        }
+        if (empty) {
+            return if (sessionAlertCount(uuid) > 0) "tier-neutral signals only (no red-capable alert)" else "clean (no red-capable alerts)"
+        }
         val tier = tierFor(uuid)
         val tierName = when (tier) { Tier.GREEN -> "GREEN"; Tier.YELLOW -> "YELLOW"; Tier.RED -> "RED" }
         val sp = span(uuid)
         val window = if (sp == null) "" else " within ${(sp.second - sp.first) / 20}s"
         if (primaries.isEmpty()) {
-            "$tierName: corroborator only (${set.joinToString(", ")})$window"
+            "$tierName: corroborator only ($allCsv)$window"
         } else {
             "$tierName: ${primaries.size} primary check${if (primaries.size == 1) "" else "s"} " +
                 "(${primaries.joinToString(", ")})$window"
@@ -275,7 +292,8 @@ object FlagHistory {
 
     /** The red-capable alerted-check set for [uuid] (primary ∪ corroborator). Read-only copy. */
     fun alertedChecksOf(uuid: UUID): Set<String> = try {
-        alertedChecksByUuid[uuid]?.toSet() ?: emptySet()
+        val set = alertedChecksByUuid[uuid] ?: return emptySet()
+        synchronized(set) { set.toSet() }
     } catch (_: Throwable) { emptySet() }
 
     /** Wall-clock ms of the last red-capable alert for [uuid] (the decay clock), or 0. */
@@ -404,6 +422,29 @@ object FlagHistory {
             nameByUuid.clear()
             flagCounts.clear()
             maxVlByUuidCheck.clear()
+        } catch (_: Throwable) {
+            // fail-open
+        }
+    }
+
+    /**
+     * Wipe one player's session history (used by `/ius clear <player>`). Removes every trace of
+     * [uuid] from all backing maps so the player's tier resets to GREEN, flag timeline clears, and
+     * counts/peak-VL drop — a clean slate mid-session. Note this does NOT purge the per-check VL
+     * contexts (those live in [dev.iustitia.checks.Check]); the caller ([dev.iustitia.Iustitia]
+     * clearPlayerFlags) does that via `Check.purge`. Fail-open.
+     */
+    fun clearPlayer(uuid: UUID) {
+        try {
+            flagsByUuid.remove(uuid)
+            alertCountByUuid.remove(uuid)
+            alertedChecksByUuid.remove(uuid)
+            lastAlertWallMsByUuid.remove(uuid)
+            lastRedAlertTick.remove(uuid)
+            // name is intentionally KEPT so /ius hist <name> + tab-completion still resolve after a
+            // clear (the player is still tracked; only their flags are wiped).
+            flagCounts.remove(uuid)
+            maxVlByUuidCheck.remove(uuid)
         } catch (_: Throwable) {
             // fail-open
         }

@@ -77,6 +77,11 @@ abstract class Check {
         evidence: dev.iustitia.history.Evidence? = null,
     ) {
         try {
+            // Exempt chokepoint: a player on the /ius exempt list is invisible to EVERY check
+            // (movement + combat; all flags route through here). Skip before any VL/state write so
+            // an exempt player stays clean. Tracking/replay/render still run (only detection is
+            // suppressed). Forward-looking only — does NOT clear existing flags (use /ius clear).
+            if (dev.iustitia.exempt.Exemptions.isExempt(tp.uuid)) return
             ctx.vl += level
             VerboseLog.countFlag()
             // Session flag history (drives /ius hist, status counts, alert hover, nametag tier).
@@ -87,10 +92,15 @@ abstract class Check {
             // Verbose: surface every flag (sub-threshold included) so a validation pass can
             // confirm a check is reacting even when nothing crosses setbackVL. The line below
             // the setback line in chat is the real alert; this is console-only diagnostics.
-            VerboseLog.log(
-                "$id flag ${VerboseLog.nameOf(tp.username(), tp.uuid)} vl=${"%.2f".format(ctx.vl)} " +
-                    "(setback $setbackVL) [$label] @tick $tick"
-            )
+            // Guarded: the concatenation + "%.2f".format is evaluated before VerboseLog.log would
+            // short-circuit, so we check isEnabled() once here to skip the whole build when verbose
+            // is off (flag() is the hottest path in the pipeline — every flag, every tick).
+            if (VerboseLog.isEnabled()) {
+                VerboseLog.log(
+                    "$id flag ${VerboseLog.nameOf(tp.username(), tp.uuid)} vl=${"%.2f".format(ctx.vl)} " +
+                        "(setback $setbackVL) [$label] @tick $tick"
+                )
+            }
             if (ctx.vl > setbackVL) {
                 AlertManager.alert(
                     name = tp.username(),
@@ -103,8 +113,11 @@ abstract class Check {
                     setbackVL = setbackVL,
                 )
             }
-        } catch (_: Throwable) {
-            // fail-open: a flag must never throw
+        } catch (e: Throwable) {
+            // fail-open: a flag must never throw. But surface the failure when verbose so a check
+            // that silently throws on real data is discoverable (otherwise it's indistinguishable
+            // from a quiet server — the whole point of the verbose heartbeat). Self-gated.
+            try { if (VerboseLog.isEnabled()) VerboseLog.log("$id flag threw: ${e.javaClass.simpleName}: ${e.message}") } catch (_: Throwable) {}
         }
     }
 }

@@ -2,6 +2,8 @@ package dev.iustitia.mixin
 
 import dev.iustitia.Iustitia
 import dev.iustitia.config.ConfigManager
+import dev.iustitia.replay.ReplayBuffer
+import dev.iustitia.replay.ReplayState
 import dev.iustitia.render.OffenderCapture
 import dev.iustitia.render.WatchState
 import net.minecraft.client.MinecraftClient
@@ -66,6 +68,10 @@ class CameraMixin {
         ci: CallbackInfo,
     ) {
         try {
+            // Replay camera (POV / FOLLOW) takes precedence over watch + selfie — a replay in a
+            // look-driven mode owns the view while it runs. The ghosts render around the camera; the
+            // hide-live mixin suppresses the live OTHER players so only ghosts show.
+            if (tryReplay(tickDelta)) return
             // Watch follow-cam takes precedence over the single-frame selfie (they won't normally
             // co-occur; if they do, the sustained watch view is what the user wants on screen, and
             // the selfie's framebuffer grab — if armed — still fires at END_MAIN regardless).
@@ -137,6 +143,72 @@ class CameraMixin {
     }
 
     /**
+     * Replay camera: while [ReplayState] is active in a look-driven mode (POV / FOLLOW), drive the
+     * camera from the focus ghost's buffered snap so the user sees the rewind from that player's
+     * perspective (POV = their eyes) or orbiting them (FOLLOW). Returns true when it handled the
+     * camera (so watch + selfie are skipped); false when replay is inactive / FREE / has no focus
+     * snap this frame (→ the other branches run as before). Fail-open: a throw leaves the camera at
+     * its vanilla (local-player-derived) state.
+     *
+     * Like watch + selfie this is a sustained TAIL override: vanilla re-derives the camera before our
+     * inject every frame, so when the replay stops (or mode → FREE) the view reverts next frame —
+     * the camera can never get stuck on a ghost. POV additionally forces first-person perspective
+     * (saved/restored client-thread-side in [ReplayState]) so the local player's own body doesn't
+     * float at its real position in the ghost's-eye view.
+     */
+    private fun tryReplay(tickDelta: Float): Boolean {
+        try {
+            if (!ReplayState.active) return false
+            val mode = ReplayState.cameraMode
+            if (mode == ReplayState.CameraMode.FREE) return false
+            val snap = ReplayState.focusSnap() ?: return false
+            when (mode) {
+                ReplayState.CameraMode.POV -> positionReplayPov(snap)
+                ReplayState.CameraMode.FOLLOW -> positionReplayFollow(snap)
+                else -> return false
+            }
+            return true
+        } catch (_: Throwable) {
+            return false
+        }
+    }
+
+    /** POV: camera at the focus ghost's eye, looking exactly where the player was looking (yaw+pitch). */
+    private fun positionReplayPov(snap: ReplayBuffer.PlayerSnap) {
+        val eye = Vec3d(snap.x.toDouble(), snap.y.toDouble() + EYE_HEIGHT, snap.z.toDouble())
+        setRotation(snap.yaw, snap.pitch)
+        setPos(eye)
+    }
+
+    /**
+     * FOLLOW: orbit the focus ghost's eye (which moves through the timeline), mouse-controlled via
+     * the LOCAL player's yaw (same orbit model as [positionWatch]). The camera sits [WATCH_DIST]
+     * blocks behind the ghost along the player's look direction, raised [WATCH_HEIGHT] above the
+     * ghost eye, always looking AT it. See [positionWatch] for the look-at math.
+     */
+    private fun positionReplayFollow(snap: ReplayBuffer.PlayerSnap) {
+        val eye = Vec3d(snap.x.toDouble(), snap.y.toDouble() + EYE_HEIGHT, snap.z.toDouble())
+        val player = MinecraftClient.getInstance().player ?: return
+        val yawRad = player.getYaw() * (PI / 180.0)
+        val fwdX = -sin(yawRad)
+        val fwdZ = cos(yawRad)
+
+        val camX = eye.x - fwdX * WATCH_DIST
+        val camY = eye.y + WATCH_HEIGHT
+        val camZ = eye.z - fwdZ * WATCH_DIST
+
+        val dx = eye.x - camX
+        val dy = eye.y - camY
+        val dz = eye.z - camZ
+        val horiz = sqrt(dx * dx + dz * dz)
+        val yaw = Math.toDegrees(atan2(-dx, dz)).toFloat()
+        val pitch = (-Math.toDegrees(atan2(dy.toDouble(), horiz.toDouble()))).toFloat()
+
+        setRotation(yaw, pitch)
+        setPos(Vec3d(camX, camY, camZ))
+    }
+
+    /**
      * Sustained watch follow-cam: if [WatchState] is active and the watched player is loaded,
      * position the camera on a slow auto-orbit around their eye (radius [WATCH_DIST], raised
      * [WATCH_HEIGHT] above the eye, always looking AT the offender) and return true so the
@@ -172,10 +244,14 @@ class CameraMixin {
      * LOCAL player's yaw, so turning the mouse rotates the camera around the watched player (who
      * stays centered in frame). The camera sits `WATCH_DIST` blocks behind the offender along the
      * player's look direction, raised `WATCH_HEIGHT` above the offender's eye, always looking AT the
-     * offender eye. The radius clamps back toward the offender if the camera would sit inside a
-     * solid block (wall-clamp, like the selfie) so an offender beside a wall doesn't yield an
-     * inside-block view. There is NO auto-rotation — the orbit only moves when the user moves the
-     * mouse (per the UX fix).
+     * offender eye. There is NO auto-rotation — the orbit only moves when the user moves the mouse
+     * (per the UX fix).
+     *
+     * **No wall-clamp:** the radius is fixed at [WATCH_DIST] regardless of blocks. A camera inside a
+     * solid block renders nothing for that block (Minecraft culls the block the camera is in) unless
+     * it is transparent, so letting the camera sit inside a wall is visually fine and, unlike a
+     * radius clamp, never makes the view snap/glitch as the user orbits toward a wall. The user
+     * controls the orbit angle, so a wall-side camera is their choice, not a bug to fix up.
      *
      * Look-at math (MC yaw 0 → +Z, forward = (-sin yaw, cos yaw); pitch + = down):
      *  - dir = eye − camPos; yaw = atan2(−dirX, dirZ); pitch = −atan2(dirY, horiz).
@@ -189,23 +265,9 @@ class CameraMixin {
         val fwdX = -sin(yawRad)
         val fwdZ = cos(yawRad)
 
-        val w = mc.world
-        var h = WATCH_DIST
-        if (w != null) {
-            var d = WATCH_DIST
-            while (d > 0.8) {
-                val cx = eye.x - fwdX * d
-                val cy = eye.y + WATCH_HEIGHT
-                val cz = eye.z - fwdZ * d
-                if (w.getBlockState(BlockPos(Math.floor(cx).toInt(), Math.floor(cy).toInt(), Math.floor(cz).toInt())).isAir) {
-                    h = d; break
-                }
-                d -= 0.5
-            }
-        }
-        val camX = eye.x - fwdX * h
+        val camX = eye.x - fwdX * WATCH_DIST
         val camY = eye.y + WATCH_HEIGHT
-        val camZ = eye.z - fwdZ * h
+        val camZ = eye.z - fwdZ * WATCH_DIST
 
         val dx = eye.x - camX
         val dy = eye.y - camY
@@ -225,5 +287,7 @@ class CameraMixin {
         private const val WATCH_DIST = 3.5
         /** Watch camera height above the offender's eye (blocks) — slight downward look. */
         private const val WATCH_HEIGHT = 1.5
+        /** Eye height above a ghost's feet (blocks) — vanilla standing eye height. */
+        private const val EYE_HEIGHT = 1.62
     }
 }

@@ -50,6 +50,15 @@ object EntityTrackerManager {
 
     fun all(): Collection<TrackedPlayer> = byUuid.values
 
+    /**
+     * Despawn listeners — fired once per player that left the client world this tick. [dev.iustitia.Iustitia]
+     * wires a listener that calls `Check.purge(uuid)` for each, so a long single-world session doesn't
+     * leak one [CheckContext] per unique joiner per check (purge existed but was never called).
+     * CopyOnWrite so listener iteration during poll never needs its own lock.
+     */
+    private val despawnListeners = java.util.concurrent.CopyOnWriteArrayList<(UUID) -> Unit>()
+    fun onDespawn(listener: (UUID) -> Unit) { despawnListeners.add(listener) }
+
     /** Mark a velocity packet received — opens the velocity-exemption window for [ticksAhead]. */
     fun markVelocity(uuid: UUID, tick: Int, velocity: Vec3d) {
         try {
@@ -139,9 +148,18 @@ object EntityTrackerManager {
                     // skip this entity, keep going
                 }
             }
-            // purge despawned players (no longer in the world this tick)
+            // purge despawned players (no longer in the world this tick) and notify listeners so
+            // checks can drop their per-player contexts (otherwise a long single-world session
+            // leaks one CheckContext per unique joiner per check). Despawns are rare, so the
+            // per-despawn × listeners fan-out is cheap.
             if (seen.isNotEmpty() || byUuid.isNotEmpty()) {
-                byUuid.keys.removeAll { it !in seen }
+                if (despawnListeners.isEmpty()) {
+                    byUuid.keys.removeAll { it !in seen }
+                } else {
+                    val removed = ArrayList<UUID>()
+                    byUuid.keys.removeAll { if (it !in seen) { removed.add(it); true } else false }
+                    for (u in removed) for (l in despawnListeners) { try { l(u) } catch (_: Throwable) {} }
+                }
             }
             // publish the shared lag signals for this tick (single source of truth).
             // A majority frozen, OR (for small lobbies of exactly 2 other players) BOTH frozen
@@ -177,6 +195,9 @@ object EntityTrackerManager {
         tp.pos = newPos
         tp.lastYaw = tp.yaw; tp.yaw = newYaw
         tp.lastPitch = tp.pitch; tp.pitch = newPitch
+        // Hand-swing phase for the replay ghost's arm-swing animation (vanilla advances this
+        // client-side for other players; plain public field read, no side effects).
+        tp.handSwingTicks = try { e.handSwingTicks } catch (_: Throwable) { 0 }
 
         tp.ring.add(tick, newPos)
 
