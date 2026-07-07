@@ -45,7 +45,10 @@ class SectionRenderStateMixin {
     @Inject(method = ["renderSection"], at = [At("HEAD")], cancellable = true)
     private fun iustitia_suppressLiveTerrain(ci: CallbackInfo) {
         try {
-            if (ReplayState.active && ReplayState.chunks != null) {
+            // Legacy playclip never has chunks (ReplayState.start nulls them) and must show the live
+            // world (v1.1.0 = ghosts over live terrain), so the !legacyPlayclip guard is belt-and-
+            // suspenders against any future path that re-populates chunks during a Legacy playclip.
+            if (ReplayState.active && ReplayState.chunks != null && !ReplayState.legacyPlayclip) {
                 ci.cancel()
             }
         } catch (_: Throwable) {

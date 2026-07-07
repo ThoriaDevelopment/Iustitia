@@ -60,8 +60,9 @@ class ClientPlayerEntityMixin {
             // so their walking inputs must not move the live player. Zeroing playerInput here makes the
             // vanilla movement read see no held keys; the packet-cancel mixin (ClientConnectionMixin)
             // is the belt-and-suspenders for movement + the sole mechanism for break/place/attack/etc.
-            if (ReplayState.active) {
+            if (ReplayState.active && !ReplayState.legacyPlayclip) {
                 // PlayerInput.DEFAULT is the vanilla all-false instance (forward/backward/left/right/jump/sneak/sprint).
+                // Legacy playclip (v1.1.0) skips suppression so the player walks normally while watching.
                 input?.playerInput = PlayerInput.DEFAULT
             }
         } catch (_: Throwable) {

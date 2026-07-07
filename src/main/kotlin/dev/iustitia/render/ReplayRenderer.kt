@@ -166,10 +166,17 @@ object ReplayRenderer {
             // Chunk world (v6+ clip-only; null for /ius replay + pre-v6 clips). Solid, textured blocks
             // — the real captured map, face-culled to the surface shell — so the user can free-spectate
             // anywhere, including underground. Drawn first (under ghosts + the v5 wireframe terrain).
-            try { ChunkWorldRenderer.render(matrices, vcp, camPos, o) } catch (_: Throwable) {}
+            // Skipped for a Legacy playclip (v1.1.0 = ghosts over the live world, no chunk world) —
+            // belt-and-suspenders with ReplayState.start nulling chunks for Legacy.
+            if (!ReplayState.legacyPlayclip) {
+                try { ChunkWorldRenderer.render(matrices, vcp, camPos, o) } catch (_: Throwable) {}
+            }
             // Terrain shell (clip-only; null for /ius replay). Face-culled, so only the visible
             // surface blocks draw — fully-enclosed blocks contribute nothing. Fail-open per frame.
-            try { TerrainOverlay.render(matrices, lines) } catch (_: Throwable) {}
+            // Also skipped for a Legacy playclip (no terrain in v1.1.0).
+            if (!ReplayState.legacyPlayclip) {
+                try { TerrainOverlay.render(matrices, lines) } catch (_: Throwable) {}
+            }
             for (s in frame.snaps) {
                 try {
                     if (skipFocus && s.uuid() == focusUuid) continue

@@ -67,7 +67,10 @@ class ClientConnectionMixin {
     @Inject(method = ["send(Lnet/minecraft/network/packet/Packet;)V"], at = [At("HEAD")], cancellable = true)
     private fun iustitia_suppressGameplayPackets(packet: Packet<*>, ci: CallbackInfo) {
         try {
-            if (!ReplayState.active) return
+            // Legacy playclip (v1.1.0) skips suppression so the player can act on the live server
+            // normally while watching the clip. /ius replay passes legacy=false, so this never
+            // short-circuits on the replay path — replay suppression stays unchanged.
+            if (!ReplayState.active || ReplayState.legacyPlayclip) return
             if (isGameplay(packet)) ci.cancel()
         } catch (_: Throwable) {
             // fail-open: a throw leaves the packet going through (worst case = the player can act
