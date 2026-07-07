@@ -63,3 +63,4 @@ oldversion/
 # ---- Claude Code / commit-message scratch (local only, never committed) ----
 .commit-msg.txt
 *.tmp
+CLAUDE.md
