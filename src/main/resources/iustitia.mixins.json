@@ -14,7 +14,9 @@
     "SectionRenderStateMixin",
     "ClientPlayerEntityMixin",
     "ClientConnectionMixin",
-    "FreecamEntityMixin"
+    "FreecamEntityMixin",
+    "WorldRendererMixin",
+    "GameRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1
