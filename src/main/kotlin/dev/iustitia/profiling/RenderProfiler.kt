@@ -11,10 +11,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * investigation (post pass #3: static analysis identified and fixed the most clearly wasteful
  * substrate, but the symptom persisted, so we now measure rather than guess).
  *
- * Gated on [dev.iustitia.VerboseLog] (the `/ius profile` command refuses to start unless verbose
+ * Gated on [dev.iustitia.VerboseLog] (the `/ius debugfps` command refuses to start unless verbose
  * is on, per the user's "implement that into verbose" framing) — a profiler is a verbose-mode
  * diagnostic, not a normal-play path. Sampling is opt-in and runs only between an explicit
- * `/ius profile` start and `/ius profile stop`; nothing runs otherwise.
+ * `/ius debugfps` start and `/ius debugfps stop`; nothing runs otherwise.
  *
  * ## How it works
  *
@@ -43,7 +43,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * render thread's stack repeatedly while it's stuck in the slow method (which is how the slow
  * method shows up as a tall bar in the flat tally).
  *
- * Writes a text report to `<dataDir>/profiles/iustitia-profile-<timestamp>.txt` (dataDir =
+ * Writes a text report to `<dataDir>/debugfps/iustitia-debugfps-<timestamp>.txt` (dataDir =
  * `%APPDATA%/.iustitia` on Windows — the same place the persistence store / clips live) so the
  * user can hand the file back for analysis. All paths fail-open; sampling never throws into the
  * render thread (a cross-thread `getStackTrace` failure is swallowed by the sampler).
@@ -74,7 +74,7 @@ object RenderProfiler {
     fun isRunning(): Boolean = running
 
     /**
-     * Start sampling. MUST be called on the render thread (the `/ius profile` command handler is),
+     * Start sampling. MUST be called on the render thread (the `/ius debugfps` command handler is),
      * so [renderThread] is captured correctly. Returns `null` on success, or an error string
      * (`"already running"`) if a session is already in progress.
      */
@@ -161,7 +161,7 @@ object RenderProfiler {
         Files.createDirectories(dir)
         val ts = java.time.LocalDateTime.now()
             .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
-        val path = dir.resolve("iustitia-profile-$ts.txt")
+        val path = dir.resolve("iustitia-debugfps-$ts.txt")
         val sb = StringBuilder()
         val durMs = System.currentTimeMillis() - startMs
         val iusPct = if (totalSamples > 0) iustitiaSamples * 100.0 / totalSamples else 0.0
@@ -199,12 +199,12 @@ object RenderProfiler {
 
     private fun pct(v: Double): String = String.format(java.util.Locale.US, "%.1f", v)
 
-    /** `%APPDATA%/.iustitia/profiles` on Windows, `<gameDir>/.iustitia/profiles` elsewhere
+    /** `%APPDATA%/.iustitia/debugfps` on Windows, `<gameDir>/.iustitia/debugfps` elsewhere
      *  (matches [dev.iustitia.persistence.PersistenceManager]'s dataDir resolution). */
     private fun profileDir(): Path {
         val appdata = try { System.getenv("APPDATA") } catch (_: Throwable) { null }
         val base = if (appdata != null) Path.of(appdata).resolve(".iustitia")
             else FabricLoader.getInstance().gameDir.resolve(".iustitia")
-        return base.resolve("profiles")
+        return base.resolve("debugfps")
     }
 }

@@ -90,7 +90,7 @@ object IustitiaCommand {
         "reset" to "reset all tracker/check/alert/history state",
         "clear" to "reset one player's flags (tier→green) or everyone's: /ius clear <name|all>",
         "exempt" to "exempt a player from all checks: /ius exempt [name [on|off]]  (bare = list exempted)",
-        "profile" to "render-thread sampling profiler (verbose-gated): /ius profile  (start), /ius profile stop  (write a text report to %APPDATA%/.iustitia/profiles/)",
+        "debugfps" to "render-thread sampling profiler (verbose-gated): /ius debugfps  (start), /ius debugfps stop  (write a text report to %APPDATA%/.iustitia/debugfps/)",
     )
 
     fun register(dispatcher: CommandDispatcher<FabricClientCommandSource>) {
@@ -269,7 +269,7 @@ object IustitiaCommand {
                     .then(ClientCommandManager.argument("state", StringArgumentType.word())
                         .suggests { _, b -> suggestFiltered(b, listOf("on", "off")); b.buildFuture() }
                         .executes { exemptToggle(it, StringArgumentType.getString(it, "state")) })))
-            .then(ClientCommandManager.literal("profile")
+            .then(ClientCommandManager.literal("debugfps")
                 .executes { profileStart(it) }
                 .then(ClientCommandManager.literal("start").executes { profileStart(it) })
                 .then(ClientCommandManager.literal("stop").executes { profileStop(it) }))
@@ -440,28 +440,28 @@ object IustitiaCommand {
         return 1
     }
 
-    // ---- profile (live render-thread sampler; verbose-gated diagnostic for the FPS investigation) ----
-    /** `/ius profile` (or `/ius profile start`) — start sampling the render thread every ~5ms.
+    // ---- debugfps (live render-thread sampler; verbose-gated diagnostic for the FPS investigation) ----
+    /** `/ius debugfps` (or `/ius debugfps start`) — start sampling the render thread every ~5ms.
      *  Gated on verbose (the profiler is a verbose-mode diagnostic, not a normal-play path): if
      *  verbose is off, refuse with a hint. MUST run on the render thread (the command handler does),
      *  so [dev.iustitia.profiling.RenderProfiler.start] captures the render thread. Fail-open. */
     private fun profileStart(ctx: CommandContext<FabricClientCommandSource>): Int {
         if (!dev.iustitia.VerboseLog.isEnabled()) {
-            send(ctx, "$tag §7profiler is gated on verbose — enable it first with §f/ius verbose§7, then §f/ius profile§7 to start, reproduce the lag, and §f/ius profile stop§7 to dump the report.")
+            send(ctx, "$tag §7profiler is gated on verbose — enable it first with §f/ius verbose§7, then §f/ius debugfps§7 to start, reproduce the lag, and §f/ius debugfps stop§7 to dump the report.")
             return 0
         }
         val err = dev.iustitia.profiling.RenderProfiler.start()
         if (err != null) { send(ctx, "$tag §7profiler §c$err§7."); return 0 }
-        send(ctx, "$tag §aprofiler running§7 — sampling the render thread every 5ms. Reproduce the lag now (walk through the dense-player area). When done: §f/ius profile stop§7 → writes a text report to §f%APPDATA%/.iustitia/profiles/§7.")
+        send(ctx, "$tag §aprofiler running§7 — sampling the render thread every 5ms. Reproduce the lag now (walk through the dense-player area). When done: §f/ius debugfps stop§7 → writes a text report to §f%APPDATA%/.iustitia/debugfps/§7.")
         return 1
     }
 
-    /** `/ius profile stop` — stop sampling and write the text report to
-     *  `%APPDATA%/.iustitia/profiles/iustitia-profile-<timestamp>.txt`. Returns the path on success. */
+    /** `/ius debugfps stop` — stop sampling and write the text report to
+     *  `%APPDATA%/.iustitia/debugfps/iustitia-debugfps-<timestamp>.txt`. Returns the path on success. */
     private fun profileStop(ctx: CommandContext<FabricClientCommandSource>): Int {
         val res = dev.iustitia.profiling.RenderProfiler.stop()
         when {
-            res == "not running" -> { send(ctx, "$tag §cprofiler not running (start with §f/ius profile§7)."); return 0 }
+            res == "not running" -> { send(ctx, "$tag §cprofiler not running (start with §f/ius debugfps§7)."); return 0 }
             res.startsWith("failed") -> { send(ctx, "$tag §c$res"); return 0 }
             else -> {
                 send(ctx, "$tag §7profiler §astopped§7 — report written: §f$res")
