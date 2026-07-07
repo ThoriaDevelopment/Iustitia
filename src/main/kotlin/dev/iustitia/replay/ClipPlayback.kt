@@ -32,16 +32,23 @@ object ClipPlayback {
         if (clip == null || clip.window.frames.isEmpty()) {
             Result.LoadFailed
         } else {
-            val started = ReplayState.start(clip.window, clip.focus, speed, ConfigManager.config.replayHideLive, relocate = true)
+            // Legacy = the v1.1.0 playclip: no relocation (ghosts at recorded coords), no auto-freecam
+            // (camera stays at the player's own view), and ReplayState.start nulls any embedded
+            // terrain/chunks so the render path + live-terrain suppression no-op. Modern keeps the
+            // current behavior: relocate + auto-enter FREECAM for immediate free-spectate. The mode is
+            // re-read live so a YACL change takes effect on the next /ius playclip without a restart.
+            val mode = ConfigManager.config.playclipMode
+            val legacy = mode == dev.iustitia.config.IustitiaConfig.PlayclipMode.LEGACY
+            val started = ReplayState.start(clip.window, clip.focus, speed, ConfigManager.config.replayHideLive, relocate = !legacy, legacy = legacy)
             if (started) {
-                // Auto-enter FREECAM so /ius playclip is immediately a free-spectate through the clip's
-                // solid world (or the live world for a no-chunk clip — live terrain isn't suppressed
-                // when chunks==null, which is fine). Revert on stop is already handled by
-                // ReplayState.stop() -> exitFreecam() + restorePerspective() (next frame's camera mixin
-                // FREECAM branch returns false -> vanilla re-derives the live-player view). /ius replay
-                // never reaches here (it calls ReplayState.start directly), so it keeps its FREE default.
-                // Fail-open: a throw leaves the camera in the FREE default set by start — never a crash.
-                try { ReplayState.setCameraMode(ReplayState.CameraMode.FREECAM) } catch (_: Throwable) {}
+                // Modern only: auto-enter FREECAM so /ius playclip is immediately a free-spectate through
+                // the clip's solid world. Legacy keeps the v1.1.0 FREE default (no detached camera).
+                // Revert on stop is already handled by ReplayState.stop() -> exitFreecam() +
+                // restorePerspective(). /ius replay never reaches here (it calls ReplayState.start
+                // directly), so it keeps its FREE default. Fail-open: a throw leaves the FREE default.
+                if (!legacy) {
+                    try { ReplayState.setCameraMode(ReplayState.CameraMode.FREECAM) } catch (_: Throwable) {}
+                }
                 Result.Started(clip.window.frames.size, clip.focus)
             } else Result.StartFailed
         }

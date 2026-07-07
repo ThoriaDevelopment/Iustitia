@@ -1031,7 +1031,7 @@ object IustitiaCommand {
             send(ctx, "$tag §7no buffered data for the last §f${secs}s§7 (not tracked yet).")
             return 0
         }
-        val started = try { dev.iustitia.replay.ReplayState.start(window, focus, speed, cfg.replayHideLive, relocate = false) } catch (_: Throwable) { false }
+        val started = try { dev.iustitia.replay.ReplayState.start(window, focus, speed, cfg.replayHideLive, relocate = false, legacy = false) } catch (_: Throwable) { false }
         if (!started) { send(ctx, "$tag §7couldn't start the replay (empty window)."); return 0 }
         val hideTxt = if (cfg.replayHideLive) " §7(live players hidden)" else ""
         send(ctx, "$tag §7replaying last §f${secs}s §7for §f$focusTxt§7 at §f${"%.2f".format(speed)}×§7 — ghosts drawn in-world$hideTxt. Auto-stops at the end (or §f/ius replay off§7).")
@@ -1069,7 +1069,10 @@ object IustitiaCommand {
         // render distance, so capture is the action bbox + margin (volume-capped) — fail-open to a
         // terrain-less clip if capture throws or clipTerrain is off. Replay never carries terrain
         // (ReplayBuffer.snapshot builds a terrain-null window), so this only affects clips.
-        val windowWithTerrain = if (cfg.clipTerrain) {
+        // Legacy mode never downloads the world (v1.1.0 was ghosts-only) — terrain + chunk capture
+        // are gated on Modern regardless of the clipTerrain/clipChunkWorld toggles.
+        val modern = cfg.playclipMode == dev.iustitia.config.IustitiaConfig.PlayclipMode.MODERN
+        val windowWithTerrain = if (modern && cfg.clipTerrain) {
             try { window.copy(terrain = dev.iustitia.replay.TerrainCapture.capture(window, focus)) } catch (_: Throwable) { window }
         } else window
         // Optionally snapshot every loaded chunk around the player so /ius playclip can render the
@@ -1077,7 +1080,7 @@ object IustitiaCommand {
         // world hidden — free-spectate anywhere incl. underground. One-shot at save time; bounded by
         // clipChunkRadius + a section budget. Fail-open to a chunks-less clip if capture throws or
         // clipChunkWorld is off (the v5 wireframe terrain / ghosts path then plays as before).
-        val windowWithWorld = if (cfg.clipChunkWorld) {
+        val windowWithWorld = if (modern && cfg.clipChunkWorld) {
             try {
                 val radius = try { cfg.clipChunkRadius } catch (_: Throwable) { 8 }
                 windowWithTerrain.copy(chunks = dev.iustitia.replay.ChunkCapture.capture(radius))

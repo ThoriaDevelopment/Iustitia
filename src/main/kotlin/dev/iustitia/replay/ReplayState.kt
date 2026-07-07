@@ -129,6 +129,14 @@ object ReplayState {
         private set
     @Volatile var freecamActive: Boolean = false
         private set
+    /** True while a **playclip** is running in LEGACY mode (v1.1.0 behavior). Set from [start]'s
+     *  [legacy] arg. Consumed by the input/packet-suppression mixins ([dev.iustitia.mixin.ClientPlayerEntityMixin],
+     *  [dev.iustitia.mixin.ClientConnectionMixin]) + the chunk/terrain render + live-terrain gates to
+     *  DISABLE those post-v1.1.0 behaviors for a Legacy playclip (player walks + acts normally, live
+     *  world renders, no freecam). Always false for `/ius replay` (which passes `legacy=false`) so
+     *  replay keeps its current spectator-like suppression unchanged. */
+    @Volatile var legacyPlayclip: Boolean = false
+        private set
 
     /** Immutable frame list — set once at [start], read cross-thread. Empty when inactive. */
     private var frames: List<ReplayBuffer.Frame> = emptyList()
@@ -151,7 +159,7 @@ object ReplayState {
      * plays around the user (the [IustitiaConfig.replayRelocate] toggle still gates it for clips).
      * Returns false if there are no frames. Idempotent: starting while active first stops the prior one.
      */
-    fun start(window: ReplayBuffer.Window, focus: UUID?, speed: Float, hideLive: Boolean, relocate: Boolean): Boolean {
+    fun start(window: ReplayBuffer.Window, focus: UUID?, speed: Float, hideLive: Boolean, relocate: Boolean, legacy: Boolean): Boolean {
         try {
             if (window.frames.isEmpty()) return false
             // Idempotent: stop any prior replay first (restores perspective if it was in POV).
@@ -165,9 +173,12 @@ object ReplayState {
             paused = false
             cameraMode = CameraMode.FREE
             lastFrameTick = window.frames.last().tick
-            terrain = window.terrain
-            chunks = window.chunks
+            // Legacy drops any terrain/chunks embedded in a v5/v6 clip so the render path + the
+            // live-terrain suppression no-op (v1.1.0 was ghosts-over-live-world only). Modern keeps them.
+            terrain = if (legacy) null else window.terrain
+            chunks = if (legacy) null else window.chunks
             relocOffset = if (relocate) computeRelocOffset(window, focus) else null
+            legacyPlayclip = legacy
             active = true
             return true
         } catch (_: Throwable) {
@@ -214,6 +225,7 @@ object ReplayState {
             relocOffset = null
             terrain = null
             chunks = null
+            legacyPlayclip = false
             // Drop the FREECAM pose (pure camera-override — no camera entity to restore; flipping the
             // flag is enough; the next frame's camera mixin FREECAM branch returns false → vanilla view).
             try { exitFreecam() } catch (_: Throwable) {}
