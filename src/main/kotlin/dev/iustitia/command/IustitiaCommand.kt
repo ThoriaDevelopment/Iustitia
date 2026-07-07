@@ -15,6 +15,7 @@ import dev.iustitia.info.FeatureInfo
 import dev.iustitia.persistence.NoteStore
 import dev.iustitia.persistence.PersistenceManager
 import dev.iustitia.protocol.ProtocolDetector
+import dev.iustitia.replay.ClipPlayback
 import dev.iustitia.session.SessionStats
 import dev.iustitia.session.Snapshot
 import dev.iustitia.tracking.EntityTrackerManager
@@ -59,8 +60,8 @@ object IustitiaCommand {
         "list" to "show all checks + enabled state",
         "status" to "health panel: master, tracked players, protocol, alerts",
         "hist" to "flag history: /ius hist [name] [check]",
-        "report" to "copy a player's report card to clipboard: /ius report <name> [markdown|json]",
-        "transcript" to "print a player's session timeline: /ius transcript <name>  (or /ius transcript panel [name] to toggle the side panel)",
+        "report" to "copy a player's report card to clipboard: /ius report <name> [markdown|json|text]  (text = the chat-friendly transcript form)",
+        "transcript" to "print a player's session timeline to chat (text form of /ius report): /ius transcript <name>  (or /ius transcript panel [name] to toggle the side panel)",
         "evidence" to "one chat line of a player's last few seconds of flags: /ius evidence <name>",
         "note" to "moderator tag a player: /ius note <name> <closet|blatant|needsReview|legit> <text...>  (or /ius note <name> to view)",
         "session" to "session summary: tracked players, tier counts, who peaked highest",
@@ -70,6 +71,8 @@ object IustitiaCommand {
         "clip" to "export the last N seconds to a .iusclip file: /ius clip <seconds> [name]  (name = the clip's filename; also sets the focus player if name matches someone online; omit for scene_<tick>)",
         "playclip" to "play back a saved .iusclip in-world at FULL speed by default: /ius playclip <name> [1|0.5|0.25]  (no name = list saved clips)",
         "clips" to "open the clip manager screen: list saved .iusclip files, play or delete each",
+        "deleteclip" to "delete a saved clip by name: /ius deleteclip <name>  (alias /ius delclip <name>)",
+        "delclip" to "alias for /ius deleteclip",
         "sonar" to "toggle directional audio alerts: /ius sonar [on|off]  (pan = direction, pitch = distance)",
         "wizard" to "re-run the first-launch setup wizard",
         "keybinds" to "open the keybind hub screen (lists binds, highlights conflicts)",
@@ -117,7 +120,7 @@ object IustitiaCommand {
                     .suggests { _, b -> suggestNames(b); b.buildFuture() }
                     .executes { report(it, "markdown") }
                     .then(ClientCommandManager.argument("format", StringArgumentType.word())
-                        .suggests { _, b -> suggestFiltered(b, listOf("markdown", "json")); b.buildFuture() }
+                        .suggests { _, b -> suggestFiltered(b, listOf("markdown", "json", "text")); b.buildFuture() }
                         .executes { report(it, StringArgumentType.getString(it, "format")) })))
             .then(ClientCommandManager.literal("transcript")
                 .executes { transcriptToggle(it) }
@@ -171,7 +174,7 @@ object IustitiaCommand {
                         .executes { replaySpeed(it, StringArgumentType.getString(it, "speed")) }))
                 .then(ClientCommandManager.literal("cam")
                     .then(ClientCommandManager.argument("mode", StringArgumentType.word())
-                        .suggests { _, b -> suggestFiltered(b, listOf("free", "follow", "pov")); b.buildFuture() }
+                        .suggests { _, b -> suggestFiltered(b, listOf("free", "follow", "pov", "freecam")); b.buildFuture() }
                         .executes { replayCam(it, StringArgumentType.getString(it, "mode")) }))
                 // <target> is overloaded: a NUMBER = the seconds to replay (no focus, 1×), e.g.
                 // `/ius replay 60`; a NAME = the focus player, optionally followed by <seconds> [speed],
@@ -200,6 +203,14 @@ object IustitiaCommand {
                         .suggests { _, b -> suggestFiltered(b, listOf("1", "0.5", "0.25")); b.buildFuture() }
                         .executes { playclip(it, StringArgumentType.getString(it, "name"), StringArgumentType.getString(it, "speed")) })))
             .then(ClientCommandManager.literal("clips").executes { clipsScreen(it) })
+            .then(ClientCommandManager.literal("deleteclip")
+                .then(ClientCommandManager.argument("name", StringArgumentType.word())
+                    .suggests { _, b -> suggestFiltered(b, dev.iustitia.replay.ClipStore.list()); b.buildFuture() }
+                    .executes { deleteClip(it) }))
+            .then(ClientCommandManager.literal("delclip")
+                .then(ClientCommandManager.argument("name", StringArgumentType.word())
+                    .suggests { _, b -> suggestFiltered(b, dev.iustitia.replay.ClipStore.list()); b.buildFuture() }
+                    .executes { deleteClip(it) }))
             .then(ClientCommandManager.literal("sonar")
                 .executes { sonarToggle(it, null) }
                 .then(ClientCommandManager.argument("state", StringArgumentType.word())
@@ -474,8 +485,10 @@ object IustitiaCommand {
     // ---- report (#9) ----
     /** `/ius report <name> [format]` — builds a report card from the FlagHistory aggregators
      *  (same data as [PlayerHistoryScreen]) and copies it to the clipboard. `format` defaults
-     *  to `markdown`; `json` emits the same data as a JSON object. Never sends anything to the
-     *  server (clipboard is client-only). Fail-open. */
+     *  to `markdown`; `json` emits the same data as a JSON object; `text` emits the chat-friendly
+     *  transcript form (the same builder `/ius transcript <name>` prints to chat — session stats +
+     *  moderator note + timeline). One builder ([reportText]) backs both so the two commands can
+     *  never drift. Never sends anything to the server (clipboard is client-only). Fail-open. */
     private fun report(ctx: CommandContext<FabricClientCommandSource>, format: String): Int {
         val name = StringArgumentType.getString(ctx, "name")
         var uuid = FlagHistory.resolveName(name)
@@ -485,8 +498,14 @@ object IustitiaCommand {
             } catch (_: Throwable) { null }
         }
         if (uuid == null) { send(ctx, "$tag §cno history for §f$name§7 (must be tracked or have flagged first)."); return 0 }
-        val fmt = if (format.equals("json", ignoreCase = true)) "json" else "markdown"
-        val text = try { if (fmt == "json") reportJson(uuid, name) else reportMarkdown(uuid, name) } catch (_: Throwable) {
+        val fmt = when (format.lowercase()) { "json" -> "json"; "text" -> "text"; else -> "markdown" }
+        val text = try {
+            when (fmt) {
+                "json" -> reportJson(uuid, name)
+                "text" -> reportText(uuid, name)
+                else -> reportMarkdown(uuid, name)
+            }
+        } catch (_: Throwable) {
             send(ctx, "$tag §cfailed to build report for §f$name§7."); return 0
         }
         try { MinecraftClient.getInstance().keyboard.setClipboard(text) } catch (_: Throwable) {
@@ -499,9 +518,7 @@ object IustitiaCommand {
     private fun reportMarkdown(uuid: UUID, name: String): String {
         val sb = StringBuilder()
         val tier = FlagHistory.tierFor(uuid)
-        val tierName = when (tier) {
-            FlagHistory.Tier.GREEN -> "GREEN"; FlagHistory.Tier.YELLOW -> "YELLOW"; FlagHistory.Tier.RED -> "RED"
-        }
+        val tierName = tier.label
         val sp = FlagHistory.span(uuid)
         val alerts = FlagHistory.sessionAlertCount(uuid)
         val counts = FlagHistory.flagCounts(uuid)
@@ -534,9 +551,7 @@ object IustitiaCommand {
     private fun reportJson(uuid: UUID, name: String): String {
         val sb = StringBuilder()
         val tier = FlagHistory.tierFor(uuid)
-        val tierName = when (tier) {
-            FlagHistory.Tier.GREEN -> "GREEN"; FlagHistory.Tier.YELLOW -> "YELLOW"; FlagHistory.Tier.RED -> "RED"
-        }
+        val tierName = tier.label
         val sp = FlagHistory.span(uuid)
         val counts = FlagHistory.flagCounts(uuid)
         val maxVlMap = FlagHistory.maxVlByCheck(uuid)
@@ -583,7 +598,7 @@ object IustitiaCommand {
         e.subLabel?.let { parts += it }
         if (e.measurement != null || e.threshold != null) parts += "${e.measurement ?: "?"}/${e.threshold ?: "?"}"
         e.pos?.let { parts += "pos=(${it.x.toInt()},${it.y.toInt()},${it.z.toInt()})" }
-        e.victim?.let { parts += "victim=" + (FlagHistory.nameFor(it) ?: it.toString().take(8)) }
+        e.victim?.let { parts += "victim=" + FlagHistory.nameOrShort(it) }
         e.extra?.let { parts += it }
         return parts.joinToString(" · ")
     }
@@ -632,43 +647,50 @@ object IustitiaCommand {
         if (other != null) other.uuid to (other.name.string.ifEmpty { other.uuid.toString().take(8) }) else null
     } catch (_: Throwable) { null }
 
-    // ---- transcript (#4) ----
+    // ---- transcript (#4) — chat-print form of the report engine ----
+    /** `/ius transcript <name>` — prints the [reportText] builder to chat (and saves it to an
+     *  export file when persistence is on). This is the in-game, paste-ready form of `/ius report
+     *  <name> text` — same builder, different output channel: transcript → chat + export file,
+     *  report → clipboard. `panel` is a separate live overlay surface ([TranscriptPanelScreen]). */
     private fun transcriptPrint(ctx: CommandContext<FabricClientCommandSource>): Int {
         val name = StringArgumentType.getString(ctx, "name")
         val uuid = resolveUuid(name)
         if (uuid == null) { send(ctx, "$tag §cno data for §f$name§7 (must be tracked or have flagged first)."); return 0 }
-        val text = try { buildTranscript(uuid, name) } catch (_: Throwable) {
+        val text = try { reportText(uuid, name) } catch (_: Throwable) {
             send(ctx, "$tag §cfailed to build transcript for §f$name§7."); return 0 }
         send(ctx, text)
         try { if (ConfigManager.config.persistenceEnabled) PersistenceManager.saveExport("transcript", name, text) } catch (_: Throwable) {}
-        send(ctx, "$tag §7transcript for §f$name§7 printed §8(paste into a report)")
+        send(ctx, "$tag §7transcript for §f$name§7 printed §8(paste into a report; same as §f/ius report $name text§7)")
         return 1
     }
 
-    private fun buildTranscript(uuid: java.util.UUID, name: String): String {
+    /** Shared text-format builder for the report engine — the chat-friendly transcript form.
+     *  Backs both `/ius transcript <name>` (printed to chat) and `/ius report <name> text`
+     *  (copied to clipboard), so the two commands share one source of truth. Includes the
+     *  session stats + moderator note that the markdown/json forms don't surface. */
+    private fun reportText(uuid: java.util.UUID, name: String): String {
         val sb = StringBuilder()
         val tier = FlagHistory.tierFor(uuid)
-        val tierName = when (tier) { FlagHistory.Tier.GREEN -> "GREEN"; FlagHistory.Tier.YELLOW -> "YELLOW"; FlagHistory.Tier.RED -> "RED" }
         val score = FlagHistory.confidenceScore(uuid)
         val st = SessionStats.stats(uuid)
-        sb.append("=== Iustitia transcript: $name (tier $tierName [$score]) ===\n")
+        sb.append("=== Iustitia transcript: $name (tier ${tier.label} [$score]) ===\n")
         sb.append("session: swings=${st.swings} hits=${st.hits} velocity=${st.velocity}\n")
         sb.append("alerts=${FlagHistory.sessionAlertCount(uuid)} flags=${FlagHistory.flagCounts(uuid).values.sum()}")
         FlagHistory.topCheck(uuid)?.let { sb.append(" top=$it") }
         sb.append("\n")
         NoteStore.get(uuid)?.let { n -> sb.append("note: ${n.category.name.lowercase()} (\"${n.text}\")\n") }
-        sb.append("timeline (last ${FlagHistory.flags(uuid).size} flags):\n")
+        // One flags snapshot (FlagHistory.flags locks + copies the deque) — reuse it for the header
+        // count AND the iteration, instead of fetching it twice.
         val flags = FlagHistory.flags(uuid)
+        sb.append("timeline (last ${flags.size} flags):\n")
         if (flags.isEmpty()) sb.append("(no flags recorded)\n")
         flags.forEach { f ->
             sb.append(" @t${f.tick} ${f.checkId} (${f.label}) vl=${fmt(f.vl)}")
+            // Reuse the shared [evidenceMd] formatter so the text form carries the same fields as
+            // markdown/json (notably pos) instead of a near-duplicate that dropped the coordinate.
             f.evidence?.let { ev ->
-                val parts = ArrayList<String>()
-                ev.subLabel?.let { parts += it }
-                if (ev.measurement != null || ev.threshold != null) parts += "${ev.measurement ?: "?"}/${ev.threshold ?: "?"}"
-                ev.victim?.let { parts += "victim=" + (FlagHistory.nameFor(it) ?: it.toString().take(8)) }
-                ev.extra?.let { parts += it }
-                if (parts.isNotEmpty()) sb.append(" ").append(parts.joinToString(" · "))
+                val evTxt = evidenceMd(ev)
+                if (evTxt.isNotEmpty()) sb.append(" ").append(evTxt)
             }
             sb.append("\n")
         }
@@ -715,8 +737,7 @@ object IustitiaCommand {
             if (list.size > 1) "$cid$mv ×${list.size}" else "$cid$mv"
         }
         val tier = FlagHistory.tierFor(uuid)
-        val tierName = when (tier) { FlagHistory.Tier.GREEN -> "GREEN"; FlagHistory.Tier.YELLOW -> "YELLOW"; FlagHistory.Tier.RED -> "RED" }
-        val line = "$tag §f$name §7(last ${window / 20}s): §e${parts.joinToString(", ")} §7| Tier: §f$tierName §7[${FlagHistory.confidenceScore(uuid)}]"
+        val line = "$tag §f$name §7(last ${window / 20}s): §e${parts.joinToString(", ")} §7| Tier: §f${tier.label} §7[${FlagHistory.confidenceScore(uuid)}]"
         send(ctx, line)
         try { if (ConfigManager.config.persistenceEnabled) PersistenceManager.saveExport("evidence", name, line) } catch (_: Throwable) {}
         return 1
@@ -901,11 +922,21 @@ object IustitiaCommand {
             "free" -> dev.iustitia.replay.ReplayState.CameraMode.FREE
             "follow" -> dev.iustitia.replay.ReplayState.CameraMode.FOLLOW
             "pov" -> dev.iustitia.replay.ReplayState.CameraMode.POV
-            else -> { send(ctx, "$tag §7camera mode must be §ffree§7/§ffollow§7/§fpov§7."); return 0 } }
+            "freecam" -> dev.iustitia.replay.ReplayState.CameraMode.FREECAM
+            else -> { send(ctx, "$tag §7camera mode must be §ffree§7/§ffollow§7/§fpov§7/§ffreecam§7."); return 0 } }
+        // FREECAM needs a chunk world to fly through — it's the free-spectate mode for a chunk-bearing
+        // /ius playclip. Refuse (with a hint) when there's no chunk world so the camera doesn't end up
+        // floating in void with nothing to look at.
+        if (mode == dev.iustitia.replay.ReplayState.CameraMode.FREECAM &&
+            dev.iustitia.replay.ReplayState.chunks == null) {
+            send(ctx, "$tag §7freecam needs a §fchunk-bearing playclip§7 (a clip saved with the full-world capture on). Use §ffree§7/§ffollow§7/§fpov§7 for a plain replay.")
+            return 0
+        }
         dev.iustitia.replay.ReplayState.setCameraMode(mode)
         val label = when (mode) { dev.iustitia.replay.ReplayState.CameraMode.FREE -> "free (your view)"
             dev.iustitia.replay.ReplayState.CameraMode.FOLLOW -> "follow (orbit the focus ghost)"
-            dev.iustitia.replay.ReplayState.CameraMode.POV -> "POV (the focus ghost's eyes)" }
+            dev.iustitia.replay.ReplayState.CameraMode.POV -> "POV (the focus ghost's eyes)"
+            dev.iustitia.replay.ReplayState.CameraMode.FREECAM -> "freecam (fly the detached camera — WASD + mouse, no collision)" }
         send(ctx, "$tag §7replay camera: §f$label§7.")
         return 1
     }
@@ -983,7 +1014,7 @@ object IustitiaCommand {
             send(ctx, "$tag §7no buffered data for the last §f${secs}s§7 (not tracked yet).")
             return 0
         }
-        val started = try { dev.iustitia.replay.ReplayState.start(window, focus, speed, cfg.replayHideLive) } catch (_: Throwable) { false }
+        val started = try { dev.iustitia.replay.ReplayState.start(window, focus, speed, cfg.replayHideLive, relocate = false) } catch (_: Throwable) { false }
         if (!started) { send(ctx, "$tag §7couldn't start the replay (empty window)."); return 0 }
         val hideTxt = if (cfg.replayHideLive) " §7(live players hidden)" else ""
         send(ctx, "$tag §7replaying last §f${secs}s §7for §f$focusTxt§7 at §f${"%.2f".format(speed)}×§7 — ghosts drawn in-world$hideTxt. Auto-stops at the end (or §f/ius replay off§7).")
@@ -1016,21 +1047,45 @@ object IustitiaCommand {
         // `myclip.iusclip` with no focus, while `/ius clip 10 thoria` saves `thoria.iusclip` AND
         // highlights thoria if they're online. Filename is sanitized in ClipStore.save.
         val clipName = nameArg ?: "scene_${now}"
-        val saved = try { dev.iustitia.replay.ClipStore.save(clipName, window, focus) } catch (_: Throwable) { null }
+        // Optionally snapshot the loaded terrain around the action so /ius playclip can render the
+        // map around the user on a different server/dimension. Client only has loaded chunks in
+        // render distance, so capture is the action bbox + margin (volume-capped) — fail-open to a
+        // terrain-less clip if capture throws or clipTerrain is off. Replay never carries terrain
+        // (ReplayBuffer.snapshot builds a terrain-null window), so this only affects clips.
+        val windowWithTerrain = if (cfg.clipTerrain) {
+            try { window.copy(terrain = dev.iustitia.replay.TerrainCapture.capture(window, focus)) } catch (_: Throwable) { window }
+        } else window
+        // Optionally snapshot every loaded chunk around the player so /ius playclip can render the
+        // clip's world as solid textured blocks (the real map) relocated to the user, with the live
+        // world hidden — free-spectate anywhere incl. underground. One-shot at save time; bounded by
+        // clipChunkRadius + a section budget. Fail-open to a chunks-less clip if capture throws or
+        // clipChunkWorld is off (the v5 wireframe terrain / ghosts path then plays as before).
+        val windowWithWorld = if (cfg.clipChunkWorld) {
+            try {
+                val radius = try { cfg.clipChunkRadius } catch (_: Throwable) { 8 }
+                windowWithTerrain.copy(chunks = dev.iustitia.replay.ChunkCapture.capture(radius))
+            } catch (_: Throwable) { windowWithTerrain }
+        } else windowWithTerrain
+        val saved = try { dev.iustitia.replay.ClipStore.save(clipName, windowWithWorld, focus) } catch (_: Throwable) { null }
         if (saved == null) {
             send(ctx, "$tag §cfailed to write clip (disk error).")
             return 0
         }
         val frames = window.frames.size
         val alerts = window.alerts.size
-        send(ctx, "$tag §7clip saved: §f$saved§7 §8($frames frames, $alerts alerts, ${secs}s) §7→ §f${dev.iustitia.replay.ClipStore.dirDisplay()}")
+        val blocks = windowWithWorld.terrain?.nonAirCount() ?: 0
+        val terrainTxt = if (blocks > 0) "§8, $blocks terrain blocks§7" else ""
+        val chunkSections = windowWithWorld.chunks?.sectionCount() ?: 0
+        val chunksTxt = if (chunkSections > 0) "§8, $chunkSections chunk sections§7" else ""
+        send(ctx, "$tag §7clip saved: §f$saved§7 §8($frames frames, $alerts alerts, ${secs}s$terrainTxt$chunksTxt) §7→ §f${dev.iustitia.replay.ClipStore.dirDisplay()}")
         send(ctx, " §7play it back with §f/ius playclip $saved§7.")
         return 1
     }
 
     /** `/ius playclip [name] [1|0.5|0.25]` — load a `.iusclip` and play it back in-world as ghost
      *  positions at FULL speed by default (like `/ius replay` but from a saved file). No name = list
-     *  saved clips. Fail-open. */
+     *  saved clips. Validates the speed arg, then delegates load → start to [ClipPlayback] (shared with
+     *  the clip-manager screen's left-click Play) so the two entry points can't drift. Fail-open. */
     private fun playclip(ctx: CommandContext<FabricClientCommandSource>, nameArg: String?, speedArg: String?): Int {
         if (nameArg == null) {
             val clips = try { dev.iustitia.replay.ClipStore.list() } catch (_: Throwable) { emptyList() }
@@ -1039,20 +1094,21 @@ object IustitiaCommand {
             clips.forEach { send(ctx, " §f$it §7— §f/ius playclip $it") }
             return 1
         }
-        val clip = try { dev.iustitia.replay.ClipStore.load(nameArg) } catch (_: Throwable) { null }
-        if (clip == null || clip.window.frames.isEmpty()) {
-            send(ctx, "$tag §cno clip §f$nameArg§7 (save one with /ius clip; check the name with /ius playclip).")
-            return 0
-        }
         val speed = parseSpeed(ctx, speedArg) ?: return 0
-        val cfg = ConfigManager.config
-        val started = try {
-            dev.iustitia.replay.ReplayState.start(clip.window, clip.focus, speed, cfg.replayHideLive)
-        } catch (_: Throwable) { false }
-        if (!started) { send(ctx, "$tag §ccouldn't start the clip (empty)."); return 0 }
-        val focusTxt = clip.focus?.let { " §7focus §f${FlagHistory.nameFor(it) ?: it.toString().take(8)}" } ?: ""
-        send(ctx, "$tag §7playing clip §f$nameArg§7 at §f${"%.2f".format(speed)}×§7 — ${clip.window.frames.size} frames$focusTxt. Auto-stops at the end (or §f/ius playclip off§7 to stop).")
-        return 1
+        when (val r = ClipPlayback.start(nameArg, speed)) {
+            is ClipPlayback.Result.Started -> {
+                val focusTxt = r.focus?.let { " §7focus §f${FlagHistory.nameOrShort(it)}" } ?: ""
+                send(ctx, "$tag §7playing clip §f$nameArg§7 at §f${"%.2f".format(speed)}×§7 — §f${r.frames}§7 frames$focusTxt. Auto-stops at the end (or §f/ius playclip off§7 to stop).")
+                return 1
+            }
+            ClipPlayback.Result.LoadFailed -> {
+                send(ctx, "$tag §cno clip §f$nameArg§7 (save one with /ius clip; check the name with /ius playclip).")
+            }
+            ClipPlayback.Result.StartFailed -> {
+                send(ctx, "$tag §ccouldn't start the clip (playback failed).")
+            }
+        }
+        return 0
     }
 
     /** `/ius sonar [on|off]` — toggle the directional audio alert cue (additive to chat). Bare = toggle. */
@@ -1087,6 +1143,19 @@ object IustitiaCommand {
         val mc = MinecraftClient.getInstance()
         mc.execute { try { mc.setScreen(dev.iustitia.ui.ClipManagerScreen(mc.currentScreen)) } catch (_: Throwable) {} }
         return 1
+    }
+
+    /** `/ius deleteclip <name>` (alias `/ius delclip <name>`) — delete a saved `.iusclip` by name.
+     *  Wires the existing [dev.iustitia.replay.ClipStore.delete]; fail-open with chat feedback. */
+    private fun deleteClip(ctx: CommandContext<FabricClientCommandSource>): Int {
+        val name = StringArgumentType.getString(ctx, "name")
+        val ok = try { dev.iustitia.replay.ClipStore.delete(name) } catch (_: Throwable) { false }
+        if (ok) {
+            send(ctx, "$tag §7deleted clip §f$name§7 → §f${dev.iustitia.replay.ClipStore.dirDisplay()}")
+        } else {
+            send(ctx, "$tag §cno clip named §f$name§7 (check §f/ius playclip§7 for the list).")
+        }
+        return if (ok) 1 else 0
     }
 
     // ---- help ----
