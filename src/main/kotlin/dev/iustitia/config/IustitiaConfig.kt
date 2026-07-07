@@ -190,6 +190,14 @@ data class IustitiaConfig(
      *  larger via [clipChunkRadius]; this is how much of it you actually render at once). Default 6,
      *  clamped 4..12 at render. Display/UX only. */
     var clipChunkRenderDistance: Int = 6,
+    /** `/ius playclip` generation: **LEGACY** = the v1.1.0 playclip experience (ghosts over the live
+     *  world, no chunk/terrain capture, no relocation, no auto-freecam, no spectator input/packet
+     *  suppression — the player walks + acts normally while watching). **MODERN** = the current feature
+     *  set (solid captured chunk world + free-spectate freecam + relocated scene + spectator-like
+     *  input/packet suppression). Default LEGACY — every config ships with the old playclip behavior
+     *  unless the user opts into Modern. The chunk/terrain/relocate toggles only take effect in Modern;
+     *  in Legacy they're ignored (forced off). User-controlled: NOT overridden by preset applies. */
+    var playclipMode: PlayclipMode = PlayclipMode.LEGACY,
     /** Sonar alerting: on a flushed alert batch, play a DIRECTIONAL note positioned at the offender's
      *  last-known world position (pan = direction, pitch = distance) so you can keep fighting and
      *  listen for cheats. Additive to chat alerts; gated by the same mute/preset rules. */
@@ -269,6 +277,9 @@ data class IustitiaConfig(
          *  persisted configs don't shift detection stricter/looser when the slider goes live. */
         const val CONFIG_VERSION = 4
     }
+
+    /** `/ius playclip` generation selector — see [IustitiaConfig.playclipMode]. */
+    enum class PlayclipMode { LEGACY, MODERN }
 
     data class CheckConfig(
         var enabled: Boolean = true,

@@ -226,6 +226,7 @@ object ConfigManager {
         addProperty("clipChunkWorld", c.clipChunkWorld)
         addProperty("clipChunkRadius", c.clipChunkRadius)
         addProperty("clipChunkRenderDistance", c.clipChunkRenderDistance)
+        addProperty("playclipMode", c.playclipMode.name)
         addProperty("sonarAlerts", c.sonarAlerts)
         addProperty("sonarVolume", c.sonarVolume)
         for ((key, cc) in c.checks()) add(key, checkToJson(cc))
@@ -292,6 +293,10 @@ object ConfigManager {
             if (o.has("clipChunkWorld")) c.clipChunkWorld = o.get("clipChunkWorld").asBoolean
             if (o.has("clipChunkRadius")) c.clipChunkRadius = o.get("clipChunkRadius").asInt
             if (o.has("clipChunkRenderDistance")) c.clipChunkRenderDistance = o.get("clipChunkRenderDistance").asInt
+            // playclipMode: additive enum. Bad/missing value keeps the LEGACY default (no CONFIG_VERSION bump).
+            if (o.has("playclipMode")) {
+                try { c.playclipMode = IustitiaConfig.PlayclipMode.valueOf(o.get("playclipMode").asString) } catch (_: Throwable) {}
+            }
             if (o.has("sonarAlerts")) c.sonarAlerts = o.get("sonarAlerts").asBoolean
             if (o.has("sonarVolume")) c.sonarVolume = o.get("sonarVolume").asDouble
             for ((key, cc) in c.checks()) {
