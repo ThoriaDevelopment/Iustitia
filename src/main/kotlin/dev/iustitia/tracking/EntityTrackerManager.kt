@@ -5,8 +5,8 @@ import net.minecraft.client.network.OtherClientPlayerEntity
 import net.minecraft.client.world.ClientWorld
 import net.minecraft.item.consume.UseAction
 import net.minecraft.util.math.Vec3d
+import dev.iustitia.history.FlagHistory
 import dev.iustitia.protocol.ProtocolDetector
-import dev.iustitia.world.WorldQueries
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -271,13 +271,26 @@ object EntityTrackerManager {
         }
 
         // onGround proxy: small vertical movement + solid block just below feet.
-        // Chunk not loaded → false (treat airborne → looser movement checks, per plan).
+        // Rate-limited: the isSolidBelow verdict (2× getCollisionShape) is cached on TrackedPlayer
+        // and recomputed at most every BlockLookupBudget.RATE_LIMIT_N ticks (the dense-standing-crowd
+        // cost — a standing player's ground block is stable, so a ≤1-tick-stale verdict is identical).
+        // The fresh |Δy| < 0.01 test runs every tick, so a jump flips groundedProxy to false instantly
+        // (no stale-grounded-while-airborne risk). No distant-skip: Fly/Speed ARE observable at range,
+        // so far-flyer detection is preserved (unlike the §8 fine-block-interaction checks). Chunk not
+        // loaded → false (treat airborne → looser movement checks, per plan).
         tp.groundedProxy = try {
             kotlin.math.abs(tp.deltaY) < 0.01 &&
-                WorldQueries.isSolidBelow(world, tp.pos.x, tp.pos.y, tp.pos.z, 0.05)
+                tp.solidBelowCached(world, tp.pos.x, tp.pos.y, tp.pos.z, 0.05, tick)
         } catch (_: Throwable) {
             false
         }
+
+        // Cache the cheat tier once per tick (per render-frame reads used to call FlagHistory.tierFor
+        // every frame per rendered player). The render mixins now read tp.tier instead. At most 1 tick
+        // stale — the tier only changes on a flag event or the slow (~minutes) decay, so frame-rate
+        // staleness is imperceptible. Cheap for clean players (tierFor early-returns GREEN before any
+        // synchronized scan); the sync+scan only runs for flagged players, now at tick rate not fps.
+        tp.tier = try { FlagHistory.tierFor(tp.uuid) } catch (_: Throwable) { FlagHistory.Tier.GREEN }
 
         tp.lastUpdateTick = tick
     }
