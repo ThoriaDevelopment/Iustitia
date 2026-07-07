@@ -47,6 +47,9 @@ class WorldRendererMixin {
             ordinal = 0,
         ),
     )
-    private fun iustitia_freecamSpectatorNoBlackout(player: ClientPlayerEntity): Boolean =
+    private fun iustitia_freecamSpectatorNoBlackout(player: ClientPlayerEntity): Boolean = try {
         if (ReplayState.freecamActive) true else player.isSpectator()
+    } catch (_: Throwable) {
+        player.isSpectator()
+    }
 }

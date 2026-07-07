@@ -40,6 +40,9 @@ class GameRendererMixin {
             ordinal = 0,
         ),
     )
-    private fun iustitia_hideHandInFreecam(perspective: Perspective): Boolean =
+    private fun iustitia_hideHandInFreecam(perspective: Perspective): Boolean = try {
         if (ReplayState.freecamActive) false else perspective.isFirstPerson()
+    } catch (_: Throwable) {
+        perspective.isFirstPerson()
+    }
 }
