@@ -10,7 +10,11 @@
     "EntityRenderStateAccessor",
     "EntityRendererMixin",
     "CameraMixin",
-    "PlayerListHudMixin"
+    "PlayerListHudMixin",
+    "SectionRenderStateMixin",
+    "ClientPlayerEntityMixin",
+    "ClientConnectionMixin",
+    "FreecamEntityMixin"
   ],
   "injectors": {
     "defaultRequire": 1
