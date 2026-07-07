@@ -1,6 +1,8 @@
 package dev.iustitia.tracking
 
+import dev.iustitia.world.WorldQueries
 import net.minecraft.client.network.OtherClientPlayerEntity
+import net.minecraft.client.world.ClientWorld
 import net.minecraft.util.math.Vec3d
 import java.util.UUID
 
@@ -88,6 +90,43 @@ class TrackedPlayer(val uuid: UUID, var entityId: Int, val joinTick: Int) {
 
     // --- shared movement accumulators ---
     var fallAccum: Double = 0.0
+
+    // --- per-tick world-query scratch (lazy, tick-stamped) ---
+    // Dedupes the shared world queries across the block-lookup movement checks (Spider /
+    // WallSprint / SprintHack): all three call isChunkLoaded on the player's chunk (3×→1) and
+    // Spider + SprintHack both call isLiquidAt at the feet block (2×→1), so a tracked player
+    // pays ONE chunk-loaded lookup + ONE feet-liquid lookup per tick, not 3 + 2. The expensive
+    // block-presence verdicts (Spider's wall loop, WallSprint's isWallAhead) are NOT shared
+    // (different geometry) — they are rate-limited per-check via verdict-caching instead.
+    // Single-threaded client tick → no synchronization. Scratch only — not detection state.
+    private var wqTick: Int = Int.MIN_VALUE
+    private var wqChunkLoaded: Boolean = false
+    private var wqFeetLiquid: Boolean = false
+    private var wqFeetLiquidSet: Boolean = false
+
+    /** True iff the chunk containing the player's current block is loaded. Cached per tick —
+     *  the first caller per tick computes it, the rest reuse. Identical to [WorldQueries.isChunkLoaded]. */
+    fun chunkLoadedCached(world: ClientWorld?, tick: Int, bx: Int, bz: Int): Boolean {
+        if (wqTick != tick) {
+            wqTick = tick
+            wqChunkLoaded = WorldQueries.isChunkLoaded(world, bx, bz)
+            wqFeetLiquidSet = false
+        }
+        return wqChunkLoaded
+    }
+
+    /** True iff the block at the player's feet (bx, by, bz) is liquid. Cached per tick — the
+     *  first caller per tick computes it, the rest reuse. Returns false when the chunk is not
+     *  loaded (matches [WorldQueries.isLiquidAt] fail-open). */
+    fun feetLiquidCached(world: ClientWorld?, tick: Int, bx: Int, by: Int, bz: Int): Boolean {
+        chunkLoadedCached(world, tick, bx, bz) // ensures the tick stamp + chunkLoaded are set
+        if (!wqChunkLoaded) return false
+        if (!wqFeetLiquidSet) {
+            wqFeetLiquid = WorldQueries.isLiquidAt(world, bx, by, bz)
+            wqFeetLiquidSet = true
+        }
+        return wqFeetLiquid
+    }
 
     var lastUpdateTick: Int = joinTick
 
