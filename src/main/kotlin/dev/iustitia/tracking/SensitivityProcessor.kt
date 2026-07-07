@@ -50,10 +50,20 @@ class SensitivityProcessor {
     private var deltaPitch: Double = 0.0
     private var lastDeltaPitch: Double = 0.0
 
-    // FPS pass #4 convergence budget — counts `process()` calls since the last [clearLastDelta]
-    // (combat-gate close / teleport). Capped at [MAX_FEED_ATTEMPTS]; once exhausted an idle /
-    // non-converging player stops paying the per-tick GCD. Reset in [clearLastDelta].
+    // FPS pass #4 convergence budget — counts FED ticks (real-movement ticks that passed the
+    // rate-limit below) since the last [clearLastDelta] (combat-gate close / teleport). Capped at
+    // [MAX_FEED_ATTEMPTS]; once exhausted an idle / non-converging player stops paying the per-tick
+    // GCD. Reset in [clearLastDelta].
     private var feedAttempts: Int = 0
+
+    // FPS pass #6 rate-limit: counts real-movement ticks (post idle-skip) since the last
+    // [clearLastDelta]. The expensive `sensitivityGcd`+cbrt+mode work runs only every
+    // [FEED_INTERVAL]-th such tick; in-between ticks just advance [lastDeltaPitch] so the next fed
+    // delta still pairs with its predecessor (consecutive-delta GCD semantics preserved). This
+    // halves the per-tick convergence cost — the dense-server residual (Stray.gg 31.7%) is the
+    // continuous stream of newly-loaded combatants each paying the ~2s convergence phase, and on a
+    // high-turnover server there is always a fresh batch converging. Reset in [clearLastDelta].
+    private var feedTickCounter: Int = 0
 
     // Strict-path scratch: matched sensitivity indices. The strict loop breaks on the first
     // match per process() call, so ≤1 entry is added per call and the count never exceeds 10
@@ -128,6 +138,21 @@ class SensitivityProcessor {
             lastDeltaPitch = 0.0
             return
         }
+        // FPS pass #6: rate-limit the expensive GCD path to every [FEED_INTERVAL]-th real-movement
+        // tick. Convergence takes [FEED_INTERVAL]× longer in wall-time but the per-tick cost (the
+        // frame stall — the thing that moves FPS) is 1/[FEED_INTERVAL]. The converged value is
+        // statistically identical for a constant-sensitivity player: the same Δpitch samples feed
+        // the 40-sample mode, just gathered over a longer window, so the mode is the same and
+        // `KillAura.sensitivityTooLow` / the aimGcd sub-flag read the same `sensitivity`. Both
+        // consumers fail-open until `valid`, so the longer convergence is a detection-LATENCY
+        // change only (~4s vs ~2s at FEED_INTERVAL=2), never a value change — and `gcdComponent`
+        // needs a SUSTAINED low-GCD window after `valid` anyway, so a few extra seconds before the
+        // window can start is absorbed. On in-between ticks just advance the predecessor so the
+        // next fed delta pairs with this one (consecutive-delta GCD pairing preserved).
+        if (feedTickCounter++ % FEED_INTERVAL != 0) {
+            lastDeltaPitch = deltaPitch
+            return
+        }
         feedAttempts++
         this.deltaPitch = deltaPitch
 
@@ -183,6 +208,7 @@ class SensitivityProcessor {
         deltaPitch = 0.0
         lastDeltaPitch = 0.0
         feedAttempts = 0
+        feedTickCounter = 0
     }
 
     /** MX `getMode`: the most frequent value, ties broken by first-in-order-wins. Operates on a
@@ -221,13 +247,24 @@ class SensitivityProcessor {
         private const val STRICT_CAP: Int = 16
         /** GCD-path buffer cap — 40 samples taken before a mode + reset. */
         private const val MCP_CAP: Int = 40
-        /** Max `process()` calls per combat stint before an idle / non-converging player stops
-         *  paying the per-tick `sensitivityGcd` (FPS pass #4). 200 = 10s at 20 tps — 5× the GCD
-         *  path's 40-sample mode window, so an actively-looking combatant converges (`valid`)
-         *  long before the cap; only idle/non-converging players exhaust it. Reset on
-         *  combat-gate close / teleport ([clearLastDelta]) so re-entering combat gets a fresh
-         *  attempt. Tunable; runtime-only-verifiable. */
-        private const val MAX_FEED_ATTEMPTS: Int = 200
+        /** Run the expensive GCD path (sensitivityGcd + cbrt + mode accumulation) only every
+         *  [FEED_INTERVAL]-th real-movement tick (FPS pass #6). 2 halves the per-tick convergence
+         *  cost (the dense-server Stray.gg residual) at the cost of ~2× longer convergence
+         *  wall-time — detection-safe because the converged value is unchanged and both consumers
+         *  fail-open until `valid` (see [process]). 1 = every tick (original behavior). Tunable;
+         *  runtime-only-verifiable. */
+        private const val FEED_INTERVAL: Int = 2
+        /** Max FED ticks (real-movement ticks that passed the [FEED_INTERVAL] rate-limit) per combat
+         *  stint before an idle / non-converging player stops paying the per-tick `sensitivityGcd`
+         *  (FPS pass #4, retuned #6). At [FEED_INTERVAL]=2 this is ~2× the GCD path's 40-sample mode
+         *  window: an actively-looking combatant converges (`valid`) within one 40-feed batch
+         *  (~4s wall), and only idle/non-converging players exhaust it (~8s wall). Lowered from 200
+         *  in pass #6 because rate-limiting spreads feeds over 2× wall-time — without lowering the
+         *  cap a non-converger would burn for 20s instead of 10s. A slow converger needing a 3rd
+         *  mode batch is cut off, but such a player (noisy, non-constant sensitivity) wouldn't
+         *  produce the sustained low-GCD deltas the gcdComponent flags anyway → fail-open-safe.
+         *  Reset on combat-gate close / teleport ([clearLastDelta]). Tunable; runtime-only-verifiable. */
+        private const val MAX_FEED_ATTEMPTS: Int = 80
         /** Minimum useful |Δpitch| to feed the GCD (FPS pass #5). Below this the strict table can't
          *  match (its minimum matchable value is ~0.0086 = `MCP_GCD_VALUES[0]` 0.0096 − 1e-3 tol)
          *  and the GCD path's finalSens lands out of 0..200, so the feed can't converge — an idle
