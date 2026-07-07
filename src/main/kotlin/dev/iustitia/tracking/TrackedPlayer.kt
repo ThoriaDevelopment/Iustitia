@@ -1,5 +1,7 @@
 package dev.iustitia.tracking
 
+import dev.iustitia.checks.movement.BlockLookupBudget
+import dev.iustitia.history.FlagHistory
 import dev.iustitia.world.WorldQueries
 import net.minecraft.client.network.OtherClientPlayerEntity
 import net.minecraft.client.world.ClientWorld
@@ -91,6 +93,15 @@ class TrackedPlayer(val uuid: UUID, var entityId: Int, val joinTick: Int) {
     // --- shared movement accumulators ---
     var fallAccum: Double = 0.0
 
+    /** Cached cheat tier for this player — recomputed once per client tick by
+     *  [dev.iustitia.tracking.EntityTrackerManager.updateSnapshot] and read by the nametag render
+     *  mixins ([dev.iustitia.mixin.PlayerEntityRendererMixin] /
+     *  [dev.iustitia.mixin.ArmorStandEntityRendererMixin]) so they don't call [FlagHistory.tierFor]
+     *  every render frame (O(N×fps) map lookups + a synchronized scan for flagged players). At most
+     *  1 tick stale — the tier only changes on a flag event or the slow (~minutes) decay, so
+     *  render-frame staleness is imperceptible. */
+    var tier: FlagHistory.Tier = FlagHistory.Tier.GREEN
+
     // --- per-tick world-query scratch (lazy, tick-stamped) ---
     // Dedupes the shared world queries across the block-lookup movement checks (Spider /
     // WallSprint / SprintHack): all three call isChunkLoaded on the player's chunk (3×→1) and
@@ -126,6 +137,31 @@ class TrackedPlayer(val uuid: UUID, var entityId: Int, val joinTick: Int) {
             wqFeetLiquidSet = true
         }
         return wqFeetLiquid
+    }
+
+    // --- groundedProxy isSolidBelow cache (rate-limit verdict-cache) ---
+    // The onGround proxy recomputes [WorldQueries.isSolidBelow] (2× getCollisionShape) every tick
+    // for any tracked player with |Δy| < 0.01 (a standing / horizontally-moving crowd = exactly the
+    // dense-player case). The verdict is stable for a standing player (same ground block), so it is
+    // recomputed at most every [BlockLookupBudget.RATE_LIMIT_N] ticks and reused in between — the
+    // same verdict-cache pattern as the §8 block-lookup checks. The fresh |Δy| < 0.01 test still runs
+    // every tick in [EntityTrackerManager.updateSnapshot], so a jump (Δy spikes) flips groundedProxy
+    // to false INSTANTLY — no stale-grounded-while-airborne risk. Single-threaded client tick → no
+    // synchronization. Scratch only — not detection state.
+    private var solidBelowTick: Int = -10000
+    private var solidBelow: Boolean = false
+
+    /** [WorldQueries.isSolidBelow] verdict, recomputed at most every [BlockLookupBudget.RATE_LIMIT_N]
+     *  ticks and reused in between (rate-limit verdict-cache). Identical return value to a direct
+     *  [WorldQueries.isSolidBelow] call; only *when* the expensive lookup runs changes. */
+    fun solidBelowCached(
+        world: ClientWorld?, x: Double, y: Double, z: Double, offset: Double, tick: Int,
+    ): Boolean {
+        if (solidBelowTick == -10000 || tick - solidBelowTick >= BlockLookupBudget.RATE_LIMIT_N) {
+            solidBelow = WorldQueries.isSolidBelow(world, x, y, z, offset)
+            solidBelowTick = tick
+        }
+        return solidBelow
     }
 
     var lastUpdateTick: Int = joinTick
