@@ -161,11 +161,26 @@ class CameraMixin {
             if (!ReplayState.active) return false
             val mode = ReplayState.cameraMode
             if (mode == ReplayState.CameraMode.FREE) return false
-            val snap = ReplayState.focusSnap() ?: return false
             when (mode) {
-                ReplayState.CameraMode.POV -> positionReplayPov(snap)
-                ReplayState.CameraMode.FOLLOW -> positionReplayFollow(snap)
-                else -> return false
+                // FREECAM: pure camera-override (v1.2.0 rework, Zergatul FreeCam v26.2 reference). The
+                // pose primitives on ReplayState (fcX/fcY/fcZ/fcYaw/fcPitch) are in relocated/screen
+                // space, so write them verbatim with NO relocOffset shift (POV/FOLLOW shift the
+                // *recorded* focus snap by relocOffset because their snaps are in recorded space;
+                // FREECAM's pose is already in the space the camera writes). If freecam isn't actually
+                // active (e.g. mode flipped mid-frame), return false so watch/selfie can run.
+                ReplayState.CameraMode.FREECAM -> {
+                    if (!ReplayState.freecamActive) return false
+                    setRotation(ReplayState.fcYaw, ReplayState.fcPitch)
+                    setPos(Vec3d(ReplayState.fcX, ReplayState.fcY, ReplayState.fcZ))
+                }
+                ReplayState.CameraMode.POV -> {
+                    val snap = ReplayState.focusSnap() ?: return false
+                    positionReplayPov(snap)
+                }
+                ReplayState.CameraMode.FOLLOW -> {
+                    val snap = ReplayState.focusSnap() ?: return false
+                    positionReplayFollow(snap)
+                }
             }
             return true
         } catch (_: Throwable) {
@@ -173,9 +188,12 @@ class CameraMixin {
         }
     }
 
-    /** POV: camera at the focus ghost's eye, looking exactly where the player was looking (yaw+pitch). */
+    /** POV: camera at the focus ghost's eye, looking exactly where the player was looking (yaw+pitch).
+     *  The eye is shifted by [ReplayState.relocOffset] so the camera follows the relocated scene (the
+     *  focus ghost is at the user), not the original recorded coords. */
     private fun positionReplayPov(snap: ReplayBuffer.PlayerSnap) {
-        val eye = Vec3d(snap.x.toDouble(), snap.y.toDouble() + EYE_HEIGHT, snap.z.toDouble())
+        val o = ReplayState.relocOffset ?: Vec3d.ZERO
+        val eye = Vec3d(snap.x.toDouble() + o.x, snap.y.toDouble() + EYE_HEIGHT + o.y, snap.z.toDouble() + o.z)
         setRotation(snap.yaw, snap.pitch)
         setPos(eye)
     }
@@ -184,10 +202,12 @@ class CameraMixin {
      * FOLLOW: orbit the focus ghost's eye (which moves through the timeline), mouse-controlled via
      * the LOCAL player's yaw (same orbit model as [positionWatch]). The camera sits [WATCH_DIST]
      * blocks behind the ghost along the player's look direction, raised [WATCH_HEIGHT] above the
-     * ghost eye, always looking AT it. See [positionWatch] for the look-at math.
+     * ghost eye, always looking AT it. See [positionWatch] for the look-at math. The ghost eye is
+     * shifted by [ReplayState.relocOffset] so the orbit tracks the relocated scene.
      */
     private fun positionReplayFollow(snap: ReplayBuffer.PlayerSnap) {
-        val eye = Vec3d(snap.x.toDouble(), snap.y.toDouble() + EYE_HEIGHT, snap.z.toDouble())
+        val o = ReplayState.relocOffset ?: Vec3d.ZERO
+        val eye = Vec3d(snap.x.toDouble() + o.x, snap.y.toDouble() + EYE_HEIGHT + o.y, snap.z.toDouble() + o.z)
         val player = MinecraftClient.getInstance().player ?: return
         val yawRad = player.getYaw() * (PI / 180.0)
         val fwdX = -sin(yawRad)
