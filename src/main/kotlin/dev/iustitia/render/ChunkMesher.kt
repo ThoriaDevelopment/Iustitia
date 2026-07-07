@@ -100,7 +100,7 @@ object ChunkMesher {
     private var tintCache: HashMap<String, Int> = HashMap(256)
     private var layerCache: HashMap<String, RenderLayer> = HashMap(256)
     private val rand: Random = Random.create()
-    private val directions: Array<Direction> = Direction.values()
+    private val directions: Array<Direction> = Direction.entries.toTypedArray()
 
     /** Chunk-coord → long key (same encoding as [ChunkSnapshot]'s internal index). */
     private fun key(chunkX: Int, chunkZ: Int): Long =

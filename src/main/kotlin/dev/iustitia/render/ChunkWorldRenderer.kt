@@ -2,7 +2,6 @@ package dev.iustitia.render
 
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.replay.ReplayState
-import net.minecraft.client.MinecraftClient
 import net.minecraft.client.render.OverlayTexture
 import net.minecraft.client.render.RenderLayer
 import net.minecraft.client.render.VertexConsumerProvider
