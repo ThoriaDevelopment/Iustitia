@@ -110,13 +110,30 @@ class SensitivityProcessor {
         // per combat stint instead of the sustained per-tick cost.
         if (valid) return
         if (feedAttempts >= MAX_FEED_ATTEMPTS) return
+        // FPS pass #5 (live-profiler round 2): an essentially-idle delta (|Δpitch| below
+        // [MIN_USEFUL_DELTA]) carries NO GCD signal — it's below the strict table's minimum
+        // matchable value (~0.0086 = MCP_GCD_VALUES[0] 0.0096 − 1e-3 tol), and the GCD path's
+        // finalSens lands out of 0..200 for ≈0 deltas — so feeding it can NEVER converge. Skip
+        // the GCD entirely. This is the dominant remaining cost after pass #4: a crowd loading
+        // at once is mostly idle players (pitch unchanged → Δpitch = 0.0 exactly), each burning
+        // up to MAX_FEED_ATTEMPTS useless `sensitivityGcd` calls (≈10s) before the cap stopped
+        // them — the "fps spike when many players load at once" that v1.1.0 (no substrate) never
+        // had. Clear the predecessor so the next real movement isn't GCD-paired with a stale delta
+        // across the idle gap (matches the teleport/combat-close clear). Don't count toward the
+        // attempt cap — the player is just idle, not failing to converge; when they move again
+        // they get the full budget. ZERO detection change: idle deltas couldn't converge anyway
+        // (no signal), so consumers were going to stay fail-open regardless.
+        val ad = abs(deltaPitch)
+        if (ad < MIN_USEFUL_DELTA) {
+            lastDeltaPitch = 0.0
+            return
+        }
         feedAttempts++
         this.deltaPitch = deltaPitch
 
         // -- Strict path: stability grid match (|deltaPitch| < 0.31). --
         // Reads the precomputed [MCP_GCD_VALUES] table (was: 200× mcpGcdValue recomputation/call).
-        if (abs(deltaPitch) < 0.31) {
-            val ad = abs(deltaPitch)
+        if (ad < 0.31) {
             for (i in 0 until 200) {
                 if (abs(MCP_GCD_VALUES[i] - ad) < 1e-3) {
                     if (strictCount < STRICT_CAP) strictSamples[strictCount++] = i
@@ -211,6 +228,13 @@ class SensitivityProcessor {
          *  combat-gate close / teleport ([clearLastDelta]) so re-entering combat gets a fresh
          *  attempt. Tunable; runtime-only-verifiable. */
         private const val MAX_FEED_ATTEMPTS: Int = 200
+        /** Minimum useful |Δpitch| to feed the GCD (FPS pass #5). Below this the strict table can't
+         *  match (its minimum matchable value is ~0.0086 = `MCP_GCD_VALUES[0]` 0.0096 − 1e-3 tol)
+         *  and the GCD path's finalSens lands out of 0..200, so the feed can't converge — an idle
+         *  player (pitch unchanged → Δpitch = 0.0 exactly) would otherwise burn up to
+         *  [MAX_FEED_ATTEMPTS] useless `sensitivityGcd` calls. 0.008 is safely below the minimum
+         *  matchable (preserves every strict match incl. sens=0) and well above idle (~0). */
+        private const val MIN_USEFUL_DELTA = 0.008
 
         /** MX `SENSITIVITY_MCP_VALUES` — the 201-entry Minecraft sensitivity table (index 0..200).
          *  Shared across all per-player instances (was per-instance — 201 doubles × N players). */
