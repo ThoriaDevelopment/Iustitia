@@ -408,8 +408,11 @@ object ReplayState {
             val yawRad = fcYaw * (PI / 180.0)
             val fwdX = -sin(yawRad)
             val fwdZ = cos(yawRad)
-            val rightX = cos(yawRad)
-            val rightZ = sin(yawRad)
+            // Player's RIGHT in MC's yaw convention (yaw 0 = south/+Z): right = (-cos, -sin). The
+            // naive (cos, sin) is the LEFT vector — facing south, (cos0,sin0)=(1,0)=+X=east=left —
+            // which inverted A/D (A went right, D went left). Negating both gives the true right vector.
+            val rightX = -cos(yawRad)
+            val rightZ = -sin(yawRad)
             var dx = 0.0
             var dz = 0.0
             var dy = 0.0
