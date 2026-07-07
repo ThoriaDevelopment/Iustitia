@@ -173,6 +173,15 @@ object ConfigManager {
         Iustitia.onConfigReloaded()
     }
 
+    /** Serialize a config to pretty JSON — reuses [toJson] so a custom preset round-trips
+     *  byte-for-byte with the live config. Public for [PresetManager] preset export. */
+    fun configToJson(c: IustitiaConfig): String = try { gson.toJson(toJson(c)) } catch (_: Throwable) { gson.toJson(toJson(IustitiaConfig())) }
+
+    /** Deserialize a config from a JSON object — reuses [fromJson] so a custom preset loads with
+     *  the same field semantics + calibration migration as the main config. Public for
+     *  [PresetManager] preset import. Fail-open: a bad object yields a fresh default config. */
+    fun configFromJson(obj: JsonObject): IustitiaConfig = try { fromJson(obj) } catch (_: Throwable) { IustitiaConfig() }
+
     private fun toJson(c: IustitiaConfig): JsonObject = JsonObject().apply {
         addProperty("enabled", c.enabled)
         addProperty("verbose", c.verbose)
@@ -196,7 +205,6 @@ object ConfigManager {
         addProperty("audioVolume", c.audioVolume)
         addProperty("audioNuclear", c.audioNuclear)
         addProperty("lagSuppressAlerts", c.lagSuppressAlerts)
-        addProperty("nametagBadge", c.nametagBadge)
         addProperty("nametagBurstPulse", c.nametagBurstPulse)
         addProperty("compactMode", c.compactMode)
         addProperty("evidenceWindowTicks", c.evidenceWindowTicks)
@@ -213,6 +221,11 @@ object ConfigManager {
         addProperty("replayCapture", c.replayCapture)
         addProperty("replayHideLive", c.replayHideLive)
         addProperty("replayPlayerModels", c.replayPlayerModels)
+        addProperty("replayRelocate", c.replayRelocate)
+        addProperty("clipTerrain", c.clipTerrain)
+        addProperty("clipChunkWorld", c.clipChunkWorld)
+        addProperty("clipChunkRadius", c.clipChunkRadius)
+        addProperty("clipChunkRenderDistance", c.clipChunkRenderDistance)
         addProperty("sonarAlerts", c.sonarAlerts)
         addProperty("sonarVolume", c.sonarVolume)
         for ((key, cc) in c.checks()) add(key, checkToJson(cc))
@@ -259,7 +272,6 @@ object ConfigManager {
             if (o.has("audioVolume")) c.audioVolume = o.get("audioVolume").asDouble
             if (o.has("audioNuclear")) c.audioNuclear = o.get("audioNuclear").asBoolean
             if (o.has("lagSuppressAlerts")) c.lagSuppressAlerts = o.get("lagSuppressAlerts").asBoolean
-            if (o.has("nametagBadge")) c.nametagBadge = o.get("nametagBadge").asBoolean
             if (o.has("nametagBurstPulse")) c.nametagBurstPulse = o.get("nametagBurstPulse").asBoolean
             if (o.has("compactMode")) c.compactMode = o.get("compactMode").asBoolean
             if (o.has("evidenceWindowTicks")) c.evidenceWindowTicks = o.get("evidenceWindowTicks").asInt
@@ -275,6 +287,11 @@ object ConfigManager {
             if (o.has("replayCapture")) c.replayCapture = o.get("replayCapture").asBoolean
             if (o.has("replayHideLive")) c.replayHideLive = o.get("replayHideLive").asBoolean
             if (o.has("replayPlayerModels")) c.replayPlayerModels = o.get("replayPlayerModels").asBoolean
+            if (o.has("replayRelocate")) c.replayRelocate = o.get("replayRelocate").asBoolean
+            if (o.has("clipTerrain")) c.clipTerrain = o.get("clipTerrain").asBoolean
+            if (o.has("clipChunkWorld")) c.clipChunkWorld = o.get("clipChunkWorld").asBoolean
+            if (o.has("clipChunkRadius")) c.clipChunkRadius = o.get("clipChunkRadius").asInt
+            if (o.has("clipChunkRenderDistance")) c.clipChunkRenderDistance = o.get("clipChunkRenderDistance").asInt
             if (o.has("sonarAlerts")) c.sonarAlerts = o.get("sonarAlerts").asBoolean
             if (o.has("sonarVolume")) c.sonarVolume = o.get("sonarVolume").asDouble
             for ((key, cc) in c.checks()) {
