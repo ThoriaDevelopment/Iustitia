@@ -73,6 +73,10 @@ object IustitiaCommand {
         "clips" to "open the clip manager screen: list saved .iusclip files, play or delete each",
         "deleteclip" to "delete a saved clip by name: /ius deleteclip <name>  (alias /ius delclip <name>)",
         "delclip" to "alias for /ius deleteclip",
+        "preset" to "apply a named config preset: /ius preset <name>  (bare = list; built-ins: strict/standard/lenient/debug/moderation; custom presets via /ius createpreset)",
+        "presets" to "list all presets (built-in + custom): /ius presets",
+        "createpreset" to "save the current config as a custom preset: /ius createpreset <name>",
+        "deletepreset" to "delete a custom preset: /ius deletepreset <name>  (built-ins can't be deleted)",
         "sonar" to "toggle directional audio alerts: /ius sonar [on|off]  (pan = direction, pitch = distance)",
         "wizard" to "re-run the first-launch setup wizard",
         "keybinds" to "open the keybind hub screen (lists binds, highlights conflicts)",
@@ -211,6 +215,19 @@ object IustitiaCommand {
                 .then(ClientCommandManager.argument("name", StringArgumentType.word())
                     .suggests { _, b -> suggestFiltered(b, dev.iustitia.replay.ClipStore.list()); b.buildFuture() }
                     .executes { deleteClip(it) }))
+            .then(ClientCommandManager.literal("preset")
+                .executes { presetList(it) }
+                .then(ClientCommandManager.argument("name", StringArgumentType.word())
+                    .suggests { _, b -> suggestFiltered(b, dev.iustitia.config.PresetManager.listAll()); b.buildFuture() }
+                    .executes { presetApply(it) }))
+            .then(ClientCommandManager.literal("presets").executes { presetList(it) })
+            .then(ClientCommandManager.literal("createpreset")
+                .then(ClientCommandManager.argument("name", StringArgumentType.word())
+                    .executes { presetCreate(it) }))
+            .then(ClientCommandManager.literal("deletepreset")
+                .then(ClientCommandManager.argument("name", StringArgumentType.word())
+                    .suggests { _, b -> suggestFiltered(b, dev.iustitia.config.PresetManager.listCustom()); b.buildFuture() }
+                    .executes { presetDelete(it) }))
             .then(ClientCommandManager.literal("sonar")
                 .executes { sonarToggle(it, null) }
                 .then(ClientCommandManager.argument("state", StringArgumentType.word())
@@ -1155,6 +1172,60 @@ object IustitiaCommand {
         } else {
             send(ctx, "$tag §cno clip named §f$name§7 (check §f/ius playclip§7 for the list).")
         }
+        return if (ok) 1 else 0
+    }
+
+    /** `/ius preset` / `/ius presets` — list all presets (built-ins + customs). */
+    private fun presetList(ctx: CommandContext<FabricClientCommandSource>): Int {
+        send(ctx, "$tag §7presets §8(built-in + custom)§7:")
+        for (n in dev.iustitia.config.PresetManager.builtInNames) {
+            send(ctx, " §b$n §7— §f/ius preset $n")
+        }
+        val customs = try { dev.iustitia.config.PresetManager.listCustom() } catch (_: Throwable) { emptyList() }
+        if (customs.isEmpty()) {
+            send(ctx, " §7no custom presets. Save one with §f/ius createpreset <name>§7.")
+        } else {
+            customs.forEach { n -> send(ctx, " §d$n §7— §f/ius preset $n §8(custom; /ius deletepreset $n)§7") }
+        }
+        return 1
+    }
+
+    /** `/ius preset <name>` — apply a built-in or custom preset to the live config + save. */
+    private fun presetApply(ctx: CommandContext<FabricClientCommandSource>): Int {
+        val name = StringArgumentType.getString(ctx, "name")
+        val ok = try { dev.iustitia.config.PresetManager.apply(name) } catch (_: Throwable) { false }
+        if (ok) {
+            val kind = if (dev.iustitia.config.PresetManager.isBuiltIn(name)) "built-in" else "custom"
+            send(ctx, "$tag §7applied $kind preset §f$name§7 — config saved. §8(/ius list§7 to see it; /ius status§7 for the panel.)")
+        } else {
+            send(ctx, "$tag §cno preset §f$name§7. Built-ins: §f${dev.iustitia.config.PresetManager.builtInNames.joinToString("/")}§7. List all with §f/ius presets§7.")
+        }
+        return if (ok) 1 else 0
+    }
+
+    /** `/ius createpreset <name>` — save the current config as a custom preset. */
+    private fun presetCreate(ctx: CommandContext<FabricClientCommandSource>): Int {
+        val name = StringArgumentType.getString(ctx, "name")
+        if (dev.iustitia.config.PresetManager.isBuiltIn(name)) {
+            send(ctx, "$tag §c$name§7 is a built-in preset — pick a different name for your custom one.")
+            return 0
+        }
+        val ok = try { dev.iustitia.config.PresetManager.saveCustom(name) } catch (_: Throwable) { false }
+        if (ok) send(ctx, "$tag §7saved custom preset §f$name§7 from the current config. Apply it anytime with §f/ius preset $name§7.")
+        else send(ctx, "$tag §cfailed to save preset §f$name§7 (disk error / bad name).")
+        return if (ok) 1 else 0
+    }
+
+    /** `/ius deletepreset <name>` — delete a custom preset (built-ins can't be deleted). */
+    private fun presetDelete(ctx: CommandContext<FabricClientCommandSource>): Int {
+        val name = StringArgumentType.getString(ctx, "name")
+        if (dev.iustitia.config.PresetManager.isBuiltIn(name)) {
+            send(ctx, "$tag §cbuilt-in presets can't be deleted.")
+            return 0
+        }
+        val ok = try { dev.iustitia.config.PresetManager.deleteCustom(name) } catch (_: Throwable) { false }
+        if (ok) send(ctx, "$tag §7deleted custom preset §f$name§7.")
+        else send(ctx, "$tag §cno custom preset §f$name§7 (list with §f/ius presets§7).")
         return if (ok) 1 else 0
     }
 
