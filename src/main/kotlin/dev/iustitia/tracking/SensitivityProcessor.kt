@@ -50,6 +50,11 @@ class SensitivityProcessor {
     private var deltaPitch: Double = 0.0
     private var lastDeltaPitch: Double = 0.0
 
+    // FPS pass #4 convergence budget — counts `process()` calls since the last [clearLastDelta]
+    // (combat-gate close / teleport). Capped at [MAX_FEED_ATTEMPTS]; once exhausted an idle /
+    // non-converging player stops paying the per-tick GCD. Reset in [clearLastDelta].
+    private var feedAttempts: Int = 0
+
     // Strict-path scratch: matched sensitivity indices. The strict loop breaks on the first
     // match per process() call, so ≤1 entry is added per call and the count never exceeds 10
     // (it resets at ≥10). Fixed IntArray + count → no Integer boxing (was ArrayList<Int>).
@@ -83,6 +88,29 @@ class SensitivityProcessor {
      * end of each call so the next call's GCD pairs the current delta with this one.
      */
     fun process(deltaPitch: Double) {
+        // FPS pass #4 (live-profiler-confirmed root cause): the dense-PvP render-thread hog was
+        // this method's `sensitivityGcd` call running every tick per combat-relevant player —
+        // BOTH for already-converged players (the feed never stopped once `valid`) AND for idle
+        // players that NEVER converge (|Δpitch| too small for the strict table match and the GCD
+        // path's finalSens lands out of 0..200), so they were fed forever. In the 112s dense-crowd
+        // profile, `MathUtil.sensitivityGcd` was 32.5% of ALL render time / 95.9% of iustitia time.
+        //
+        // Gate the work here, before the GCD:
+        //  - once [valid], the converged estimate is stable and is ALL either consumer reads
+        //    (KillAura/RotationTracking gcdComponent both gate on `valid` and read `sensitivity`),
+        //    so further samples change nothing they read → early-return, zero `sensitivityGcd`
+        //    work. ZERO detection change for converged players.
+        //  - once [feedAttempts] exhausts [MAX_FEED_ATTEMPTS], an idle/non-converging player stops
+        //    paying the per-tick GCD → early-return. They were never `valid`, so consumers were
+        //    already fail-open (`!valid` → clear + return) → ZERO detection change. The cap resets
+        //    in [clearLastDelta] (combat-gate close / teleport) so a player who re-enters combat
+        //    after idling gets a fresh convergence attempt.
+        // Convergence itself is unchanged: an actively-looking combatant still gets fed every tick
+        // until `valid` (≈2s for the GCD path's 40-sample mode), then stops — a transient 2s cost
+        // per combat stint instead of the sustained per-tick cost.
+        if (valid) return
+        if (feedAttempts >= MAX_FEED_ATTEMPTS) return
+        feedAttempts++
         this.deltaPitch = deltaPitch
 
         // -- Strict path: stability grid match (|deltaPitch| < 0.31). --
@@ -129,10 +157,15 @@ class SensitivityProcessor {
     }
 
     /** Zero the predecessor so the next fed delta isn't GCD-paired with a stale value
-     *  (e.g. across a teleport yaw/pitch jump, or after the combat-relevance gate closes). */
+     *  (e.g. across a teleport yaw/pitch jump, or after the combat-relevance gate closes).
+     *  Also resets the convergence attempt budget ([feedAttempts]) so a player who re-enters
+     *  combat (or lands after a teleport) gets a FRESH convergence attempt rather than staying
+     *  exhausted from an earlier idle stint. Does NOT reset [valid] — a converged estimate stays
+     *  stable across the gap (consumers keep reading it). */
     fun clearLastDelta() {
         deltaPitch = 0.0
         lastDeltaPitch = 0.0
+        feedAttempts = 0
     }
 
     /** MX `getMode`: the most frequent value, ties broken by first-in-order-wins. Operates on a
@@ -171,6 +204,13 @@ class SensitivityProcessor {
         private const val STRICT_CAP: Int = 16
         /** GCD-path buffer cap — 40 samples taken before a mode + reset. */
         private const val MCP_CAP: Int = 40
+        /** Max `process()` calls per combat stint before an idle / non-converging player stops
+         *  paying the per-tick `sensitivityGcd` (FPS pass #4). 200 = 10s at 20 tps — 5× the GCD
+         *  path's 40-sample mode window, so an actively-looking combatant converges (`valid`)
+         *  long before the cap; only idle/non-converging players exhaust it. Reset on
+         *  combat-gate close / teleport ([clearLastDelta]) so re-entering combat gets a fresh
+         *  attempt. Tunable; runtime-only-verifiable. */
+        private const val MAX_FEED_ATTEMPTS: Int = 200
 
         /** MX `SENSITIVITY_MCP_VALUES` — the 201-entry Minecraft sensitivity table (index 0..200).
          *  Shared across all per-player instances (was per-instance — 201 doubles × N players). */
