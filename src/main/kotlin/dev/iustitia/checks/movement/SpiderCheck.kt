@@ -54,17 +54,21 @@ class SpiderCheck : Check() {
             if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
                 tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
             ) return
+            // Distant-player skip: beyond the observation range the fine wall-climb signal isn't
+            // usefully observable and the per-tick block lookups are not worth it. Reset (like the
+            // chunk-unloaded branch) so a stale streak can't flag on re-approach.
+            if (BlockLookupBudget.beyondObserveRange(tp)) { reset(ctx); return }
             val world = MinecraftClient.getInstance().world
             val bx = Math.floor(tp.pos.x).toInt()
             val bz = Math.floor(tp.pos.z).toInt()
             val by = Math.floor(tp.pos.y).toInt()
-            if (world == null || !WorldQueries.isChunkLoaded(world, bx, bz)) { reset(ctx); return }
+            if (world == null || !tp.chunkLoadedCached(world, tick, bx, bz)) { reset(ctx); return }
             // Liquid at the feet → legit water/bubble-column ascent; exempt (and reset, since a
             // transition out of water shouldn't inherit a stale streak).
-            if (WorldQueries.isLiquidAt(world, bx, by, bz)) { reset(ctx); return }
+            if (tp.feetLiquidCached(world, tick, bx, by, bz)) { reset(ctx); return }
             val offGround = !tp.onGroundPacket && !tp.groundedProxy
             val dy = tp.deltaY
-            val nearWall = nearSolidNonClimbableWall(world, bx, by, bz)
+            val nearWall = nearWallCached(world, ctx, bx, by, bz, tick)
 
             // ---- Spider (AvA): sustained ascending-ticks against a non-climbable wall ----
             if (offGround && dy > SPIDER_MIN_DY && nearWall) {
@@ -123,6 +127,19 @@ class SpiderCheck : Check() {
         return false
     }
 
+    /** [nearSolidNonClimbableWall] verdict, recomputed at most every [BlockLookupBudget.RATE_LIMIT_N]
+     *  ticks and reused in between (per-player cache in [SpiderContext]). The per-tick dy/streak
+     *  logic below runs every tick on this cached verdict; for a wall-climber (stationary
+     *  horizontally) the verdict is stable, and 1-tick staleness on other motion is absorbed by
+     *  the SPIDER_TICKS / CLIMB_WINDOW windows. */
+    private fun nearWallCached(world: ClientWorld, ctx: SpiderContext, bx: Int, by: Int, bz: Int, tick: Int): Boolean {
+        if (ctx.nearWallTick == -10000 || tick - ctx.nearWallTick >= BlockLookupBudget.RATE_LIMIT_N) {
+            ctx.nearWall = nearSolidNonClimbableWall(world, bx, by, bz)
+            ctx.nearWallTick = tick
+        }
+        return ctx.nearWall
+    }
+
     private fun <T> pushFront(deque: ArrayDeque<T>, value: T, cap: Int) {
         deque.addFirst(value)
         while (deque.size > cap) deque.removeLast()
@@ -133,6 +150,10 @@ class SpiderCheck : Check() {
         var spiderTicks: Int = 0
         /** Ring of recent ascending Δy samples (NCM ConstantClimb constant-band test). */
         val climbRing: ArrayDeque<Double> = ArrayDeque()
+        /** Tick the [nearWall] verdict was last computed (rate-limit verdict-cache). */
+        var nearWallTick: Int = -10000
+        /** Cached `nearSolidNonClimbableWall` verdict (rate-limit verdict-cache). */
+        var nearWall: Boolean = false
     }
 
     companion object {
