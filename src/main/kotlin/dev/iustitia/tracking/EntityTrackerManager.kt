@@ -5,6 +5,7 @@ import net.minecraft.client.network.OtherClientPlayerEntity
 import net.minecraft.client.world.ClientWorld
 import net.minecraft.item.consume.UseAction
 import net.minecraft.util.math.Vec3d
+import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
 import dev.iustitia.protocol.ProtocolDetector
 import java.util.UUID
@@ -238,7 +239,18 @@ object EntityTrackerManager {
         // is closed we clear the predecessor (like the teleport branch) so the next fed delta isn't
         // GCD-paired with a stale value across the combat gap. The lag-burst + in-combat + post-teleport
         // case intentionally retains the predecessor, matching the original behavior (lag is brief).
-        if (ProtocolDetector.fullFloatLook) {
+        //
+        // FPS pass #7 — master substrate switch ([ConfigManager.config.sensitivitySubstrate], default
+        // OFF). The live render-thread profiler (passes #4/#5/#6) traced the dense-server FPS hog to
+        // this substrate's per-tick convergence: on a high-turnover server (Stray.gg) a continuous
+        // stream of newly-loaded combatants each pays the ~2s convergence phase, sustaining
+        // `sensitivityGcd` at ~32% of render time. The substrate backs exactly two GCD sub-flags
+        // (KillAura `heuristic(gcd)` + RotationTracking `gcd`); both consumers already fail-open on
+        // `!sensitivity.valid`, so when the feed is skipped the substrate simply never converges and
+        // both sub-flags self-disable — no check code needs removal, and every OTHER heuristic in
+        // both checks keeps running. Default OFF = dropped (v1.1.0 FPS parity for the substrate
+        // cost); flip on via `/ius config` to re-enable the two GCD sub-flags (accepting the FPS cost).
+        if (ProtocolDetector.fullFloatLook && ConfigManager.config.sensitivitySubstrate) {
             val sinceTp = tick - tp.lastTeleportTick
             val combatRelevant = tick - tp.lastAttackTick <= SENS_COMBAT_WINDOW
             if (sinceTp >= 3 &&

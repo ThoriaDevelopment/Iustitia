@@ -33,6 +33,19 @@ data class IustitiaConfig(
      *  5-short-crouch). Default off — the baseline Rain path is the true-positive detector;
      *  flip on only to A/B-test a hypothetical stationary-builder FP once one is observed. */
     var legitScaffoldStrictGates: Boolean = false,
+    /** Mouse-sensitivity substrate (Axis A, plan §1.1/§8 step 1) — converges each tracked player's
+     *  mouse sensitivity from the GCD structure of their pitch deltas, feeding two GCD sub-flags:
+     *  `KillAura.heuristic(gcd)` (constant-rotation aimbot) and `RotationTracking.gcd` (too-clean
+     *  pitch step while locking). Default **OFF** because the convergence (40 GCD samples per
+     *  player, fed every tick while combat-relevant) is the dense-server FPS hog profiled in the
+     *  v1.2.0 render-thread investigation — on a high-turnover server (Stray.gg) the continuous
+     *  stream of newly-loaded combatants each paying the ~2s convergence phase kept the substrate
+     *  at ~32% of render time. With it off the substrate is never fed, `sensitivity.valid` stays
+     *  false, and both `gcdComponent` methods fail-open (self-disable) — no GCD sub-flags, but
+     *  every OTHER KillAura / RotationTracking heuristic keeps running. Flip on to re-enable the
+     *  two GCD sub-flags (accepting the dense-crowd FPS cost). Additive field — no CONFIG_VERSION
+     *  bump; a config saved before this field simply keeps the default (off). */
+    var sensitivitySubstrate: Boolean = false,
 
     // --- usability / display ---
     /** Global chat-alerts switch (toggled by bare `/ius alerts`). When false, NO chat alert lines

@@ -189,6 +189,7 @@ object ConfigManager {
         addProperty("alertThrottleTicks", c.alertThrottleTicks)
         addProperty("joinGraceTicks", c.joinGraceTicks)
         addProperty("legitScaffoldStrictGates", c.legitScaffoldStrictGates)
+        addProperty("sensitivitySubstrate", c.sensitivitySubstrate)
         addProperty("alertsEnabled", c.alertsEnabled)
         addProperty("nametagPrefixes", c.nametagPrefixes)
         addProperty("nametagGreenEnabled", c.nametagGreenEnabled)
@@ -258,6 +259,9 @@ object ConfigManager {
             if (o.has("alertThrottleTicks")) c.alertThrottleTicks = o.get("alertThrottleTicks").asInt
             if (o.has("joinGraceTicks")) c.joinGraceTicks = o.get("joinGraceTicks").asInt
             if (o.has("legitScaffoldStrictGates")) c.legitScaffoldStrictGates = o.get("legitScaffoldStrictGates").asBoolean
+            // sensitivitySubstrate: additive — a pre-field config keeps the default (off = substrate
+            // dropped, the dense-crowd FPS fix). No CONFIG_VERSION bump (not a check-calibration field).
+            if (o.has("sensitivitySubstrate")) c.sensitivitySubstrate = o.get("sensitivitySubstrate").asBoolean
             if (o.has("alertsEnabled")) c.alertsEnabled = o.get("alertsEnabled").asBoolean
             if (o.has("nametagPrefixes")) c.nametagPrefixes = o.get("nametagPrefixes").asBoolean
             if (o.has("nametagGreenEnabled")) c.nametagGreenEnabled = o.get("nametagGreenEnabled").asBoolean
