@@ -3,6 +3,7 @@ package dev.iustitia.checks.combat
 import dev.iustitia.Iustitia
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
+import dev.iustitia.checks.movement.BlockLookupBudget
 import dev.iustitia.event.AttackEvent
 import dev.iustitia.history.Evidence
 import dev.iustitia.math.AABB
@@ -68,6 +69,11 @@ class TriggerbotCheck : Check() {
     override fun process(tp: TrackedPlayer, tick: Int) {
         try {
             if (tp.inVehicle) return
+            // Distant-player skip: a triggerbot beyond the observation range is not usefully
+            // observable (and can't land melee hits at range — LOOK_REACH is 3.0). Skip the
+            // per-victim raycast loop. Same tradeoff as the §8 block-lookup checks (far cheaters
+            // not flagged until they approach).
+            if (BlockLookupBudget.beyondObserveRange(tp)) return
             val ctx = contextOf(tp.uuid) as TriggerbotContext
             val eye = tp.pos.add(0.0, tp.eyeHeight(), 0.0)
             val look = Vectors.lookVector(tp.yaw.toDouble(), tp.pitch.toDouble())

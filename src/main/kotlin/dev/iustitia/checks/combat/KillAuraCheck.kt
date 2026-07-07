@@ -3,6 +3,7 @@ package dev.iustitia.checks.combat
 import dev.iustitia.Iustitia
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
+import dev.iustitia.checks.movement.BlockLookupBudget
 import dev.iustitia.event.AttackEvent
 import dev.iustitia.event.SwingSignal
 import dev.iustitia.history.Evidence
@@ -262,6 +263,12 @@ class KillAuraCheck : Check() {
     override fun process(tp: TrackedPlayer, tick: Int) {
         try {
             if (tp.inVehicle) return // vehicle rotations/consume timing are unreliable
+            // Distant-player skip: a kill-aura beyond the observation range isn't usefully
+            // observable, and skipping it avoids the per-tick trail push + targetsNear neighborhood
+            // scan for far players. A far attacker is never within TARGET_RANGE of a near attacker,
+            // so its trail is never consumed — skipping its trail push is safe. Same tradeoff as the
+            // §8 block-lookup checks (far cheaters not flagged until they approach).
+            if (BlockLookupBudget.beyondObserveRange(tp)) return
             val ctx = contextOf(tp.uuid) as KillAuraContext
 
             // Keep position history fresh for this player AND the local observer — both

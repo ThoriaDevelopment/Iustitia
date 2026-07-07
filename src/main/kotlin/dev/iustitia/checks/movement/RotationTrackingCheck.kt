@@ -66,6 +66,11 @@ class RotationTrackingCheck : Check() {
     override fun process(tp: TrackedPlayer, tick: Int) {
         try {
             if (tp.inVehicle) return
+            // Distant-player skip: the 6-block aim-match target search isn't usefully observable
+            // beyond the observation range. Skip the O(N) per-attacker neighborhood scan for far
+            // players (it runs only past the combat gate below anyway). Same tradeoff as the §8
+            // block-lookup checks (far cheaters not flagged until they approach).
+            if (BlockLookupBudget.beyondObserveRange(tp)) return
             val ctx = contextOf(tp.uuid) as TrackContext
             // combat gate: only accumulate while in/around a fight; idle looking never feeds VL.
             if (tick - ctx.lastAttackTick > COMBAT_WINDOW) return
