@@ -8,6 +8,7 @@ import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
 import net.minecraft.client.MinecraftClient
+import net.minecraft.client.world.ClientWorld
 import java.util.UUID
 import kotlin.math.hypot
 
@@ -55,14 +56,18 @@ class WallSprintCheck : Check() {
             if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
                 tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
             ) return
+            // Distant-player skip: beyond the observation range the wall-sprint signal isn't
+            // usefully observable. Reset (like the chunk-unloaded branch) so a stale streak
+            // can't flag on re-approach.
+            if (BlockLookupBudget.beyondObserveRange(tp)) { ctx.streak = 0; return }
             val world = MinecraftClient.getInstance().world
             val bx = Math.floor(tp.pos.x).toInt()
             val bz = Math.floor(tp.pos.z).toInt()
-            if (world == null || !WorldQueries.isChunkLoaded(world, bx, bz)) { ctx.streak = 0; return }
+            if (world == null || !tp.chunkLoadedCached(world, tick, bx, bz)) { ctx.streak = 0; return }
             val look = Vectors.lookVector(tp.yaw.toDouble(), 0.0)
             // A solid wall directly ahead along the facing within reach → pressed against it.
             // Pass the feet Y so isWallAhead sweeps the foot/torso/head bands.
-            val wallAhead = WorldQueries.isWallAhead(world, tp.pos.x, tp.pos.y, tp.pos.z, look.x, look.z, WALL_REACH)
+            val wallAhead = wallAheadCached(world, ctx, tp.pos.x, tp.pos.y, tp.pos.z, look.x, look.z, tick)
             if (!wallAhead) { ctx.streak = 0; return }
             // Forward speed along the facing: a player running AT a wall to jump it still
             // advances (~0.2 b/t); a wall-sprinter pressed against the wall advances ~0.
@@ -86,8 +91,28 @@ class WallSprintCheck : Check() {
         } catch (_: Throwable) {}
     }
 
+    /** [WorldQueries.isWallAhead] verdict, recomputed at most every [BlockLookupBudget.RATE_LIMIT_N]
+     *  ticks and reused in between (per-player cache in [WallSprintContext]). The per-tick
+     *  forward/streak logic runs every tick on this cached verdict; for a wall-sprinter (pressed
+     *  stationary against the wall) the verdict is stable, and 1-tick staleness on other motion
+     *  is absorbed by the SUSTAIN window + the forward-speed approach exemption. */
+    private fun wallAheadCached(
+        world: ClientWorld?, ctx: WallSprintContext,
+        x: Double, y: Double, z: Double, dx: Double, dz: Double, tick: Int,
+    ): Boolean {
+        if (ctx.wallAheadTick == -10000 || tick - ctx.wallAheadTick >= BlockLookupBudget.RATE_LIMIT_N) {
+            ctx.wallAhead = WorldQueries.isWallAhead(world, x, y, z, dx, dz, WALL_REACH)
+            ctx.wallAheadTick = tick
+        }
+        return ctx.wallAhead
+    }
+
     private class WallSprintContext : CheckContext() {
         var streak: Int = 0
+        /** Tick the [wallAhead] verdict was last computed (rate-limit verdict-cache). */
+        var wallAheadTick: Int = -10000
+        /** Cached `isWallAhead` verdict (rate-limit verdict-cache). */
+        var wallAhead: Boolean = false
     }
 
     private companion object {
