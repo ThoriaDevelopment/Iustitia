@@ -7,6 +7,7 @@ import dev.isxander.yacl3.api.OptionGroup
 import dev.isxander.yacl3.api.YetAnotherConfigLib
 import dev.isxander.yacl3.api.controller.BooleanControllerBuilder
 import dev.isxander.yacl3.api.controller.DoubleFieldControllerBuilder
+import dev.isxander.yacl3.api.controller.EnumControllerBuilder
 import dev.isxander.yacl3.api.controller.IntegerFieldControllerBuilder
 import net.minecraft.client.gui.screen.Screen
 import net.minecraft.text.Text
@@ -68,13 +69,52 @@ object YaclScreenBuilder {
                     .option(bool("Replay capture buffer", "Keep a rolling 60s buffer of every tracked player's position + every alert, so /ius replay and /ius clip can rewind/export the last N seconds. Off = skip the per-tick capture (disables replay + clip; detection keeps running).", { cfg.replayCapture }) { cfg.replayCapture = it })
                     .option(bool("Replay hides live players", "While a replay (/ius replay or /ius playclip) is active, hide every live OTHER player so only the buffered ghost copies render — a rewind-the-world feel. Off = overlay ghosts on the live scene. Render-only.", { cfg.replayHideLive }) { cfg.replayHideLive = it })
                     .option(bool("Replay player models", "Render replay/clip ghosts as the real Minecraft player model wearing each player's REAL skin (fetched from the tab list; Steve/Alex fallback) instead of the tier-colored humanoid box outline. On by default. The block scale + pose transforms are runtime-verified only — if a ghost renders at the wrong size or not at all, the box outline shows as fallback.", { cfg.replayPlayerModels }) { cfg.replayPlayerModels = it })
-                    .option(bool("Relocate scene to me", "On /ius replay and /ius playclip, translate the whole ghost scene so the focus player starts at YOUR current position instead of the absolute recorded coords (which float in mid-air / sit in ground / clip walls when played elsewhere). On by default — turn off to replay at the original coordinates.", { cfg.replayRelocate }) { cfg.replayRelocate = it })
-                    .option(bool("Clip captures terrain", "On /ius clip, also snapshot the loaded terrain around the action (client only has loaded chunks in render distance; volume-capped) and store it in the clip file. /ius playclip then renders that terrain shell around you — a clip recorded on server A is watchable in full on server B. /ius replay never carries terrain (same-map use). On by default.", { cfg.clipTerrain }) { cfg.clipTerrain = it })
-                    .option(bool("Clip captures full world", "On /ius clip, snapshot every loaded chunk around you (full 16×16 columns, ALL Y sections — includes underground) into the clip file. /ius playclip then renders the clip's world as SOLID, textured blocks (the real map, relocated to you) and hides the live world, so you can free-spectate anywhere — including underground — like ReplayMod. One-shot at save time (only chunks loaded then are kept). On by default. The chunk capture radius bounds file size + bake cost.", { cfg.clipChunkWorld }) { cfg.clipChunkWorld = it })
-                    .option(int("Chunk capture radius", "Radius (in chunks) around you that /ius clip captures for the full world. 8 → a 17×17 = 289-chunk square. Larger captures more of the map but makes a bigger clip file + a heavier bake when playback starts. Clamped 4..16 at capture.", { cfg.clipChunkRadius }, 4, 16) { cfg.clipChunkRadius = it })
-                    .option(int("Chunk render distance", "Max chunks from the camera that /ius playclip renders of the captured chunk world per frame. Bounds per-frame cost (and thus FPS) — the captured area can be much larger; this is how much you actually draw at once. Default 6, clamped 4..12 at render. Lower it if playclip lags; raise it to see more of the world at once.", { cfg.clipChunkRenderDistance }, 4, 12) { cfg.clipChunkRenderDistance = it })
                     .option(bool("Sonar alerts", "On a flushed alert, play a DIRECTIONAL note at the offender's last position (pan = direction, pitch = distance) so you can keep fighting and listen for cheats. Additive to chat; gated by the same mute/preset rules.", { cfg.sonarAlerts }) { cfg.sonarAlerts = it })
                     .option(double("Sonar volume", "Sonar cue volume (0..1). Quieter than chat cues by design — positional pings are frequent.", { cfg.sonarVolume }, 0.0, 1.0) { cfg.sonarVolume = it })
+                    .build()
+            )
+            // PlayClip: Legacy (v1.1.0 experience) vs Modern (current chunk-world + freecam feature
+            // set). Default Legacy. The five post-v1.1.0 sub-options are only editable in Modern —
+            // they're greyed while Legacy is selected, and the mode option's listener toggles their
+            // availability live as the user switches (no need to reopen the screen).
+            .group(
+                OptionGroup.createBuilder()
+                    .name(Text.literal("PlayClip"))
+                    .apply {
+                        fun modern() = cfg.playclipMode == IustitiaConfig.PlayclipMode.MODERN
+                        // Built first so the mode listener below can grab references to toggle them.
+                        val relocate = boolAvail("Relocate scene to me",
+                            "On /ius playclip, translate the whole ghost scene (and chunk world) so the focus player starts at YOUR position instead of floating at the recorded coords. Modern-only — Legacy always plays a clip at the recorded coordinates.",
+                            { cfg.replayRelocate }, { cfg.replayRelocate = it }, ::modern)
+                        val terrain = boolAvail("Clip captures terrain",
+                            "On /ius clip, also snapshot the loaded terrain around the action and render it (relocated to you) on playclip. Modern-only — Legacy clips are ghosts-only.",
+                            { cfg.clipTerrain }, { cfg.clipTerrain = it }, ::modern)
+                        val chunkWorld = boolAvail("Clip captures full world",
+                            "On /ius clip, snapshot every loaded chunk around you (full 16×16 columns, ALL Y sections — includes underground) and render the clip's world as SOLID textured blocks (the real map) with the live world hidden — free-spectate anywhere incl. underground. Modern-only — Legacy never downloads the world.",
+                            { cfg.clipChunkWorld }, { cfg.clipChunkWorld = it }, ::modern)
+                        val chunkRadius = intAvail("Chunk capture radius",
+                            "Radius (in chunks) around you that /ius clip captures for the full world. 8 → 17×17 = 289 chunks. Larger = more of the map but a bigger clip file + a heavier bake. Modern-only.",
+                            { cfg.clipChunkRadius }, 4, 16, { cfg.clipChunkRadius = it }, ::modern)
+                        val chunkRenderDist = intAvail("Chunk render distance",
+                            "Max chunks from the camera that /ius playclip renders of the captured chunk world per frame. Bounds per-frame cost (and thus FPS). Modern-only.",
+                            { cfg.clipChunkRenderDistance }, 4, 12, { cfg.clipChunkRenderDistance = it }, ::modern)
+                        val subs = listOf(relocate, terrain, chunkWorld, chunkRadius, chunkRenderDist)
+                        option(Option.createBuilder<IustitiaConfig.PlayclipMode>()
+                            .name(Text.literal("Playclip mode"))
+                            .description(OptionDescription.of(Text.literal("LEGACY = the v1.1.0 playclip: ghosts render over the LIVE world at their recorded coords, the player walks and acts normally, no world is downloaded. MODERN = the current feature set: solid captured chunk world (free-spectate anywhere, incl. underground), relocated scene, auto-freecam, and spectator-like input/packet suppression while the clip plays. Default LEGACY.")))
+                            .binding(cfg.playclipMode, { cfg.playclipMode }, { cfg.playclipMode = it })
+                            .addListener { opt, _ ->
+                                val avail = opt.pendingValue() == IustitiaConfig.PlayclipMode.MODERN
+                                subs.forEach { s -> try { s.setAvailable(avail) } catch (_: Throwable) {} }
+                            }
+                            .controller { opt -> EnumControllerBuilder.create(opt).enumClass(IustitiaConfig.PlayclipMode::class.java) }
+                            .build())
+                        option(relocate)
+                        option(terrain)
+                        option(chunkWorld)
+                        option(chunkRadius)
+                        option(chunkRenderDist)
+                    }
                     .build()
             )
         for ((id, cc) in cfg.checks()) {
@@ -126,5 +166,27 @@ object YaclScreenBuilder {
             .description(OptionDescription.of(Text.literal(desc)))
             .binding(getter(), getter, setter)
             .controller { opt -> DoubleFieldControllerBuilder.create(opt).range(min, max) }
+            .build()
+
+    /** Same as [bool] but with an availability snapshot (YACL greys the option when false). Used for
+     *  the PlayClip sub-options that are only editable in Modern mode. The mode option's listener
+     *  re-toggles [Option.setAvailable] live on a switch, so the snapshot only fixes the initial state. */
+    private fun boolAvail(name: String, desc: String, getter: () -> Boolean, setter: (Boolean) -> Unit, available: () -> Boolean): Option<Boolean> =
+        Option.createBuilder<Boolean>()
+            .name(Text.literal(name))
+            .description(OptionDescription.of(Text.literal(desc)))
+            .binding(getter(), getter, setter)
+            .available(available())
+            .controller { opt -> BooleanControllerBuilder.create(opt) }
+            .build()
+
+    /** Same as [int] but with an availability snapshot — see [boolAvail]. */
+    private fun intAvail(name: String, desc: String, getter: () -> Int, min: Int, max: Int, setter: (Int) -> Unit, available: () -> Boolean): Option<Int> =
+        Option.createBuilder<Int>()
+            .name(Text.literal(name))
+            .description(OptionDescription.of(Text.literal(desc)))
+            .binding(getter(), getter, setter)
+            .available(available())
+            .controller { opt -> IntegerFieldControllerBuilder.create(opt).range(min, max) }
             .build()
 }
