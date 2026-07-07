@@ -74,6 +74,13 @@ class TrackedPlayer(val uuid: UUID, var entityId: Int, val joinTick: Int) {
      *  EntityVelocityUpdate packets (confirmed unobserved on 1.21.11 arch.mc): knockback
      *  follows a hit, so a recent hurt marks the knockback peak we must not flag. */
     var hurtTick: Int = -10000
+    /** Tick of the last inferred [dev.iustitia.event.AttackEvent] where this player was the ATTACKER
+     *  — the combat-relevance gate for the [sensitivity] substrate feed (see [EntityTrackerManager].
+     *  updateSnapshot). Set centrally from the bus ([Iustitia] subscribes AttackEvent → markAttack),
+     *  mirroring [hurtTick]. The substrate's only consumers (aimGcd / KillAura-GCD) flag the
+     *  attacker, so feeding sensitivity only for recent attackers excludes the dense-crowd bystanders
+     *  that were the FPS regression. Default -10000 so a player who never attacks is never fed. */
+    var lastAttackTick: Int = -10000
 
     /** Last client-ticked hand-swing phase for this player (vanilla `LivingEntity.handSwingTicks`,
      *  0 when not mid-swing; advanced client-side in `OtherClientPlayerEntity.tickMovement`). Captured

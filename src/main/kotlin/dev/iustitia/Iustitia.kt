@@ -3,6 +3,7 @@ package dev.iustitia
 import dev.iustitia.alert.AlertManager
 import dev.iustitia.checks.Check
 import dev.iustitia.config.ConfigManager
+import dev.iustitia.event.AttackEvent
 import dev.iustitia.event.EventBus
 import dev.iustitia.event.HurtSignal
 import dev.iustitia.inference.AttackInference
@@ -88,6 +89,13 @@ object Iustitia {
         // enabled. Fail-open: a missed hurt just means no exemption (stricter, safe).
         try {
             bus.subscribe<HurtSignal> { EntityTrackerManager.markHurt(it.victim, it.tick) }
+        } catch (_: Throwable) {}
+        // Centralized attack → combat-relevance timestamp for the sensitivity substrate feed
+        // (FPS pass #3): the attacker is the cheater candidate whose sensitivity we want to
+        // converge; non-combat players in a dense crowd are never fed. Mirrors the hurt
+        // subscription above. Fail-open: a missed attack just means no feed (stricter, safe).
+        try {
+            bus.subscribe<AttackEvent> { EntityTrackerManager.markAttack(it.attacker, it.tick) }
         } catch (_: Throwable) {}
         // Wire per-check context purging to despawns so a long single-world session doesn't
         // leak one CheckContext per unique joiner per check (Check.purge existed but was never

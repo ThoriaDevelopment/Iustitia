@@ -27,6 +27,13 @@ object EntityTrackerManager {
     private const val LAG_FEED_WINDOW = 8
     /** Window (ticks) after a batched catch-up burst within which sensitivity samples are skipped. */
     private const val BURST_FEED_WINDOW = 3
+    /** Combat-relevance window: feed a player's [SensitivityProcessor] only while they attacked
+     *  within this many ticks. Generous enough (4s) that any real combat (killaura/aimbot fires
+     *  far faster) keeps the feed continuous so the GCD path's 40 samples (≈2s) converge mid-fight,
+     *  short enough that dense-crowd bystanders stop feeding within ~4s of their last fight. The
+     *  substrate's only consumers (aimGcd / KillAura-GCD) are themselves combat-gated and fail-open
+     *  until `sensitivity.valid`, so late convergence when a player enters combat is harmless. */
+    private const val SENS_COMBAT_WINDOW = 80
 
     private val byUuid = ConcurrentHashMap<UUID, TrackedPlayer>()
 
@@ -98,6 +105,19 @@ object EntityTrackerManager {
     fun markHurt(uuid: UUID, tick: Int) {
         try {
             byUuid[uuid]?.hurtTick = tick
+        } catch (_: Throwable) {
+            // ignore
+        }
+    }
+
+    /** Centralized attack → combat-relevance timestamp (mirrors [markHurt]). Set from the
+     *  [dev.iustitia.event.AttackEvent] bus subscription in [dev.iustitia.Iustitia.init]; the
+     *  attacker uuid is the cheater candidate whose [SensitivityProcessor] substrate we want to
+     *  converge. Read by [updateSnapshot]'s combat-relevance gate on the sensitivity feed. Fail-open:
+     *  a missed attack just means no feed (stricter substrate convergence, safe). */
+    fun markAttack(uuid: UUID, tick: Int) {
+        try {
+            byUuid[uuid]?.lastAttackTick = tick
         } catch (_: Throwable) {
             // ignore
         }
@@ -208,14 +228,26 @@ object EntityTrackerManager {
         // GCD) and skip during server-lag bursts (catch-up snaps distort the deltas). The lag
         // signals are published AFTER the per-player loop (lines 169-173), so this feed sees the
         // previous tick's signal — the correct available value.
+        //
+        // FPS pass #3 — combat-relevance gate: feed ONLY for players who attacked within
+        // [SENS_COMBAT_WINDOW]. The substrate's only consumers (aimGcd / KillAura-GCD) flag the
+        // attacker and fail-open until `sensitivity.valid`, so a non-combat player never needs the
+        // feed — and a dense crowd is mostly non-combat bystanders, which is exactly the dense-player
+        // FPS regression. Zero detection change: the only delta is late convergence when a player
+        // enters combat (accepted; the consuming checks are themselves combat-gated). When the gate
+        // is closed we clear the predecessor (like the teleport branch) so the next fed delta isn't
+        // GCD-paired with a stale value across the combat gap. The lag-burst + in-combat + post-teleport
+        // case intentionally retains the predecessor, matching the original behavior (lag is brief).
         if (ProtocolDetector.fullFloatLook) {
             val sinceTp = tick - tp.lastTeleportTick
+            val combatRelevant = tick - tp.lastAttackTick <= SENS_COMBAT_WINDOW
             if (sinceTp >= 3 &&
                 tick - lastServerLagTick > LAG_FEED_WINDOW &&
-                tick - lastLagBurstTick > BURST_FEED_WINDOW
+                tick - lastLagBurstTick > BURST_FEED_WINDOW &&
+                combatRelevant
             ) {
                 tp.sensitivity.process((tp.pitch - tp.lastPitch).toDouble())
-            } else if (sinceTp < 3) {
+            } else if (sinceTp < 3 || !combatRelevant) {
                 tp.sensitivity.clearLastDelta()
             }
         }
