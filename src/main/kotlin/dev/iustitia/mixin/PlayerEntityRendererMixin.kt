@@ -3,6 +3,7 @@ package dev.iustitia.mixin
 import dev.iustitia.VerboseLog
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
+import dev.iustitia.tracking.EntityTrackerManager
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.network.OtherClientPlayerEntity
 import net.minecraft.client.render.command.OrderedRenderCommandQueue
@@ -141,7 +142,9 @@ class PlayerEntityRendererMixin {
             if (other == null || isSelf) {
                 stateTier.remove(state)
             } else {
-                stateTier[state] = TierEntry(FlagHistory.tierFor(other.uuid), other.uuid)
+                stateTier[state] = TierEntry(
+                    EntityTrackerManager.get(other.uuid)?.tier ?: FlagHistory.tierFor(other.uuid),
+                    other.uuid)
             }
         } catch (_: Throwable) {}
     }

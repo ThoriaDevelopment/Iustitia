@@ -3,6 +3,7 @@ package dev.iustitia.mixin
 import dev.iustitia.VerboseLog
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
+import dev.iustitia.tracking.EntityTrackerManager
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.network.OtherClientPlayerEntity
 import net.minecraft.client.render.entity.ArmorStandEntityRenderer
@@ -103,7 +104,7 @@ class ArmorStandEntityRendererMixin {
             }
             if (owner.uuid == self) return
 
-            val tier = FlagHistory.tierFor(owner.uuid)
+            val tier = EntityTrackerManager.get(owner.uuid)?.tier ?: FlagHistory.tierFor(owner.uuid)
             if (tier == FlagHistory.Tier.GREEN) return   // only YELLOW/RED on holograms
 
             val acc = state as? EntityRenderStateAccessor ?: return
