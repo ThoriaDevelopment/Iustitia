@@ -65,8 +65,13 @@ class SprintHackCheck : Check() {
             if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
                 tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
             ) return
+            // Distant-player skip: beyond the observation range the water-sprint signal isn't
+            // usefully observable. Reset (like the other no-signal branches) so a stale streak
+            // can't flag on re-approach. No verdict-cache here — waterSprint's isLiquidAt lookups
+            // are cheap getBlockState+isOf (no getCollisionShape), so rate-limiting them is pointless.
+            if (BlockLookupBudget.beyondObserveRange(tp)) { ctx.streak = 0; return }
 
-            val waterSprint = waterSprint(tp)
+            val waterSprint = waterSprint(tp, tick)
             val sneakSprint = tp.sneaking
             val blindSprint = ctx.blind
 
@@ -92,14 +97,14 @@ class SprintHackCheck : Check() {
     }
 
     /** Sprint(Water): feet block is liquid, head (eye-height) block is NOT liquid, not swimming. */
-    private fun waterSprint(tp: TrackedPlayer): Boolean {
+    private fun waterSprint(tp: TrackedPlayer, tick: Int): Boolean {
         val world = MinecraftClient.getInstance().world ?: return false
         val bx = Math.floor(tp.pos.x).toInt()
         val bz = Math.floor(tp.pos.z).toInt()
         val footY = Math.floor(tp.pos.y).toInt()
         val headY = Math.floor(tp.pos.y + tp.eyeHeight()).toInt()
-        if (!WorldQueries.isChunkLoaded(world, bx, bz)) return false
-        val feetInWater = WorldQueries.isLiquidAt(world, bx, footY, bz)
+        if (!tp.chunkLoadedCached(world, tick, bx, bz)) return false
+        val feetInWater = tp.feetLiquidCached(world, tick, bx, footY, bz)
         val headInWater = WorldQueries.isLiquidAt(world, bx, headY, bz)
         return feetInWater && !headInWater && !tp.swimming
     }
