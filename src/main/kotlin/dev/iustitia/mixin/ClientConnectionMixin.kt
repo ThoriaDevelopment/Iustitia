@@ -3,6 +3,7 @@ package dev.iustitia.mixin
 import dev.iustitia.replay.ReplayState
 import net.minecraft.network.ClientConnection
 import net.minecraft.network.packet.Packet
+import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket
 import net.minecraft.network.packet.c2s.play.HandSwingC2SPacket
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket
 import net.minecraft.network.packet.c2s.play.PlayerInputC2SPacket
@@ -30,6 +31,18 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo
  * commands, open inventory, and pick a hotbar slot while watching a clip. It never touches incoming
  * S2C packets (the read-only [ClientPlayNetworkHandlerMixin] handles those), other players, or
  * detection.
+ *
+ * ## `ClientCommandC2SPacket` — action-targeted suppression
+ *
+ * `ClientCommandC2SPacket` carries a `Mode` enum (yarn 1.21.11: `STOP_SLEEPING`, `START_SPRINTING`,
+ * `STOP_SPRINTING`, `START_RIDING_JUMP`, `STOP_RIDING_JUMP`, `OPEN_INVENTORY`, `START_FALL_FLYING`).
+ * The gameplay-state actions (sprint toggle, leave-bed, ride-jump, elytra deploy) are suppressed —
+ * they mutate the moderator's live server state (sprint flag, sleep state, horse-jump charge, elytra
+ * deployment) and are NOT spectator-adjacent. `OPEN_INVENTORY` passes through (inventory is
+ * spectator-adjacent, allowed per the spec's "inventory passes through" rule). Note: the original
+ * review finding posited a `SWAP_HANDS` action on this packet — that action does NOT exist in yarn
+ * 1.21.11 (held-item swap is signaled elsewhere); the targeted suppression below covers the actual
+ * gameplay-state actions on this packet type.
  *
  * ## Gate + fail-open
  *
@@ -63,13 +76,23 @@ class ClientConnectionMixin {
     }
 
     /** The closed list of outgoing gameplay packets suppressed during a replay. Anything NOT in this
-     *  list (chat, commands, inventory, hotbar, settings, abilities, …) passes through. */
-    private fun isGameplay(p: Packet<*>): Boolean =
-        p is PlayerMoveC2SPacket ||
-        p is PlayerActionC2SPacket ||
-        p is PlayerInteractBlockC2SPacket ||
-        p is PlayerInteractItemC2SPacket ||
-        p is PlayerInteractEntityC2SPacket ||
-        p is HandSwingC2SPacket ||
-        p is PlayerInputC2SPacket
+     *  list (chat, commands, inventory, hotbar, settings, abilities, …) passes through.
+     *
+     *  `ClientCommandC2SPacket` is handled specially: only its gameplay-state actions (sprint toggle,
+     *  leave-bed, ride-jump, elytra deploy) are suppressed; `OPEN_INVENTORY` passes through. */
+    private fun isGameplay(p: Packet<*>): Boolean {
+        if (p is ClientCommandC2SPacket) {
+            // Suppress the gameplay-state actions; let OPEN_INVENTORY through (inventory is
+            // spectator-adjacent, allowed per spec). getMode() is javap-confirmed public on the
+            // 1.21.11 named jar.
+            return p.mode != ClientCommandC2SPacket.Mode.OPEN_INVENTORY
+        }
+        return p is PlayerMoveC2SPacket ||
+            p is PlayerActionC2SPacket ||
+            p is PlayerInteractBlockC2SPacket ||
+            p is PlayerInteractItemC2SPacket ||
+            p is PlayerInteractEntityC2SPacket ||
+            p is HandSwingC2SPacket ||
+            p is PlayerInputC2SPacket
+    }
 }

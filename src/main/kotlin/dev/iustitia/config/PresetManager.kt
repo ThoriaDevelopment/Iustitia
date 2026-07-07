@@ -127,6 +127,7 @@ object PresetManager {
                 allVisuals(false); hoverTooltip = true; confidenceHud = false
                 verbose = false; compactMode = true; alertLevel = 1; alertBatching = true
                 sonarAlerts = false; replayCapture = true; nametagPrefixes = true; nametagGreenEnabled = true
+                audioCues = false; audioNuclear = false
             }
             else -> null
         }

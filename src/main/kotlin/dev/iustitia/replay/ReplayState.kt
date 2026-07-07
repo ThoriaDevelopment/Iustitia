@@ -107,6 +107,15 @@ object ReplayState {
      * a screen-space freecam pos lines up with them. [freecamActive] is a render-thread-readable flag
      * distinct from `cameraMode == FREECAM` so the camera mixin needn't re-derive. Written
      * client-thread only; read cross-thread by the camera mixin.
+     *
+     * ## Torn-pose read (accepted)
+     *
+     * The six pose primitives are separate `@Volatile` fields (each individually visible to the render
+     * thread, but NOT atomic across the group), so the render thread can read a torn pose mid-movement
+     * — e.g. a new [fcX] with a stale [fcZ]. The worst case is a cosmetic one-frame camera jump of up
+     * to ~one tick's sprint distance (~0.5 blocks at the FREECAM sprint speed). Accepted for a spectator
+     * camera (no game-state consequences). Bundling the six into an atomic `FreecamPose` holder is a
+     * documented future option if freecam ever interpolates between ticks.
      */
     @Volatile var fcX: Double = 0.0
         private set
