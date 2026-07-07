@@ -47,3 +47,6 @@ Anticheat Documentation.txt
 Minecraft_Cheat_AntiCheat_Findings.md
 Reference Analysis & Detection Plan.md
 Development Plan.md
+
+# ---- Local reference copy of a prior release (kept local, never committed) ----
+oldversion/

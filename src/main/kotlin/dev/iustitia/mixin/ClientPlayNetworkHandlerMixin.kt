@@ -154,9 +154,13 @@ class ClientPlayNetworkHandlerMixin {
             val entity = otherPlayer(packet.getEntityId()) ?: return
             val entry = packet.getEffectId()
             val isSpeed = try { entry === StatusEffects.SPEED } catch (_: Throwable) { false }
+            val isBlind = try { entry === StatusEffects.BLINDNESS } catch (_: Throwable) { false }
             val amp = if (isSpeed) packet.getAmplifier() else -1
+            val blindAmp = if (isBlind) packet.getAmplifier() else -1
+            // markEffect is Speed-only (feeds the SpeedEnvelope cap raise); Blindness is tracked
+            // per-check (sprintHack subscribes EffectSignal) — no shared TrackedPlayer field.
             EntityTrackerManager.markEffect(entity, isSpeed, amp, added = true)
-            Iustitia.bus.publish(EffectSignal(entity, Iustitia.tickCounter, isSpeed, amp, added = true))
+            Iustitia.bus.publish(EffectSignal(entity, Iustitia.tickCounter, isSpeed, amp, isBlind, blindAmp, added = true))
         } catch (_: Throwable) {}
     }
 
@@ -166,9 +170,13 @@ class ClientPlayNetworkHandlerMixin {
             val entity = otherPlayer(packet.entityId()) ?: return
             val entry = packet.effect()
             val isSpeed = try { entry === StatusEffects.SPEED } catch (_: Throwable) { false }
-            if (!isSpeed) return
-            EntityTrackerManager.markEffect(entity, isSpeed, -1, added = false)
-            Iustitia.bus.publish(EffectSignal(entity, Iustitia.tickCounter, isSpeed, -1, added = false))
+            val isBlind = try { entry === StatusEffects.BLINDNESS } catch (_: Throwable) { false }
+            // Forward both Speed and Blindness removal; drop other effects (unobserved). The
+            // remove packet carries no amplifier, so blindAmplifier = -1 on removal (the
+            // sprintHack check only cares that Blindness ended, not the level).
+            if (!isSpeed && !isBlind) return
+            if (isSpeed) EntityTrackerManager.markEffect(entity, isSpeed, -1, added = false)
+            Iustitia.bus.publish(EffectSignal(entity, Iustitia.tickCounter, isSpeed, -1, isBlind, -1, added = false))
         } catch (_: Throwable) {}
     }
 }

@@ -5,9 +5,11 @@ import dev.iustitia.checks.combat.BacktrackCheck
 import dev.iustitia.checks.combat.ClickStatisticsCheck
 import dev.iustitia.checks.combat.CriticalsCheck
 import dev.iustitia.checks.combat.HitFlickCheck
+import dev.iustitia.checks.combat.HitsWithoutSwingCheck
 import dev.iustitia.checks.combat.JumpOnHurtCheck
 import dev.iustitia.checks.combat.KeepSprintCheck
 import dev.iustitia.checks.combat.KillAuraCheck
+import dev.iustitia.checks.combat.MaceSmashCheck
 import dev.iustitia.checks.combat.MultiTargetCheck
 import dev.iustitia.checks.combat.NoKnockbackCheck
 import dev.iustitia.checks.combat.ReachCheck
@@ -28,9 +30,11 @@ import dev.iustitia.checks.movement.RotationSnapBackCheck
 import dev.iustitia.checks.movement.RotationTrackingCheck
 import dev.iustitia.checks.movement.ScaffoldRotationCheck
 import dev.iustitia.checks.movement.SpeedEnvelopeCheck
+import dev.iustitia.checks.movement.SpiderCheck
+import dev.iustitia.checks.movement.SprintHackCheck
 import dev.iustitia.checks.movement.StepHeightCheck
 import dev.iustitia.checks.movement.TeleportCheck
-import dev.iustitia.checks.movement.TimerRateCheck
+import dev.iustitia.checks.movement.WallSprintCheck
 import dev.iustitia.checks.movement.WaterWalkCheck
 import dev.iustitia.command.IustitiaCommand
 import dev.iustitia.config.ConfigManager
@@ -83,7 +87,7 @@ class IustitiaClientMod : ClientModInitializer {
         // iustitia.mixins.json) suppresses the real players during a hide-live replay. Render-only.
         try { dev.iustitia.render.ReplayRenderer.register() } catch (_: Throwable) {}
 
-        // Full check registry — combat (14) + movement/rotation/packet (18).
+        // Full check registry — combat (16) + movement/rotation/packet (20).
         Iustitia.register(ReachCheck())
         Iustitia.register(MultiTargetCheck())
         Iustitia.register(ClickStatisticsCheck())
@@ -101,24 +105,37 @@ class IustitiaClientMod : ClientModInitializer {
         Iustitia.register(HitFlickCheck())
         // Triggerbot — lax sub-reaction auto-attack detector (modern + 1.8 combat).
         Iustitia.register(TriggerbotCheck())
+        // MaceSmash — MaceKill fall-height Y-warp around a mace attack (modern MC, §7.1).
+        Iustitia.register(MaceSmashCheck())
+        // HitsWithoutSwing — Slinky Hit Select / Grim PacketOrderB (no-swing attack; CORROBORATOR).
+        Iustitia.register(HitsWithoutSwingCheck())
         Iustitia.register(SpeedEnvelopeCheck())
         Iustitia.register(FlyEnvelopeCheck())
+        // Spider — wall-climb (AvA Spider sustained + NCM ConstantClimb constant YSpeed).
+        Iustitia.register(SpiderCheck())
         Iustitia.register(NoFallDamageCheck())
         Iustitia.register(StepHeightCheck())
         Iustitia.register(TeleportCheck())
         Iustitia.register(LongJumpCheck())
         Iustitia.register(NoSlowCheck())
         Iustitia.register(BackwardSprintCheck())
+        // WallSprint / SprintHack — Grim SprintE (sprint-into-wall) + SprintG/B/D (water/sneak/blind).
+        Iustitia.register(WallSprintCheck())
+        Iustitia.register(SprintHackCheck())
         Iustitia.register(WaterWalkCheck())
         Iustitia.register(ElytraSpeedCheck())
         Iustitia.register(RotationTrackingCheck())
         Iustitia.register(RotationSnapBackCheck())
         Iustitia.register(PhaseClipCheck())
         Iustitia.register(PacketGapCheck())
-        Iustitia.register(TimerRateCheck())
         Iustitia.register(AimWrapCheck())
         Iustitia.register(PitchBoundCheck())
         Iustitia.register(ScaffoldRotationCheck())
+
+        // Self-check: registered check ids == config slice ids. Catches a forgotten slice() branch
+        // (which would otherwise fall to slice()'s silent safe-default) or an orphan config slice.
+        // Logs only; runs after every register() above.
+        Iustitia.verifyCheckRegistry()
 
         ClientTickEvents.END_CLIENT_TICK.register(ClientTickEvents.EndTick {
             tick++

@@ -57,14 +57,25 @@ abstract class EntityRendererMixin {
         cir: CallbackInfoReturnable<Boolean>,
     ) {
         try {
-            if (!ReplayState.active || !ReplayState.hideLive) return
-            // Only hide OTHER players — keep the local player (third-person) and all non-player
-            // entities rendering. The Frustum + xyz params are unused (the cull decision is purely
-            // "is this an OTHER player during a hide-live replay?"), but kept to match the signature.
+            if (!ReplayState.active) return
             val other = entity as? OtherClientPlayerEntity ?: return
             val mc = MinecraftClient.getInstance()
-            if (other.uuid == mc.player?.uuid) return  // keep self visible
-            cir.setReturnValue(false)
+            val isSelf = other.uuid == mc.player?.uuid
+            if (isSelf) {
+                // FREECAM: the detached camera flies away from the local player, so the player's own
+                // body would float at its real (now-irrelevant) spot in the clip world. Hide it for
+                // a clean ReplayMod-style free spectate. Restored the instant FREECAM ends (next
+                // frame `active`/mode flips back). The player still ticks + receives input normally —
+                // only rendering is suppressed.
+                if (ReplayState.cameraMode == ReplayState.CameraMode.FREECAM) {
+                    cir.setReturnValue(false)
+                }
+                return
+            }
+            // Not self: hide OTHER players during a hide-live replay so only the buffered ghosts
+            // draw (the rewind-the-world feel). When hideLive is off the live players overlay the
+            // ghosts as before.
+            if (ReplayState.hideLive) cir.setReturnValue(false)
         } catch (_: Throwable) {
             // fail-open: never block rendering on an error
         }

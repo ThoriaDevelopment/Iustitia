@@ -16,7 +16,9 @@ import java.util.UUID
  *
  * ```
  * magic   : 4 bytes  "IUSC"
- * version : int      (4 — v3 had no per-snap swingTicks; v2 had no per-snap pitch; v1 no per-snap name)
+ * version : int      (6 — v6 adds the optional chunks section [full-chunk world capture];
+ *                     v5 adds the optional terrain section; v4 had no terrain;
+ *                     v3 had no per-snap swingTicks; v2 had no per-snap pitch; v1 no per-snap name)
  * focus?  : byte 0/1, then uuidMost:long, uuidLeast:long  (the highlighted player, if any)
  * frames  : int count, then per frame:
  *              tick:int, playerCount:int, per player:
@@ -27,33 +29,53 @@ import java.util.UUID
  * alerts  : int count, then per alert:
  *              tick:int, uuidMost:long, uuidLeast:long,
  *              name:UTF, checkId:UTF, label:UTF, vl:float
+ * terrain?: (v5+ ONLY) byte 0/1; if 1:
+ *              originX:int, originY:int, originZ:int,
+ *              sizeX:int, sizeY:int, sizeZ:int,
+ *              runCount:int, per run: count:int, nameLen:short, name UTF-8 (short=-1 → air)
+ * chunks?: (v6+ ONLY) byte 0/1; if 1:
+ *              chunkCount:int, per chunk:
+ *                  chunkX:int, chunkZ:int, sectionCount:int,
+ *                  per section: sectionY:int, paletteSize:short,
+ *                      per palette entry: nameLen:short, name UTF-8,
+ *                      dataLen:int, data bytes (4096 if paletteSize ≤ 256 else 8192)
  * ```
  *
  * ## Backward compatibility
  *
- * [read] accepts **v2, v3 and v4**. v2 clips have no per-snap pitch → pitch defaults to 0 (the ghost
- * still faces its yaw, just won't tilt its head). v3 clips have no per-snap swingTicks → swingTicks
- * defaults to 0 (arms hang still, but the ghost still walks / faces / tilts). v1 (no per-snap name)
- * **Old v2 clips keep loading** so a user's saved library isn't invalidated by the look-angle
- * addition. [readHeader] reads only up through the counts (no per-snap data) — cheap for the clip
- * manager's list view.
+ * [read] accepts **v2 through v6**. v2 clips have no per-snap pitch → pitch defaults to 0 (the
+ * ghost still faces its yaw, just won't tilt its head). v3 clips have no per-snap swingTicks →
+ * swingTicks defaults to 0 (arms hang still, but the ghost still walks / faces / tilts). v4 and
+ * earlier clips have no terrain → terrain defaults to null. v5 and earlier clips have no chunks →
+ * chunks defaults to null (playclip then renders the v5 wireframe terrain / ghosts only — exactly the
+ * path for an old clip recorded before full-chunk capture). v1 (no per-snap name) is not accepted.
+ * **Old v2–v5 clips keep loading** so a user's saved library isn't invalidated.
+ * [readHeader] reads only up through the counts (no per-snap data, no terrain runs, no chunk
+ * section bodies) — cheap for the clip manager's list view.
  *
  * Compact: a 30s, 40-player v3 clip ≈ 30*20*40 * (8+16+4+1+~12) ≈ 740 KB; the 60s cap keeps it in the
- * low single-digit MB. Fail-open: a corrupt/short file returns null from [read]/[readHeader] instead
- * of throwing.
+ * low single-digit MB. Terrain is RLE'd (mostly air → few runs), adds ~tens of KB for an arena.
+ * Fail-open: a corrupt/short file returns null from [read]/[readHeader] instead of throwing.
  */
 object ClipCodec {
 
     private const val MAGIC = "IUSC"
-    const val VERSION = 4
+    const val VERSION = 6
     /** Lowest version [read] will accept (v2 = no per-snap pitch; loaded with pitch defaulting to 0). */
     const val MIN_VERSION = 2
 
-    /** A decoded clip: its frames + alerts + the optional focus player. */
-    data class Clip(val window: ReplayBuffer.Window, val focus: UUID?)
+    /** A decoded clip: its frames + alerts + the optional focus player + optional terrain + chunks snapshots. */
+    data class Clip(
+        val window: ReplayBuffer.Window, val focus: UUID?,
+        val terrain: TerrainSnapshot? = null, val chunks: ChunkSnapshot? = null,
+    )
 
-    /** Lightweight header (no per-snap data) for the clip-manager list. Fail-open: null on any error. */
-    data class ClipMeta(val version: Int, val focus: UUID?, val frameCount: Int, val alertCount: Int)
+    /** Lightweight header (no per-snap data, no terrain runs, no chunk section bodies) for the clip-manager
+     *  list. [terrainBlocks] / [chunkSections] feed the row's map-size display. Fail-open. */
+    data class ClipMeta(
+        val version: Int, val focus: UUID?, val frameCount: Int, val alertCount: Int,
+        val terrainBlocks: Int = 0, val chunkSections: Int = 0,
+    )
 
     fun write(out: OutputStream, window: ReplayBuffer.Window, focus: UUID?) {
         try {
@@ -90,6 +112,50 @@ object ClipCodec {
                 d.writeUTF(a.label)
                 d.writeFloat(a.vl)
             }
+            // v5+ terrain section. Always written for v5 (byte 0 = no terrain, 1 = terrain present)
+            // so the reader can branch cleanly; old v2–v4 clips simply never had this byte.
+            val t = window.terrain
+            if (t == null) {
+                d.writeByte(0)
+            } else {
+                d.writeByte(1)
+                d.writeInt(t.originX); d.writeInt(t.originY); d.writeInt(t.originZ)
+                d.writeInt(t.sizeX); d.writeInt(t.sizeY); d.writeInt(t.sizeZ)
+                d.writeInt(t.runs.size)
+                for (r in t.runs) {
+                    d.writeInt(r.count)
+                    if (r.name == null) d.writeShort(-1) else {
+                        val bytes = r.name.toByteArray(Charsets.UTF_8)
+                        d.writeShort(bytes.size)
+                        d.write(bytes)
+                    }
+                }
+            }
+            // v6+ chunks section (full-chunk world capture). Always written for v6 (byte 0 = no
+            // chunks, 1 = chunks present) so the reader branches cleanly; v2–v5 clips never had this
+            // byte. data is 4096 bytes when a section's palette has ≤ 256 entries, else 8192.
+            val c = window.chunks
+            if (c == null) {
+                d.writeByte(0)
+            } else {
+                d.writeByte(1)
+                d.writeInt(c.chunks.size)
+                for (chunk in c.chunks) {
+                    d.writeInt(chunk.chunkX); d.writeInt(chunk.chunkZ)
+                    d.writeInt(chunk.sections.size)
+                    for (sec in chunk.sections) {
+                        d.writeInt(sec.sectionY)
+                        d.writeShort(sec.palette.size)
+                        for (name in sec.palette) {
+                            val bytes = name.toByteArray(Charsets.UTF_8)
+                            d.writeShort(bytes.size)
+                            d.write(bytes)
+                        }
+                        d.writeInt(sec.data.size)
+                        d.write(sec.data)
+                    }
+                }
+            }
             d.flush()
         } catch (_: Throwable) {
             // fail-open: a write error surfaces as a null save result in ClipStore, not a throw
@@ -105,7 +171,9 @@ object ClipCodec {
         val focus = readFocus(d)
         val frames = readFrames(d, version) ?: return null
         val alerts = readAlerts(d) ?: return null
-        Clip(ReplayBuffer.Window(frames, alerts), focus)
+        val terrain = if (version >= 5) readTerrainFlag(d) else null
+        val chunks = if (version >= 6) readChunksFlag(d) else null
+        Clip(ReplayBuffer.Window(frames, alerts, terrain, chunks), focus, terrain, chunks)
     } catch (_: Throwable) {
         null
     }
@@ -136,7 +204,68 @@ object ClipCodec {
         }
         val alertCount = d.readInt()
         if (alertCount < 0 || alertCount > 100000) return null
-        ClipMeta(version, focus, frameCount, alertCount)
+        // v5+ terrain header: flag + run count + skip the run bodies (nameLen + name bytes each).
+        // We also sum the non-air run counts for [ClipMeta.terrainBlocks] (the clip-manager row shows
+        // a block count). Bound-check runCount so a corrupt file can't force a huge skip loop.
+        var terrainBlocks = 0
+        if (version >= 5) {
+            when (d.readByte().toInt()) {
+                0 -> { /* no terrain */ }
+                1 -> {
+                    d.readInt(); d.readInt(); d.readInt() // origin XYZ
+                    d.readInt(); d.readInt(); d.readInt() // size XYZ
+                    val runCount = d.readInt()
+                    if (runCount < 0 || runCount > 5_000_000) return null
+                    for (i in 0 until runCount) {
+                        val count = d.readInt()
+                        if (count < 0) return null
+                        val nameLen = d.readShort().toInt()
+                        if (nameLen == -1) {
+                            // air run — no bytes to skip
+                        } else if (nameLen in 0..32767) {
+                            val skipped = d.skipBytes(nameLen)
+                            if (skipped != nameLen) return null
+                        } else return null
+                        if (nameLen != -1) terrainBlocks += count
+                    }
+                }
+                else -> return null
+            }
+        }
+        // v6+ chunks header: flag + chunk count + skip the chunk/section bodies (palette names + data
+        // bytes each). We sum section counts for [ClipMeta.chunkSections] (the clip-manager row shows a
+        // section count). Bound-check counts so a corrupt file can't force a huge skip loop or OOM.
+        var chunkSections = 0
+        if (version >= 6) {
+            when (d.readByte().toInt()) {
+                0 -> { /* no chunks */ }
+                1 -> {
+                    val chunkCount = d.readInt()
+                    if (chunkCount < 0 || chunkCount > 4096) return null
+                    for (i in 0 until chunkCount) {
+                        d.readInt(); d.readInt() // chunkX, chunkZ
+                        val sectionCount = d.readInt()
+                        if (sectionCount < 0 || sectionCount > 64) return null
+                        chunkSections += sectionCount
+                        for (j in 0 until sectionCount) {
+                            d.readInt() // sectionY
+                            val paletteSize = d.readShort().toInt()
+                            if (paletteSize < 0 || paletteSize > 4096) return null
+                            for (k in 0 until paletteSize) {
+                                val nameLen = d.readShort().toInt()
+                                if (nameLen < 0 || nameLen > 32767) return null
+                                if (d.skipBytes(nameLen) != nameLen) return null
+                            }
+                            val dataLen = d.readInt()
+                            if (dataLen < 0 || dataLen > 8192) return null
+                            if (d.skipBytes(dataLen) != dataLen) return null
+                        }
+                    }
+                }
+                else -> return null
+            }
+        }
+        ClipMeta(version, focus, frameCount, alertCount, terrainBlocks, chunkSections)
     } catch (_: Throwable) {
         null
     }
@@ -199,5 +328,86 @@ object ClipCodec {
             alerts.add(ReplayBuffer.AlertRec(tick, most, least, name, checkId, label, vl))
         }
         return alerts
+    }
+
+    /**
+     * Read the v5 terrain flag byte and, if present, the terrain section → [TerrainSnapshot]. Returns
+     * null for the no-terrain byte (0). A bad flag value or truncation throws (caught by [read]'s
+     * outer try → null clip). Bound-checks sizes + runCount so a corrupt file can't OOM the decoder.
+     */
+    private fun readTerrainFlag(d: DataInputStream): TerrainSnapshot? = when (d.readByte().toInt()) {
+        0 -> null
+        1 -> {
+            val originX = d.readInt(); val originY = d.readInt(); val originZ = d.readInt()
+            val sizeX = d.readInt(); val sizeY = d.readInt(); val sizeZ = d.readInt()
+            if (sizeX < 0 || sizeY < 0 || sizeZ < 0 || sizeX > 1024 || sizeY > 1024 || sizeZ > 1024) return null
+            val totalBlocks = sizeX.toLong() * sizeY * sizeZ
+            if (totalBlocks <= 0 || totalBlocks > 5_000_000) return null
+            val runCount = d.readInt()
+            if (runCount < 0 || runCount > 5_000_000) return null
+            val runs = ArrayList<TerrainSnapshot.Run>(runCount)
+            var acc = 0L
+            for (i in 0 until runCount) {
+                val count = d.readInt()
+                if (count < 0) return null
+                acc += count
+                val nameLen = d.readShort().toInt()
+                val name = if (nameLen == -1) null else {
+                    if (nameLen < 0 || nameLen > 32767) return null
+                    val bytes = ByteArray(nameLen)
+                    if (d.read(bytes) != nameLen) return null
+                    String(bytes, Charsets.UTF_8)
+                }
+                runs.add(TerrainSnapshot.Run(count, name))
+            }
+            if (acc != totalBlocks) return null   // runs must exactly cover the bbox
+            TerrainSnapshot(originX, originY, originZ, sizeX, sizeY, sizeZ, runs)
+        }
+        else -> throw java.io.IOException("bad terrain flag")
+    }
+
+    /**
+     * Read the v6 chunks flag byte and, if present, the chunks section → [ChunkSnapshot]. Returns null
+     * for the no-chunks byte (0). A bad flag value or truncation throws (caught by [read]'s outer try →
+     * null clip). Bound-checks chunkCount / sectionCount / paletteSize / dataLen so a corrupt file can't
+     * OOM the decoder. `dataLen` must be 4096 (palette ≤ 256) or 8192 (palette > 256); anything else is
+     * corrupt → null. Palette names are read as length-prefixed UTF-8 (cap 32767 bytes per name).
+     */
+    private fun readChunksFlag(d: DataInputStream): ChunkSnapshot? = when (d.readByte().toInt()) {
+        0 -> null
+        1 -> {
+            val chunkCount = d.readInt()
+            if (chunkCount < 0 || chunkCount > 4096) return null
+            val chunks = ArrayList<ChunkSnapshot.ChunkRec>(chunkCount)
+            for (i in 0 until chunkCount) {
+                val chunkX = d.readInt(); val chunkZ = d.readInt()
+                val sectionCount = d.readInt()
+                if (sectionCount < 0 || sectionCount > 64) return null
+                val sections = ArrayList<ChunkSnapshot.SectionRec>(sectionCount)
+                for (j in 0 until sectionCount) {
+                    val sectionY = d.readInt()
+                    val paletteSize = d.readShort().toInt()
+                    if (paletteSize < 0 || paletteSize > 4096) return null
+                    val palette = ArrayList<String>(paletteSize)
+                    for (k in 0 until paletteSize) {
+                        val nameLen = d.readShort().toInt()
+                        if (nameLen < 0 || nameLen > 32767) return null
+                        val bytes = ByteArray(nameLen)
+                        if (d.read(bytes) != nameLen) return null
+                        palette.add(String(bytes, Charsets.UTF_8))
+                    }
+                    val dataLen = d.readInt()
+                    // dataLen must match the palette width: 1 byte × 4096 (palette ≤ 256) or 2 bytes × 4096.
+                    val expected = if (paletteSize <= 256) 4096 else 8192
+                    if (dataLen != expected) return null
+                    val data = ByteArray(dataLen)
+                    if (d.read(data) != dataLen) return null
+                    sections.add(ChunkSnapshot.SectionRec(sectionY, palette, data))
+                }
+                chunks.add(ChunkSnapshot.ChunkRec(chunkX, chunkZ, sections))
+            }
+            ChunkSnapshot(chunks)
+        }
+        else -> throw java.io.IOException("bad chunks flag")
     }
 }

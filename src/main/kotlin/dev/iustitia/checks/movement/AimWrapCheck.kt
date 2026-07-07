@@ -4,6 +4,7 @@ import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.math.AimGeometry
+import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
 import kotlin.math.abs
@@ -30,7 +31,15 @@ class AimWrapCheck : Check() {
             val ctx = contextOf(tp.uuid) as AimWrapContext
             // shortest-path rotation this tick — boundary crossings give ~0, not ±358
             val wrappedDelta = AimGeometry.wrapDegrees(tp.yaw - tp.lastYaw)
-            if (abs(wrappedDelta) > cfg.threshold && abs(ctx.lastWrappedDelta) < 30.0) {
+            // Exemptions: a server teleport, a server-wide lag burst, or knockback can inject a
+            // >threshold wrapped-yaw delta out of a near-still prior tick. Exempt ticks still
+            // update lastWrappedDelta (below) so the first post-exempt tick compares against the
+            // immediately-prior tick, not a stale pre-teleport value.
+            val exempt = tick - tp.lastTeleportTick < 5 ||
+                tick - tp.hurtTick < 3 ||
+                tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            if (!exempt && abs(wrappedDelta) > cfg.threshold && abs(ctx.lastWrappedDelta) < 30.0) {
                 flag(tp, ctx, 1.0, "AimWrap", tick)
             }
             ctx.lastWrappedDelta = wrappedDelta.toDouble()
@@ -39,5 +48,12 @@ class AimWrapCheck : Check() {
 
     private class AimWrapContext : CheckContext() {
         var lastWrappedDelta: Double = 0.0
+    }
+
+    private companion object {
+        /** Window (ticks) after a server-wide freeze within which rotation snaps are exempt. */
+        private const val LAG_WINDOW = 8
+        /** Window (ticks) after a batched catch-up burst within which rotation snaps are exempt. */
+        private const val BURST_WINDOW = 3
     }
 }

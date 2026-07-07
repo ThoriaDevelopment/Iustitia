@@ -108,6 +108,56 @@
     "source": "src/main/kotlin/dev/iustitia/checks/combat/CriticalsCheck.kt"
   },
   {
+    "id": "maceSmash",
+    "class": "MaceSmashCheck",
+    "name": "MaceSmash",
+    "group": "Combat",
+    "definitive": true,
+    "what": "MaceKill fall-height fake — a mace-holder warps Y via position-only packets around an attack to inflate the mace's fall-distance smash damage. Visible as a |Δy| > 1.5 spike within ±2 ticks of the attack with no genuine fall lead-in (plan §7.1).",
+    "signature": "On AttackEvent snapshots pendingAttack + attackMaceHeld (mainHand is MaceItem) + attackPos. process defers to attack+2, then over a 6-entry Δy ring flags (level 1.5) when any tick in [attack-2, attack+2] has |Δy| > threshold (1.5) AND not a genuine fall (attack-2 & attack-1 both ≤ -0.5) AND not a bounce (upward spike preceded by a descent). Reads deltaY/prevDeltaY directly; NEVER reads lastTeleportTick (the >8b heuristic must not exempt it — §8.3).",
+    "fpGuards": [
+      "Vehicle/gliding/riptide/swimming exempt",
+      "1.8-era skip (ProtocolDetector.is1_8OrLess) — no mace item; held-mace check is the real 1.21+ gate",
+      "Genuine-fall exemption: attack-2 AND attack-1 both Δy ≤ -0.5 (sustained descent leading in) → real high-fall smash exempt",
+      "Bounce exemption: an upward spike preceded by a descent (slime/wind-charge landing) is legit",
+      "Standard lag gate (tick - lastServerLagTick ≤ 8 or lastLagBurstTick ≤ 3) — batched catch-up snaps mimic the signature",
+      "Deliberately NOT exempt on lastTeleportTick (>8b heuristic) — the Y warp IS the signal",
+      "Dedup: one flag per attack (lastFlaggedAttack)"
+    ],
+    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.05, "threshold": 1.5 },
+    "constants": [
+      { "k": "flag level", "v": "1.5" },
+      { "k": "window", "v": "attack ± 2 ticks (deferred eval at attack+2)" },
+      { "k": "Δy ring", "v": "6 entries" },
+      { "k": "genuine-fall lead-in", "v": "Δy ≤ -0.5 at attack-2 AND attack-1" },
+      { "k": "lag window", "v": "8 / 3 ticks" }
+    ],
+    "source": "src/main/kotlin/dev/iustitia/checks/combat/MaceSmashCheck.kt"
+  },
+  {
+    "id": "hitsWithoutSwing",
+    "class": "HitsWithoutSwingCheck",
+    "name": "HitsWithoutSwing",
+    "group": "Combat",
+    "definitive": false,
+    "what": "No-swing attack detector — Slinky Hit Select / Grim PacketOrderB. The cheat deals damage with no swing animation in the window (a disabler suppresses the swing packet, or hit-select attacks without the arm animation). Every vanilla melee attack carries a swing, so a no-swing hurt is a cheat OR an unseen attacker — a weak, noisy signal, so this is CORROBORATOR-tier (never initiates a tier alone).",
+    "signature": "Subscribes SwingSignal (per-attacker lastSwingTick) + HurtSignal. On a melee hurt (STATUS/ENTITY_DAMAGE/DAMAGE_TILT; VELOCITY excluded) it infers the attacker — the tracked player matching attackerEntityId when the channel provides one, else the nearest tracked player within 4 blocks — and fails open if none is that close (unseen attacker / environment). If no attacker swing within ±2 ticks, increments a per-attacker noSwingCount; flags (level 1.0) at >= threshold (3) no-swing hurts in 60 ticks, transition-gated one flag per episode.",
+    "fpGuards": [
+      "VELOCITY hurts excluded (knockback follow-up, not a melee)",
+      "Proximity-attacker fallback fails open when no tracked player is within melee range (unseen attacker / fall / fire)",
+      "Per-attacker episode transition gate: >= threshold no-swing hurts from the SAME inferred attacker in 60 ticks (one-off unseen-attacker or packet-ordering noise doesn't accumulate)",
+      "Swing window ±2 ticks absorbs packet-ordering edges"
+    ],
+    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.5, "threshold": 3.0 },
+    "constants": [
+      { "k": "swing window", "v": "±2 ticks" },
+      { "k": "melee range", "v": "4 blocks (16 sq)" },
+      { "k": "episode", "v": "60 ticks" },
+      { "k": "flag level", "v": "1.0 (corroborator)" }
+    ],
+    "source": "src/main/kotlin/dev/iustitia/checks/combat/HitsWithoutSwingCheck.kt"
+  },
+  {
     "id": "noKnockback",
     "class": "NoKnockbackCheck",
     "name": "NoKnockback",
@@ -222,14 +272,16 @@
     "class": "KillAuraCheck",
     "name": "KillAura",
     "group": "Combat",
-    "definitive": true,
-    "what": "Unified killaura / silent-aim detector ported from Rain-Anticheat's 1.8.9 KillauraCheck. Seven sub-components share one VL pool: heuristic(aim|constant|sync), pattern(snap), silent(snap|return|track), movement(fix|lock|sprint), consume. Silent-aim swaps yaw/pitch only in look packets so the head visibly snaps onto enemies while the cheater's screen never moves.",
-    "signature": "Subscribes to SwingSignal + AttackEvent, runs every tick. Windowed rotation heuristics over 10 non-zero rotations: heuristic(aim) if machineKnownMovement > 8, heuristic(constant) if constantRotations > 6, heuristic(sync) if robotizedAmount > 8; pattern(snap) on both-direction +-12deg streak. Burst machine detects yaw bursts (>=7deg step, <=7 ticks, sum >=20deg); silent(snap) when a burst settles inside a target hitbox with >20deg pre-error, on the 3rd qualifying hit at level 2.5. silent(track) when yaw stays inside a target hitbox bearing on >=0.85 of 24 fast-LOS-rotating ticks. movement(fix|lock|sprint) use body/head desync. consume flags attack while using a consumable >6 ticks within 33 of last eat.",
+    "definitive": false,
+    "what": "Unified killaura / silent-aim detector ported from Rain-Anticheat's 1.8.9 KillauraCheck. Ten sub-components share one VL pool: heuristic(aim|constant|sync|gcd), pattern(snap), silent(snap|return|track), movement(fix|lock|sprint), consume, drift. Silent-aim swaps yaw/pitch only in look packets so the head visibly snaps onto enemies while the cheater's screen never moves. Tier = CORROBORATOR (corroborates reach/criticals/etc., never initiates a tier alone).",
+    "signature": "Subscribes to SwingSignal + AttackEvent, runs every tick. Windowed rotation heuristics over 10 non-zero rotations: heuristic(aim) if machineKnownMovement > 8, heuristic(constant) if constantRotations > 6, heuristic(sync) if robotizedAmount > 8; pattern(snap) on both-direction +-12deg streak. Burst machine detects yaw bursts (>=7deg step, <=7 ticks, sum >=20deg); silent(snap) when a burst settles inside a target hitbox with >20deg pre-error, on the 3rd qualifying hit at level 2.5. silent(track) when yaw stays inside a target hitbox bearing on >=0.85 of 24 fast-LOS-rotating ticks. movement(fix|lock|sprint) use body/head desync. consume flags an attack while a consumable has been held >6 ticks (isUsingConsumable, shields/bows excluded). heuristic(gcd) (Axis A) flags a pitch-delta GCD < 131072 (1/128deg) under full-float-look + valid-sensitivity + not-low-sens + lag gate — the constant-rotation aimbot fingerprint. drift (Axis C) flags sign(Δyaw)==sign(bearing-error) > 0.70 over a 50-tick rolling window while in combat — the smooth-aim combat-ward drift that survives Movement Fix (portable to 1.8: sign survives byte-quantization, no fullFloatLook gate); transition-gated one-shot.",
     "fpGuards": [
       "Attacker-in-vehicle exempt (rotations/consume unreliable)",
       "Teleport/lag guard — large position step (>25) clears windows and resets burst machine",
       "Combat-gated (rotations outside 70 ticks of a swing ignored), session reset after 140 out of combat",
       "consume gated on isUsingConsumable (not bare usingItem) so shields/bows don't FP",
+      "heuristic(gcd) gated on fullFloatLook + sensitivity.valid + sens>=50 (low-sens exempt) + lag gate — pre-1.21.2 byte-quantization destroys the GCD signal so the gate fails open",
+      "drift skips on-target ticks (|error|<quantum — silent(track) owns those) and stationary-Δyaw ticks; lag gate skips catch-up snaps; transition-gated + hysteresis so a strong legit tracker doesn't re-fire spam",
       "Movement component requires flat ground, speed 0.15-0.45, not in hurt window, not on ice, chunk-unloaded fails negative",
       "Trails pruned (>80 entries -> remove tick - 200 stale)"
     ],
@@ -239,7 +291,10 @@
       { "k": "rotation window", "v": "10" },
       { "k": "quantum", "v": "1.40625deg" },
       { "k": "track window/ratio", "v": "24 / 0.85" },
-      { "k": "VL silent(snap)", "v": "2.5 (clears VL5 in ~2 hits)" }
+      { "k": "gcd threshold", "v": "<131072 (1/128deg), fullFloatLook+validSens" },
+      { "k": "drift window/ratio", "v": "50 ticks / 0.70 (>=15 samples)" },
+      { "k": "VL silent(snap)", "v": "2.5 (clears VL5 in ~2 hits)" },
+      { "k": "VL gcd / drift", "v": "1.5 each (corroborating)" }
     ],
     "source": "src/main/kotlin/dev/iustitia/checks/combat/KillAuraCheck.kt"
   },
@@ -249,19 +304,22 @@
     "name": "AutoBlock",
     "group": "Combat",
     "definitive": true,
-    "what": "AutoBlock — holds a block/shield up while continuously swinging at enemies. On 1.8 it's block-hit autoblock, on 1.21 shield-while-attacking. Ported from Rain's AutoBlockCheck. Vanilla can't swing and use an item simultaneously for more than an instant.",
-    "signature": "On SwingSignal records lastSwingTick. 'swinging' = tick - lastSwingTick < 6; combined with isBlocking, increments autoBlockTicks; flags at level 1.0 when autoBlockTicks exceeds threshold (+30 legacy bonus on 1.8, else 10).",
+    "what": "AutoBlock — the use-item-while-attacking family. Three sub-flags share one VL pool: AutoBlock (Rain port — shield/sword-block + swing overlap), AutoBlock(SwingUse) (Grim MultiActionsE fold — swing while eating/drinking; vanilla left-click interrupts consuming), and AutoBlock(AttackUse) (Grim MultiActionsA fold — an AttackEvent while isBlocking||isUsingConsumable; vanilla attacking interrupts using). On 1.8 the block path is block-hit autoblock, on 1.21 shield-while-attacking.",
+    "signature": "On SwingSignal records lastSwingTick; 'swinging' = tick - lastSwingTick < 6. AutoBlock: swinging && isBlocking -> autoBlockTicks; flag at level 1.0 when > threshold (+30 legacy bonus on 1.8). AutoBlock(SwingUse): swinging && isUsingConsumable -> useSwingTicks; flag at level 1.0 when > threshold. AutoBlock(AttackUse): on AttackEvent, if isBlocking||isUsingConsumable, flag at level 1.0 (one event is the cheat). Bows excluded (bow-draw is usingItem but not isUsingConsumable/isBlocking).",
     "fpGuards": [
       "Attacker-in-vehicle exempt",
       "lastSwingTick overflow guard (Int.MIN_VALUE -> not swinging)",
-      "Gated on isBlocking (UseAction.BLOCK), excluding bows (BOW), food (EAT), potions (DRINK)",
-      "On 1.8 sword-blocking is a normal PvP technique -> +30 tick bonus so legit block-hitters don't flag",
+      "Block path gated on isBlocking (UseAction.BLOCK), excluding bows (BOW), food (EAT), potions (DRINK)",
+      "SwingUse path gated on isUsingConsumable (excludes bows — same MC-152728 rationale as noSlow)",
+      "On 1.8 sword-blocking is a normal PvP technique -> +30 tick bonus so legit block-hitters don't flag (block path only)",
       "ProtocolDetector fails open to modern (looser 1.8 gate only loosens)"
     ],
     "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.5, "threshold": 10.0 },
     "constants": [
       { "k": "swing ticks", "v": "6" },
-      { "k": "1.8 bonus", "v": "+30.0" }
+      { "k": "1.8 bonus", "v": "+30.0 (block path)" },
+      { "k": "AttackUse level", "v": "1.0" },
+      { "k": "sub-flags", "v": "AutoBlock / SwingUse / AttackUse (one VL pool)" }
     ],
     "source": "src/main/kotlin/dev/iustitia/checks/combat/AutoBlockCheck.kt"
   },
@@ -364,12 +422,39 @@
     "source": "src/main/kotlin/dev/iustitia/checks/movement/FlyEnvelopeCheck.kt"
   },
   {
+    "id": "spider",
+    "class": "SpiderCheck",
+    "name": "Spider",
+    "group": "Movement",
+    "definitive": true,
+    "what": "Wall-climb detector — AvA Spider + NCM ConstantClimb (plan §4 #6). The cheat sticks to a wall and ascends it without a ladder/vine/scaffold. Two sub-flags share one VL pool.",
+    "signature": "Spider (AvA): Δy > 0.05 while airborne with a solid NON-climbable block beside the player (4 face-adjacent columns at feet+torso), accumulator > threshold (10) consecutive ticks — a jump arcs ~6 ascending ticks then falls so >10 is unambiguous. Spider(ConstantClimb) (NCM): last 8 ascending Δy samples all within 0.1..0.6 and a 0.08 spread (constant YSpeed; a decelerating jump arc spans ~0.15). Liquid at the feet → exempt; climbable blocks → exempt; the >0.1 floor excludes Levitation (~0.05/tick).",
+    "fpGuards": [
+      "Vehicle/gliding/riptide/swimming exempt",
+      "Liquid at feet → exempt (water/bubble-column ascent is legit)",
+      "Climbable blocks (ladder/vine/scaffolding) → nearSolidWall returns false (legit ladder climb exempt)",
+      "ConstantClimb Δy floor 0.1 excludes Levitation; ceiling 0.6 excludes a jump's first impulse",
+      "Teleport exempt (tick - lastTeleportTick < 10, resets)",
+      "Server-lag pause (8 / 3 windows)",
+      "Chunk-unloaded → nearSolidWall fail-opens to false (chunk-unloaded-never-FP)"
+    ],
+    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.5, "threshold": 10.0 },
+    "constants": [
+      { "k": "Spider accumulator", "v": "> threshold (10) ascending ticks" },
+      { "k": "SPIDER_MIN_DY", "v": "0.05" },
+      { "k": "ConstantClimb window", "v": "8 ticks" },
+      { "k": "CLIMB_MIN/MAX_DY", "v": "0.1 / 0.6" },
+      { "k": "CLIMB_BAND", "v": "0.08 (constant spread)" }
+    ],
+    "source": "src/main/kotlin/dev/iustitia/checks/movement/SpiderCheck.kt"
+  },
+  {
     "id": "noFallDamage",
     "class": "NoFallDamageCheck",
     "name": "NoFall",
     "group": "Movement",
-    "definitive": true,
-    "what": "NoFall detector — accumulates downward distance while airborne, flags when a player lands from a damaging fall (fallAccum > threshold 8.0) without a hurt signal. Also catches ground-spoof-over-air and Verus stair-step.",
+    "definitive": false,
+    "what": "NoFall detector — accumulates downward distance while airborne, flags when a player lands from a damaging fall (fallAccum > threshold 8.0) without a hurt signal. Also catches ground-spoof-over-air and Verus stair-step. Tier = NEUTRAL (was DEFINITIVE; demoted — KitPvP arena-drop / water / ladder / chunk-load glitches avoid fall damage legitly, so a lone NoFall alert must not mark a player suspect).",
     "signature": "Landed-no-hurt on airborne->grounded transition: wasAirborne && fallAccum > threshold && !soft && tick - lastHurtTick > 2; level = max(1, ceil((fallAccum-3)*2)). Spoof: onGroundPacket && fallAccum > threshold && !isSolidBelow(0.5). Stair: ~-2.0 then ~0 dy cycles >=3.",
     "fpGuards": [
       "Vehicle/gliding exempt",
@@ -500,6 +585,55 @@
     "source": "src/main/kotlin/dev/iustitia/checks/movement/BackwardSprintCheck.kt"
   },
   {
+    "id": "wallSprint",
+    "class": "WallSprintCheck",
+    "name": "WallSprint",
+    "group": "Movement",
+    "definitive": true,
+    "what": "WallSprint detector — Grim SprintE / OmniSprint wall-sprint (plan §4 #3). Vanilla cancels sprint the instant a player collides horizontally with a wall; the cheat forces the sprint metadata to stay set while pressed against a wall. backwardSprint covers the yaw case; this covers the wall case.",
+    "signature": "sprinting metadata set AND a solid block ahead along the facing yaw within 0.9 (isWallAhead, foot/torso/head bands) AND forward speed along facing <= 0.05 (pressed, not approaching) — a player running AT a wall to jump it still advances and is exempt. Flags at streak >= threshold (5).",
+    "fpGuards": [
+      "Vehicle/gliding/swimming exempt",
+      "Hurt exempt (tick - hurtTick <= 5, resets) — knockback pins a sprinter against a wall",
+      "Teleport exempt (tick - lastTeleportTick < 10, resets)",
+      "Forward-speed gate (<= 0.05) exempts the run-at-wall approach",
+      "Server-lag pause (8 / 3 windows)",
+      "Chunk-unloaded → isWallAhead fail-opens to false"
+    ],
+    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.5, "threshold": 5.0 },
+    "constants": [
+      { "k": "WALL_REACH", "v": "0.9" },
+      { "k": "FORWARD_MAX", "v": "0.05 b/t" },
+      { "k": "sustain", "v": ">= threshold (5) ticks" },
+      { "k": "HURT_EXEMPT_TICKS", "v": "5" }
+    ],
+    "source": "src/main/kotlin/dev/iustitia/checks/movement/WallSprintCheck.kt"
+  },
+  {
+    "id": "sprintHack",
+    "class": "SprintHackCheck",
+    "name": "SprintHack",
+    "group": "Movement",
+    "definitive": true,
+    "what": "SprintHack — three sprint-metadata-should-be-canceled sub-flags sharing one VL pool (Grim SprintG/B/D, plan §4 #4-5): Sprint(Water) feet-in-water + head-above + not-swimming; Sprint(Sneak) sprinting while sneaking; Sprint(Blind) sprinting while Blind. All three are mutually exclusive with sprint in vanilla.",
+    "signature": "Sprint(Water): isLiquidAt(feet) && !isLiquidAt(head@eyeHeight) && !swimming. Sprint(Sneak): tp.sneaking. Sprint(Blind): blindness tracked from EffectSignal (isBlind, extended in the mixin). Flags at streak >= threshold (3); label reflects the active sub-flag (Blind > Water > Sneak priority).",
+    "fpGuards": [
+      "Vehicle/gliding exempt",
+      "Hurt exempt (tick - hurtTick < 3, resets)",
+      "Teleport exempt (tick - lastTeleportTick < 10, resets)",
+      "Server-lag pause (8 / 3 windows)",
+      "Sprint(Water) chunk-unloaded → isLiquidAt fail-opens to false (no flag)",
+      "Sprint(Blind) fail-open: a player already Blind at join isn't re-sent the add (rare)"
+    ],
+    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.5, "threshold": 3.0 },
+    "constants": [
+      { "k": "sustain", "v": ">= threshold (3) ticks" },
+      { "k": "hurt window", "v": "3 ticks" },
+      { "k": "sub-flags", "v": "Water / Sneak / Blind (one VL pool)" }
+    ],
+    "source": "src/main/kotlin/dev/iustitia/checks/movement/SprintHackCheck.kt"
+  },
+  {
     "id": "waterWalk",
     "class": "WaterWalkCheck",
     "name": "WaterWalk",
@@ -526,19 +660,20 @@
     "name": "ElytraSpeed",
     "group": "Movement",
     "definitive": false,
-    "what": "ElytraFly detector — vanilla elytra caps ~1.5 b/t (30 bps); firework boosts briefly 40-50 bps. Flags when gliding is active for >=3 sustained ticks of either blatant (bps > 40) or a pitch-vs-speed anomaly (bps > 34 while |pitch| < 8deg).",
-    "signature": "bps = hypot(...) * 20.0; blatant = bps > threshold (40); levelFast = bps > threshold*0.85 && |pitch| < 8.0; flag when streak >= 3. The 3-tick sustain absorbs firework-boost spikes; steep-pitch legit glides never trip the anomaly.",
+    "what": "ElytraFly detector — vanilla elytra caps ~1.5 b/t (30 bps); firework boosts briefly 40-50 bps. Flags when gliding is active for >=3 sustained ticks of blatant (bps > 40), a pitch-vs-speed anomaly (bps > 34 while |pitch| < 8deg), OR the glidingSprint sub-flag (sprint metadata held while gliding — Grim SprintF, plan §7.1 fold; vanilla cancels sprint on elytra deploy).",
+    "signature": "bps = hypot(...) * 20.0; blatant = bps > threshold (40); levelFast = bps > threshold*0.85 && |pitch| < 8.0; sprintGliding = tp.sprinting; flag (label ElytraSpeed(Sprint) when sprint, else ElytraSpeed) when streak >= 3. The 3-tick sustain absorbs firework-boost spikes; steep-pitch legit glides never trip the anomaly.",
     "fpGuards": [
       "Vehicle exempt",
       "Not gliding resets",
       "Teleport exempt (tick - lastTeleportTick < 5, resets)",
-      "3-tick sustain gate absorbs firework-boost spikes"
+      "3-tick sustain gate absorbs firework-boost spikes and sprint metadata-lag edges"
     ],
     "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 1.0, "threshold": 40.0 },
     "constants": [
       { "k": "ANOMALY_FACTOR", "v": "0.85" },
       { "k": "LEVEL_PITCH", "v": "8.0deg" },
-      { "k": "streak", "v": "3 ticks" }
+      { "k": "streak", "v": "3 ticks" },
+      { "k": "sub-flags", "v": "ElytraSpeed / ElytraSpeed(Sprint) (one VL pool)" }
     ],
     "source": "src/main/kotlin/dev/iustitia/checks/movement/ElytraSpeedCheck.kt"
   },
@@ -692,28 +827,5 @@
       { "k": "LAG_WINDOW", "v": "8" }
     ],
     "source": "src/main/kotlin/dev/iustitia/checks/movement/PacketGapCheck.kt"
-  },
-  {
-    "id": "timerRate",
-    "class": "TimerRateCheck",
-    "name": "Timer",
-    "group": "Packet",
-    "definitive": true,
-    "what": "Timer / Boost / TickBase detector (delta-based surrogate) — the cheat accelerates the local tick rate, observable as horizontal bps far above the sprint-jump envelope sustained for several ticks. Conservative surrogate flagging the blatant sustained-overspeed tier (>14 bps) distinct from SpeedEnvelope's cap.",
-    "signature": "bps = hypot(delta.x, delta.z) * 20.0; flags when bps > threshold (14) for streak >= 3.",
-    "fpGuards": [
-      "Vehicle/gliding/riptide/swimming exempt",
-      "Teleport exempt (tick - lastTeleportTick < 10)",
-      "Hurt exempt (tick - hurtTick < 5)",
-      "Velocity exempt (tick - velocityTick < 40)",
-      "Server-lag exempt (LAG_WINDOW=8 / BURST_WINDOW=3, resets streak and skips)"
-    ],
-    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.5, "threshold": 14.0 },
-    "constants": [
-      { "k": "streak", "v": "3 ticks" },
-      { "k": "LAG_WINDOW", "v": "8" },
-      { "k": "BURST_WINDOW", "v": "3" }
-    ],
-    "source": "src/main/kotlin/dev/iustitia/checks/movement/TimerRateCheck.kt"
   }
 ]

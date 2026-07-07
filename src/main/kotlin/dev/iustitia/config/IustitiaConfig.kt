@@ -80,8 +80,6 @@ data class IustitiaConfig(
      *  prefix flushed alerts with `[lag]` and, under the quiet preset, drop the non-red ones so a
      *  noisy read doesn't spam chat. Display-only. */
     var lagSuppressAlerts: Boolean = true,
-    /** Append the numeric confidence score `[nn]` to the nametag tier prefix. */
-    var nametagBadge: Boolean = true,
     /** Color-pulse the nametag tier prefix for ~3s after a fresh yellow/red flag. Pure text-color
      *  modulation (no render API) — the spark particle is a deferred Phase B render piece. */
     var nametagBurstPulse: Boolean = true,
@@ -134,10 +132,10 @@ data class IustitiaConfig(
      *  up. Display-only. */
     var hoverTooltip: Boolean = true,
 
-    /** Tab-list badge: prepend the tier glyph (+ the confidence score when nametagBadge is on) to each
-     *  OTHER player's row in the Tab (player list) HUD, so the tier is visible without looking at
-     *  them in-world. Follows the same nametag settings (nametagPrefixes / nametagBadge /
-     *  nametagGreenEnabled). Read-only mixin on the tab name; never touches your own row. */
+    /** Tab-list badge: prepend the tier glyph to each OTHER player's row in the Tab (player list)
+     *  HUD, so the tier is visible without looking at them in-world. Follows the same nametag
+     *  settings (nametagPrefixes / nametagGreenEnabled). Read-only mixin on the tab name; never
+     *  touches your own row. */
     var tabListBadge: Boolean = true,
 
     // --- Phase 2 instant-replay / sonar / clip ---
@@ -160,6 +158,38 @@ data class IustitiaConfig(
      *  runtime-only-verifiable (see [dev.iustitia.render.ReplayRenderer]). The box outline remains the
      *  fail-open fallback per ghost, so a render error never blanks a replay. Display-only — adds NO detection. */
     var replayPlayerModels: Boolean = true,
+    /** Relocate a `/ius playclip` scene to YOUR current position so the ghosts (and the bundled chunk
+     *  world) render around you instead of at the recorded absolute coords — which would float in air /
+     *  sit in the ground / clip walls when you play a clip back somewhere else. The focus player's
+     *  recorded start maps to where you stand. ON by default; flip off to render a clip where it was
+     *  actually recorded. **Applies to `/ius playclip` only** — `/ius replay` always renders ghosts at
+     *  their exact recorded coordinates (it's instant, same server/dimension — no relocation needed).
+     *  Display-only. */
+    var replayRelocate: Boolean = true,
+    /** Bundle the loaded terrain around the action into a `.iusclip` when `/ius clip` runs, so
+     *  `/ius playclip` can render the map (relocated to you) alongside the ghosts — a clip recorded on
+     *  server A is then watchable in full on server B. The capture is bounded to the action bbox + a
+     *  margin (the client only has loaded chunks in render distance, not the whole server map) and is
+     *  volume-capped. Flip off to save clips without terrain (smaller file, ghosts-only playback). */
+    var clipTerrain: Boolean = true,
+    /** Capture every **loaded chunk** (full 16×16 columns, all Y sections — includes underground) around
+     *  the player into a `.iusclip` when `/ius clip` runs, so `/ius playclip` can render the clip's world
+     *  as **solid, textured blocks** (the real map, relocated to you) and you can free-spectate anywhere
+     *  — including underground — like ReplayMod. The live world is hidden during playback and restored on
+     *  `/ius playclip off`. The capture is one-shot at save time (only the chunks loaded then are kept;
+     *  a chunk that unloaded earlier in the window isn't captured) and bounded by [clipChunkRadius] +
+     *  a section budget. Flip off to save clips without the chunk world (the v5 wireframe terrain / ghosts
+     *  path). On by default. */
+    var clipChunkWorld: Boolean = true,
+    /** Capture radius in chunks for [clipChunkWorld] (a `clipChunkRadius`-chunk square centred on the
+     *  player; 8 → 17×17 = 289 chunks). Larger = more of the map captured + a bigger `.iusclip` file +
+     *  a heavier bake at playclip start. Display/UX only — the radius is clamped 1..32 at capture. */
+    var clipChunkRadius: Int = 8,
+    /** Render distance (in chunks) for the chunk world during `/ius playclip` — only chunks within this
+     *  radius of the camera are drawn each frame, bounding per-frame cost (the captured area can be much
+     *  larger via [clipChunkRadius]; this is how much of it you actually render at once). Default 6,
+     *  clamped 4..12 at render. Display/UX only. */
+    var clipChunkRenderDistance: Int = 6,
     /** Sonar alerting: on a flushed alert batch, play a DIRECTIONAL note positioned at the offender's
      *  last-known world position (pan = direction, pitch = distance) so you can keep fighting and
      *  listen for cheats. Additive to chat alerts; gated by the same mute/preset rules. */
@@ -172,12 +202,12 @@ data class IustitiaConfig(
     var reach: CheckConfig = CheckConfig(true, 10.0, 0.25, 3.0),
     var multiTarget: CheckConfig = CheckConfig(true, 2.0, 1.0, 2.0),
     var clickStatistics: CheckConfig = CheckConfig(true, 5.0, 0.05, 20.0),
-    var throughWalls: CheckConfig = CheckConfig(true, 8.0, 0.5, 1.0),
+    var throughWalls: CheckConfig = CheckConfig(true, 8.0, 0.5, 1.0), // threshold reserved — flag level is fixed 1.0; the 3.0 in Evidence is the body-point count, not a tunable scalar. Will be consumed by the pending NCM match-rate improvement.
     var criticals: CheckConfig = CheckConfig(true, 5.0, 0.1, 0.05),
     var noKnockback: CheckConfig = CheckConfig(true, 5.0, 1.0, 0.61),
-    var keepSprint: CheckConfig = CheckConfig(true, 5.0, 0.5, 0.5),
+    var keepSprint: CheckConfig = CheckConfig(true, 5.0, 0.5, 0.8), // threshold = retained-speed ratio flagging point (was hardcoded 0.8; now wired)
     var wTap: CheckConfig = CheckConfig(true, 5.0, 0.5, 2.0),
-    var jumpOnHurt: CheckConfig = CheckConfig(true, 5.0, 0.2, 0.4),
+    var jumpOnHurt: CheckConfig = CheckConfig(true, 5.0, 0.2, 0.3), // threshold = min Δy within ±1 tick of a hit (was hardcoded 0.3; now wired)
     var backtrack: CheckConfig = CheckConfig(true, 10.0, 0.25, 3.0),
     /** Rain-Anticheat killaura/silent-aim suite (7 sub-components, one VL pool). threshold unused.
      *  decay 0.10 (was 0.05): the 0.05 break-even (~1 flag/sec) was low enough that normal PvP
@@ -193,16 +223,32 @@ data class IustitiaConfig(
      *  reaching a victim's hitbox) required in the rolling window, gated by a ≥0.75 ratio over
      *  ≥5 hits. Default 4 = "really blatant" (4 of 5 hits are sub-reaction). Raise to tune stricter. */
     var triggerbot: CheckConfig = CheckConfig(true, 5.0, 0.05, 4.0),
+    /** MaceSmash (MaceKill family) — |Δy| floor around a mace-holder's attack (plan §7.1).
+     *  decay 0.05 (slow): a per-attack burst signal — a blatant every-hit MaceKill climbs to
+     *  alert, a single residual rubberband never does. threshold 1.5 = the warp-spike floor;
+     *  the check deliberately ignores lastTeleportTick so the >8b heuristic doesn't exempt it. */
+    var maceSmash: CheckConfig = CheckConfig(true, 5.0, 0.05, 1.5),
+    /** HitsWithoutSwing (Slinky Hit Select / Grim PacketOrderB) — min no-swing hurts attributed
+     *  to one inferred attacker in an episode to flag. CORROBORATOR-tier weak signal (some
+     *  disablers legit skip swing): decay 0.5, low per-flag level, transition-gated. */
+    var hitsWithoutSwing: CheckConfig = CheckConfig(true, 5.0, 0.5, 3.0),
 
     // --- movement ---
     var speedEnvelope: CheckConfig = CheckConfig(true, 5.0, 1.0, 10.0),
     var flyEnvelope: CheckConfig = CheckConfig(true, 5.0, 0.5, 0.1),
+    /** Spider (AvA wall-climb) — consecutive ascending-ticks against a non-climbable wall to
+     *  flag the Spider sub-flag (ConstantClimb uses fixed bands). decay 0.5. Tuned in step 14. */
+    var spider: CheckConfig = CheckConfig(true, 5.0, 0.5, 10.0),
     var noFallDamage: CheckConfig = CheckConfig(true, 4.0, 1.0, 8.0),
     var stepHeight: CheckConfig = CheckConfig(true, 5.0, 0.5, 0.6),
     var teleport: CheckConfig = CheckConfig(true, 5.0, 0.5, 1.5),
     var longJump: CheckConfig = CheckConfig(true, 5.0, 0.5, 0.6),
     var noSlow: CheckConfig = CheckConfig(true, 5.0, 0.5, 4.0),
     var backwardSprint: CheckConfig = CheckConfig(true, 5.0, 0.5, 1.0),
+    /** WallSprint (Grim SprintE) — consecutive sprint-into-wall ticks to flag. decay 0.5. */
+    var wallSprint: CheckConfig = CheckConfig(true, 5.0, 0.5, 5.0),
+    /** SprintHack (Grim SprintG/B/D) — sustained sprint-while-water/sneak/blind ticks to flag. decay 0.5. */
+    var sprintHack: CheckConfig = CheckConfig(true, 5.0, 0.5, 3.0),
     var waterWalk: CheckConfig = CheckConfig(true, 5.0, 0.5, 1.0),
     var elytraSpeed: CheckConfig = CheckConfig(true, 5.0, 1.0, 40.0),
 
@@ -211,15 +257,17 @@ data class IustitiaConfig(
     var rotationSnapBack: CheckConfig = CheckConfig(true, 5.0, 0.5, 30.0),
     var phaseClip: CheckConfig = CheckConfig(true, 5.0, 0.5, 1.0),
     var packetGap: CheckConfig = CheckConfig(true, 5.0, 0.5, 2.0),
-    var timerRate: CheckConfig = CheckConfig(true, 6.5, 0.5, 14.0),
     var aimWrap: CheckConfig = CheckConfig(true, 5.0, 0.5, 165.0),
     var pitchBound: CheckConfig = CheckConfig(true, 5.0, 0.0, 90.0),
     var scaffoldRotation: CheckConfig = CheckConfig(true, 5.0, 0.05, 78.0),
 ) {
     companion object {
         /** Current calibration schema version. Bump on each recalibration round so
-         *  [ConfigManager] resets stale persisted calibration fields to these defaults. */
-        const val CONFIG_VERSION = 3
+         *  [ConfigManager] resets stale persisted calibration fields to these defaults.
+         *  v4: wired the previously-dead keepSprint (0.5→0.8) and jumpOnHurt (0.4→0.3)
+         *  threshold sliders to match the values the checks always hardcoded, so existing
+         *  persisted configs don't shift detection stricter/looser when the slider goes live. */
+        const val CONFIG_VERSION = 4
     }
 
     data class CheckConfig(
@@ -245,21 +293,25 @@ data class IustitiaConfig(
         "autoBlock" to autoBlock,
         "hitFlick" to hitFlick,
         "triggerbot" to triggerbot,
+        "maceSmash" to maceSmash,
+        "hitsWithoutSwing" to hitsWithoutSwing,
         "speedEnvelope" to speedEnvelope,
         "flyEnvelope" to flyEnvelope,
+        "spider" to spider,
         "noFallDamage" to noFallDamage,
         "stepHeight" to stepHeight,
         "teleport" to teleport,
         "longJump" to longJump,
         "noSlow" to noSlow,
         "backwardSprint" to backwardSprint,
+        "wallSprint" to wallSprint,
+        "sprintHack" to sprintHack,
         "waterWalk" to waterWalk,
         "elytraSpeed" to elytraSpeed,
         "rotationTracking" to rotationTracking,
         "rotationSnapBack" to rotationSnapBack,
         "phaseClip" to phaseClip,
         "packetGap" to packetGap,
-        "timerRate" to timerRate,
         "aimWrap" to aimWrap,
         "pitchBound" to pitchBound,
         "scaffoldRotation" to scaffoldRotation,
@@ -281,24 +333,37 @@ data class IustitiaConfig(
         "autoBlock" -> autoBlock
         "hitFlick" -> hitFlick
         "triggerbot" -> triggerbot
+        "maceSmash" -> maceSmash
+        "hitsWithoutSwing" -> hitsWithoutSwing
         "speedEnvelope" -> speedEnvelope
         "flyEnvelope" -> flyEnvelope
+        "spider" -> spider
         "noFallDamage" -> noFallDamage
         "stepHeight" -> stepHeight
         "teleport" -> teleport
         "longJump" -> longJump
         "noSlow" -> noSlow
         "backwardSprint" -> backwardSprint
+        "wallSprint" -> wallSprint
+        "sprintHack" -> sprintHack
         "waterWalk" -> waterWalk
         "elytraSpeed" -> elytraSpeed
         "rotationTracking" -> rotationTracking
         "rotationSnapBack" -> rotationSnapBack
         "phaseClip" -> phaseClip
         "packetGap" -> packetGap
-        "timerRate" -> timerRate
         "aimWrap" -> aimWrap
         "pitchBound" -> pitchBound
         "scaffoldRotation" -> scaffoldRotation
-        else -> CheckConfig()
+        else -> {
+            // Unknown check id — a stale persisted config key (e.g. timerRate after upgrade) or a
+            // check registered without a slice() branch. [Iustitia.verifyCheckRegistry] logs the
+            // drift at startup; until then return a SAFE default: disabled + max setback/threshold
+            // so the check can't fire (most movement checks flag on `value > threshold`, so
+            // MAX_VALUE means never — a `<`-comparison orphan like NoKnockback is the known gap the
+            // self-check catches instead). NB: checks do NOT gate on `enabled`, so the threshold
+            // is the real guard, not the enabled flag.
+            CheckConfig(enabled = false, setbackVL = Double.MAX_VALUE, decay = 1.0, threshold = Double.MAX_VALUE)
+        }
     }
 }

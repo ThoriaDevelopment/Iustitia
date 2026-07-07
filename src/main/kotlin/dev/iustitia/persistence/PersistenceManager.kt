@@ -142,6 +142,11 @@ object PersistenceManager {
         if (!Files.exists(p)) return
         val root = JsonParser.parseString(Files.readString(p)).asJsonObject
         val players = root.getAsJsonArray("players") ?: return
+        // Ids of checks still registered in this build — the migration filter for mergePersisted
+        // (drops persisted entries for removed checks, e.g. timerRate). ConfigManager.load() runs
+        // before loadOnStartup, so this is populated; an empty set (read failure) just disables
+        // the filter and keeps the old keep-everything behaviour.
+        val validCheckIds = try { ConfigManager.config.checks().map { it.first }.toSet() } catch (_: Throwable) { emptySet() }
         players.forEach { e ->
             try {
                 val o = e.asJsonObject
@@ -159,7 +164,7 @@ object PersistenceManager {
                 o.getAsJsonArray("flags")?.forEach { f ->
                     flags.add(readFlag(f.asJsonObject))
                 }
-                FlagHistory.mergePersisted(uuid, name, alertCount, alerted, lastMs, fc, mv, flags)
+                FlagHistory.mergePersisted(uuid, name, alertCount, alerted, lastMs, fc, mv, flags, validCheckIds)
             } catch (_: Throwable) {}
         }
     }

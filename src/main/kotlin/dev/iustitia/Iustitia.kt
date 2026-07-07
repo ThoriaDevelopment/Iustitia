@@ -49,6 +49,32 @@ object Iustitia {
 
     val allChecks: List<Check> get() = checks
 
+    private val logger = org.slf4j.LoggerFactory.getLogger("Iustitia")
+
+    /** Self-check: registered check ids == config slice ids. Catches a forgotten [dev.iustitia.config.IustitiaConfig.slice]
+     *  branch (which would otherwise fall to slice()'s silent safe-default) or an orphan config slice
+     *  (a stale persisted key, or a slice() branch whose check was never registered). Logs only; runs
+     *  once at startup after every register() in [IustitiaClientMod]. Fail-open. */
+    fun verifyCheckRegistry() {
+        try {
+            val registered = allChecks.map { it.id }.toSet()
+            val sliced = try {
+                dev.iustitia.config.ConfigManager.config.checks().map { it.first }.toSet()
+            } catch (_: Throwable) { emptySet() }
+            val missingSlice = registered - sliced
+            val orphanSlice = sliced - registered
+            if (missingSlice.isNotEmpty()) {
+                logger.warn("[Iustitia] checks registered without a config slice() branch: ${missingSlice.sorted()} — slice() returns the safe default (disabled + max threshold) for these")
+            }
+            if (orphanSlice.isNotEmpty()) {
+                logger.warn("[Iustitia] config slice() ids with no registered check: ${orphanSlice.sorted()} — orphan slices (stale config key, or a check that wasn't registered)")
+            }
+            if (missingSlice.isEmpty() && orphanSlice.isEmpty()) {
+                logger.info("[Iustitia] check registry self-check OK: ${registered.size} checks, ${sliced.size} slices")
+            }
+        } catch (_: Throwable) {}
+    }
+
     fun init() {
         ConfigManager.load()
         // Load the roaming persistence store (notes + tier/flag history) when the toggle is on.
@@ -99,6 +125,15 @@ object Iustitia {
                 val done = dev.iustitia.replay.ReplayState.tick()
                 if (done != null) chat(client, "§8[§diustitia§8] §7replay §c$done§7 — live view restored.")
             } catch (_: Throwable) {}
+
+            // FREECAM free-spectate (v1.2.0 pure camera-override): advance the freecam pose
+            // primitives (fcX/fcY/fcZ/fcYaw/fcPitch) one client tick from the held vanilla
+            // KeyBindings — camera-relative WASD, sprint×1.2, noclip (no collision/gravity). The
+            // player's own walking is suppressed by ClientPlayerEntityMixin, and mouse-look is
+            // redirected onto the pose by FreecamEntityMixin → ReplayState.applyFreecamLook. The
+            // camera itself is written each frame by CameraMixin's FREECAM branch. Read-only input
+            // + fail-open. See [dev.iustitia.replay.ReplayState.tickFreecam].
+            try { dev.iustitia.replay.ReplayState.tickFreecam() } catch (_: Throwable) {}
 
             // verbose heartbeat: confirms the tracker is polling and how many players are
             // observed, plus the per-interval swing/hurt/attack/flag counts. Console-only.

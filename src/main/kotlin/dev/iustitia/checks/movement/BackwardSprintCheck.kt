@@ -4,6 +4,7 @@ import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.math.Vectors
+import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
 import kotlin.math.hypot
@@ -44,6 +45,12 @@ class BackwardSprintCheck : Check() {
             // KB exemption: knockback pushes a sprinting player backward while their yaw faces
             // the attacker — vanilla mechanic, not OmniSprint. Skip for a few ticks after a hit.
             if (tick - tp.hurtTick <= HURT_EXEMPT_TICKS) { ctx.streak = 0; return }
+            // Server-lag exemption: a server-wide hitch / catch-up burst injects a horizontal
+            // impulse that can push a sprinting player backward-of-facing for a few ticks.
+            // Pause the streak (don't reset — lag doesn't clear a cheater's sprint state).
+            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            ) return
             val horiz = hypot(tp.delta.x, tp.delta.z)
             if (horiz * 20.0 < cfg.threshold) { ctx.streak = 0; return }
             // look direction (horizontal); movement dot look < 0 ⇒ moving backward
@@ -67,5 +74,9 @@ class BackwardSprintCheck : Check() {
         private const val HURT_EXEMPT_TICKS = 5
         /** Consecutive backward-sprint ticks required to flag (blatant-only; vanilla can't do 1). */
         private const val BLATANT_SUSTAIN = 6
+        /** Window (ticks) after a server-wide freeze within which backward-sprint samples are skipped. */
+        private const val LAG_WINDOW = 8
+        /** Window (ticks) after a batched catch-up burst within which backward-sprint samples are skipped. */
+        private const val BURST_WINDOW = 3
     }
 }

@@ -5,9 +5,11 @@ import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.event.AttackEvent
+import dev.iustitia.history.Evidence
 import dev.iustitia.math.AABB
 import dev.iustitia.math.HitboxSizes
 import dev.iustitia.tracking.EntityTrackerManager
+import dev.iustitia.tracking.LagCombatCorrelator
 import java.util.UUID
 import kotlin.math.hypot
 import kotlin.math.sqrt
@@ -69,7 +71,21 @@ class BacktrackCheck : Check() {
                 val oldBox = AABB.around(p.x, p.y, p.z, vh.width, vh.height).expand(0.0005)
                 val oldDist = sqrt(oldBox.closestPointSqDistance(eye.x, eye.y, eye.z))
                 if (oldDist <= reach + margin) {
-                    flag(attacker, contextOf(attacker.uuid), 1.0, "Backtrack", ev.tick)
+                    val ctx = contextOf(attacker.uuid)
+                    flag(attacker, ctx, 1.0, "Backtrack", ev.tick)
+                    // Axis B amplifier (plan §2.2/§6): the attacker's position stream shows a
+                    // self-induced freeze-burst around the stale-pos hit. The victim-freeze gate
+                    // above confirms the victim was held; this confirms the attacker froze to
+                    // exploit it. Distinct label, shares `backtrack`'s VL pool (no new check id).
+                    try {
+                        val lag = LagCombatCorrelator.combatCorrelatedLag(attacker.uuid, ev.tick, LAG_CORR_WINDOW)
+                        if (lag >= MIN_LAG_FREEZE) {
+                            flag(attacker, ctx, VL_LAG_CORR, "Backtrack(LagCorr)", ev.tick, Evidence(
+                                subLabel = "lag-correlated", measurement = lag.toDouble(),
+                                threshold = MIN_LAG_FREEZE.toDouble(), pos = eye, victim = victim.uuid,
+                                extra = "attacker self-freeze around stale-pos hit"))
+                        }
+                    } catch (_: Throwable) {}
                     return
                 }
             }
@@ -82,5 +98,13 @@ class BacktrackCheck : Check() {
         /** Max horizontal Δpos (blocks) between two consecutive ring samples still counted as
          *  "static". A ≥3-sample run under this is a real packet-hold freeze (Backtrack). */
         const val FREEZE_MOVE = 0.05
+        // -- Lag-correlation amplifier (Axis B, plan §3/§8 step 6) --
+        /** Window (ticks) around the attack within which an attacker self-freeze corroborates the
+         *  stale-pos hit. Tuned in step 14. */
+        const val LAG_CORR_WINDOW = 8
+        /** Min local-freeze ticks (coincident with combat) to amplify. */
+        const val MIN_LAG_FREEZE = 2
+        /** Amplifier sub-flag level — small, backtrack is a low-VL corroborator. Tuned in step 14. */
+        const val VL_LAG_CORR = 1.0
     }
 }

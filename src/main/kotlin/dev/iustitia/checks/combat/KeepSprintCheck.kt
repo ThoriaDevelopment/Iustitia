@@ -49,8 +49,8 @@ class KeepSprintCheck : Check() {
             if (tick - tp.hurtTick < 2) return
             val speed = hypot(tp.delta.x, tp.delta.z)
             val ratio = if (ctx.preAttackSpeed > 0.0) speed / ctx.preAttackSpeed else 0.0
-            // vanilla keeps ~0.6 after a hit; KeepSprint keeps >0.8 and sprint stays on
-            if (tp.sprinting && ratio > 0.8) {
+            // vanilla keeps ~0.6 after a hit; KeepSprint keeps >threshold (default 0.8) and sprint stays on
+            if (tp.sprinting && ratio > cfg.threshold) {
                 flag(tp, ctx, 1.0, "KeepSprint", tick)
             }
         } catch (_: Throwable) {}

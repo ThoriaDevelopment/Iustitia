@@ -3,6 +3,7 @@ package dev.iustitia.checks.movement
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
+import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
 import net.minecraft.client.MinecraftClient
@@ -36,6 +37,11 @@ class WaterWalkCheck : Check() {
         try {
             if (tp.inVehicle || tp.swimming || tp.gliding) return
             if (tick - tp.lastTeleportTick < 5) return
+            // Server-lag exemption: a server-wide hitch / catch-up burst injects a horizontal
+            // Δ (and a Δy jitter) that would trip the surface-walk signature. Skip the sample.
+            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            ) return
             val horiz = hypot(tp.delta.x, tp.delta.z) * 20.0
             val ctx = contextOf(tp.uuid) as WaterWalkContext
             if (horiz < cfg.threshold || abs(tp.deltaY) > 0.1) { ctx.streak = 0; return }
@@ -64,5 +70,12 @@ class WaterWalkCheck : Check() {
 
     private class WaterWalkContext : CheckContext() {
         var streak: Int = 0
+    }
+
+    private companion object {
+        /** Window (ticks) after a server-wide freeze within which water-walk samples are skipped. */
+        private const val LAG_WINDOW = 8
+        /** Window (ticks) after a batched catch-up burst within which water-walk samples are skipped. */
+        private const val BURST_WINDOW = 3
     }
 }

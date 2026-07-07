@@ -7,13 +7,13 @@
 
   const lines = [
     { p: "> ", t: "iustitia --status", c: "" },
-    { p: "",   t: "32 checks loaded across 4 groups", c: "ok" },
+    { p: "",   t: "31 checks loaded across 4 groups", c: "ok" },
     { p: "",   t: "protocol: 1.21.11 + 1.8.9 combat ready", c: "ok" },
     { p: "",   t: "8 keybinds · transcript · watch · selfie", c: "dim" },
     { p: "",   t: "tracking 14 players on arch.mc", c: "dim" },
     { p: "",   t: "nametag tiers: 3 green, 1 yellow, 1 red", c: "dim" },
     { p: "> ", t: "flag reach thoria  dist=4.2  vl=5.0", c: "flag" },
-    { p: "",   t: "  -> confidence 87 · red [X 87] applied", c: "warn" },
+    { p: "",   t: "  -> confidence 87 · red [X] applied", c: "warn" },
     { p: "",   t: "0 outgoing packets sent. 0 telemetry.", c: "ok" },
     { p: "> ", t: "_", c: "prompt" }
   ];

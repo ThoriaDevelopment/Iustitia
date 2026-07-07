@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AutoBlock &mdash; Iustitia checks</title>
-  <meta name="description" content="AutoBlock — holds a block/shield up while continuously swinging at enemies. On 1.8 it&#x27;s block-hit autoblock, on 1.21 shield-while-attacking. Ported from Rain&#x27;s AutoBlockCheck. Vanilla can&#x27;t swing and use an item simultaneously for more than an instant.">
+  <meta name="description" content="AutoBlock — the use-item-while-attacking family. Three sub-flags share one VL pool: AutoBlock (Rain port — shield/sword-block + swing overlap), AutoBlock(SwingUse) (Grim MultiActionsE fold — swing while eating/drinking; vanilla left-click interrupts consuming), and AutoBlock(AttackUse) (Grim MultiActionsA fold — an AttackEvent while isBlocking||isUsingConsumable; vanilla attacking interrupts using). On 1.8 the block path is block-hit autoblock, on 1.21 shield-while-attacking.">
   <link rel="stylesheet" href="../assets/iustitia.css">
 </head>
 <body>
@@ -25,30 +25,35 @@
   <div class="container docs-layout">
     <aside class="docs-side">
       <a href="index.html" style="display:block;margin-bottom:14px;color:var(--accent);font-size:13px;font-weight:600">&larr; All checks</a>
-      <h4>⚔ Combat <span style="color:var(--text-faint);font-weight:400">(14)</span></h4>
+      <h4>⚔ Combat <span style="color:var(--text-faint);font-weight:400">(16)</span></h4>
       <a href="reach.html">Reach<span class="badge-t">●</span></a>
       <a href="multiTarget.html">MultiTarget<span class="badge-t">●</span></a>
       <a href="clickStatistics.html">Autoclicker<span class="badge-t">○</span></a>
       <a href="throughWalls.html">ThroughWalls<span class="badge-t">●</span></a>
       <a href="criticals.html">Criticals<span class="badge-t">●</span></a>
+      <a href="maceSmash.html">MaceSmash<span class="badge-t">●</span></a>
+      <a href="hitsWithoutSwing.html">HitsWithoutSwing<span class="badge-t">○</span></a>
       <a href="noKnockback.html">NoKnockback<span class="badge-t">○</span></a>
       <a href="keepSprint.html">KeepSprint<span class="badge-t">○</span></a>
       <a href="wTap.html">WTap<span class="badge-t">○</span></a>
       <a href="jumpOnHurt.html">JumpReset<span class="badge-t">○</span></a>
       <a href="backtrack.html">Backtrack<span class="badge-t">○</span></a>
-      <a href="killAura.html">KillAura<span class="badge-t">●</span></a>
+      <a href="killAura.html">KillAura<span class="badge-t">○</span></a>
       <a href="autoBlock.html" class="cur">AutoBlock<span class="badge-t">●</span></a>
       <a href="hitFlick.html">HitFlick<span class="badge-t">●</span></a>
       <a href="triggerbot.html">Triggerbot<span class="badge-t">○</span></a>
-      <h4>↗ Movement <span style="color:var(--text-faint);font-weight:400">(11)</span></h4>
+      <h4>↗ Movement <span style="color:var(--text-faint);font-weight:400">(14)</span></h4>
       <a href="speedEnvelope.html">Speed<span class="badge-t">○</span></a>
       <a href="flyEnvelope.html">Fly<span class="badge-t">●</span></a>
-      <a href="noFallDamage.html">NoFall<span class="badge-t">●</span></a>
+      <a href="spider.html">Spider<span class="badge-t">●</span></a>
+      <a href="noFallDamage.html">NoFall<span class="badge-t">○</span></a>
       <a href="stepHeight.html">Step<span class="badge-t">○</span></a>
       <a href="teleport.html">Teleport<span class="badge-t">●</span></a>
       <a href="longJump.html">LongJump<span class="badge-t">●</span></a>
       <a href="noSlow.html">NoSlow<span class="badge-t">○</span></a>
       <a href="backwardSprint.html">BackwardSprint<span class="badge-t">○</span></a>
+      <a href="wallSprint.html">WallSprint<span class="badge-t">●</span></a>
+      <a href="sprintHack.html">SprintHack<span class="badge-t">●</span></a>
       <a href="waterWalk.html">WaterWalk<span class="badge-t">●</span></a>
       <a href="elytraSpeed.html">ElytraSpeed<span class="badge-t">○</span></a>
       <a href="phaseClip.html">PhaseClip<span class="badge-t">●</span></a>
@@ -58,9 +63,8 @@
       <a href="aimWrap.html">AimWrap<span class="badge-t">○</span></a>
       <a href="pitchBound.html">PitchBound<span class="badge-t">○</span></a>
       <a href="scaffoldRotation.html">Scaffold<span class="badge-t">●</span></a>
-      <h4>■ Packet <span style="color:var(--text-faint);font-weight:400">(2)</span></h4>
+      <h4>■ Packet <span style="color:var(--text-faint);font-weight:400">(1)</span></h4>
       <a href="packetGap.html">PacketGap<span class="badge-t">○</span></a>
-      <a href="timerRate.html">Timer<span class="badge-t">●</span></a>
     </aside>
     <main>
       <div class="breadcrumb"><a href="../index.html">Iustitia</a> <span class="sep">/</span> <a href="index.html">Docs</a> <span class="sep">/</span> <a href="index.html#combat">Combat</a> <span class="sep">/</span> AutoBlock</div>
@@ -69,7 +73,7 @@
           <h1>AutoBlock</h1>
           <span class="badge badge-def"><span class="glyph">[X]</span> Definitive</span>
         </div>
-        <div class="check-sub">AutoBlock — holds a block/shield up while continuously swinging at enemies. On 1.8 it&#x27;s block-hit autoblock, on 1.21 shield-while-attacking. Ported from Rain&#x27;s AutoBlockCheck. Vanilla can&#x27;t swing and use an item simultaneously for more than an instant.</div>
+        <div class="check-sub">AutoBlock — the use-item-while-attacking family. Three sub-flags share one VL pool: AutoBlock (Rain port — shield/sword-block + swing overlap), AutoBlock(SwingUse) (Grim MultiActionsE fold — swing while eating/drinking; vanilla left-click interrupts consuming), and AutoBlock(AttackUse) (Grim MultiActionsA fold — an AttackEvent while isBlocking||isUsingConsumable; vanilla attacking interrupts using). On 1.8 the block path is block-hit autoblock, on 1.21 shield-while-attacking.</div>
         <div class="meta" style="margin-top:10px;color:var(--text-faint);font-family:var(--mono);font-size:13px">id: <span style="color:var(--accent)">autoBlock</span> &nbsp;&middot;&nbsp; class: AutoBlockCheck &nbsp;&middot;&nbsp; group: Combat</div>
       </div>
       <div class="doc-nav">
@@ -79,12 +83,12 @@
 
       <section class="doc-section fade-in-scroll">
         <h2>What it detects</h2>
-        <p>AutoBlock — holds a block/shield up while continuously swinging at enemies. On 1.8 it&#x27;s block-hit autoblock, on 1.21 shield-while-attacking. Ported from Rain&#x27;s AutoBlockCheck. Vanilla can&#x27;t swing and use an item simultaneously for more than an instant.</p>
+        <p>AutoBlock — the use-item-while-attacking family. Three sub-flags share one VL pool: AutoBlock (Rain port — shield/sword-block + swing overlap), AutoBlock(SwingUse) (Grim MultiActionsE fold — swing while eating/drinking; vanilla left-click interrupts consuming), and AutoBlock(AttackUse) (Grim MultiActionsA fold — an AttackEvent while isBlocking||isUsingConsumable; vanilla attacking interrupts using). On 1.8 the block path is block-hit autoblock, on 1.21 shield-while-attacking.</p>
       </section>
 
       <section class="doc-section slide-in-bottom">
         <h2>Observer signature</h2>
-        <div class="sig">On SwingSignal records lastSwingTick. &#x27;swinging&#x27; = tick - lastSwingTick &lt; 6; combined with isBlocking, increments autoBlockTicks; flags at level 1.0 when autoBlockTicks exceeds threshold (+30 legacy bonus on 1.8, else 10).</div>
+        <div class="sig">On SwingSignal records lastSwingTick; &#x27;swinging&#x27; = tick - lastSwingTick &lt; 6. AutoBlock: swinging &amp;&amp; isBlocking -&gt; autoBlockTicks; flag at level 1.0 when &gt; threshold (+30 legacy bonus on 1.8). AutoBlock(SwingUse): swinging &amp;&amp; isUsingConsumable -&gt; useSwingTicks; flag at level 1.0 when &gt; threshold. AutoBlock(AttackUse): on AttackEvent, if isBlocking||isUsingConsumable, flag at level 1.0 (one event is the cheat). Bows excluded (bow-draw is usingItem but not isUsingConsumable/isBlocking).</div>
       </section>
 
       <section class="doc-section fade-in-scroll">
@@ -92,8 +96,9 @@
     <ul>
       <li>Attacker-in-vehicle exempt</li>
       <li>lastSwingTick overflow guard (Int.MIN_VALUE -&gt; not swinging)</li>
-      <li>Gated on isBlocking (UseAction.BLOCK), excluding bows (BOW), food (EAT), potions (DRINK)</li>
-      <li>On 1.8 sword-blocking is a normal PvP technique -&gt; +30 tick bonus so legit block-hitters don&#x27;t flag</li>
+      <li>Block path gated on isBlocking (UseAction.BLOCK), excluding bows (BOW), food (EAT), potions (DRINK)</li>
+      <li>SwingUse path gated on isUsingConsumable (excludes bows — same MC-152728 rationale as noSlow)</li>
+      <li>On 1.8 sword-blocking is a normal PvP technique -&gt; +30 tick bonus so legit block-hitters don&#x27;t flag (block path only)</li>
       <li>ProtocolDetector fails open to modern (looser 1.8 gate only loosens)</li>
     </ul>
       </section>
@@ -109,7 +114,9 @@
         <tr><td>decay</td><td class="val">0.5</td></tr>
         <tr><td>threshold</td><td class="val">10.0</td></tr>
         <tr class="const-row"><td>swing ticks</td><td class="val">6</td></tr>
-        <tr class="const-row"><td>1.8 bonus</td><td class="val">+30.0</td></tr>
+        <tr class="const-row"><td>1.8 bonus</td><td class="val">+30.0 (block path)</td></tr>
+        <tr class="const-row"><td>AttackUse level</td><td class="val">1.0</td></tr>
+        <tr class="const-row"><td>sub-flags</td><td class="val">AutoBlock / SwingUse / AttackUse (one VL pool)</td></tr>
       </tbody>
     </table>
       </section>

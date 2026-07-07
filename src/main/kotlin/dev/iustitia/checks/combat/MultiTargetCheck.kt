@@ -46,38 +46,42 @@ class MultiTargetCheck : Check() {
             val set = ctx.tickVictims.computeIfAbsent(ev.tick) { HashSet() }
             set.add(ev.victim)
 
+            // threshold (default 2.0): min distinct same-tick victims for the same-tick flag.
+            // The window flag fires on threshold + 1 (default 3.0) distinct victims across the
+            // 2-tick lag-absorb window. Both default to the prior hardcoded 2 / 3.
+            val thresh = cfg.threshold
             val sameTick = set.size
-            if (sameTick >= 2) {
+            if (sameTick.toDouble() >= thresh) {
                 flag(attacker, ctx, max(1.0, (sameTick - 1).toDouble()), "MultiTarget", ev.tick, Evidence(
-                    subLabel = "same-tick", measurement = sameTick.toDouble(), threshold = 2.0,
+                    subLabel = "same-tick", measurement = sameTick.toDouble(), threshold = thresh,
                     pos = attacker.pos, extra = "victims=${set.size}"))
             }
 
             // lag-absorb: union this tick + previous tick
             val prev = ctx.tickVictims[ev.tick - 1]
-            if (prev != null && sameTick >= 2) {
+            if (prev != null && sameTick.toDouble() >= thresh) {
                 val union = HashSet<UUID>(set.size + prev.size)
                 union.addAll(set)
                 union.addAll(prev)
-                if (union.size >= 3) {
+                if (union.size.toDouble() >= thresh + 1.0) {
                     flag(attacker, ctx, max(1.0, (union.size - 1).toDouble()), "MultiTarget", ev.tick, Evidence(
-                        subLabel = "window", measurement = union.size.toDouble(), threshold = 3.0,
+                        subLabel = "window", measurement = union.size.toDouble(), threshold = thresh + 1.0,
                         pos = attacker.pos, extra = "victims=${union.size}"))
                 }
             }
             // lag-absorb (independent detector): a multi-aura spread across two ticks — e.g.
             // 2 victims on the previous tick + 1 now, or 1 + 2 — sums to >=3 across the 2-tick
             // window even when no single tick reached 2. The branch above is gated on
-            // sameTick >= 2 (the same gate as the same-tick flag, so it only double-counts and
-            // is dead as an independent detector); this one fires when sameTick < 2, a strictly
-            // additional detector that never reduces the existing same-tick vl.
-            if (prev != null && sameTick < 2) {
+            // sameTick >= threshold (the same gate as the same-tick flag, so it only double-counts
+            // and is dead as an independent detector); this one fires when sameTick < threshold,
+            // a strictly additional detector that never reduces the existing same-tick vl.
+            if (prev != null && sameTick.toDouble() < thresh) {
                 val union = HashSet<UUID>(set.size + prev.size)
                 union.addAll(set)
                 union.addAll(prev)
-                if (union.size >= 3) {
+                if (union.size.toDouble() >= thresh + 1.0) {
                     flag(attacker, ctx, max(1.0, (union.size - 1).toDouble()), "MultiTarget", ev.tick, Evidence(
-                        subLabel = "window", measurement = union.size.toDouble(), threshold = 3.0,
+                        subLabel = "window", measurement = union.size.toDouble(), threshold = thresh + 1.0,
                         pos = attacker.pos, extra = "victims=${union.size}"))
                 }
             }

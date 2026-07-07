@@ -62,7 +62,7 @@ class JumpOnHurtCheck : Check() {
             }
             if (!ctx.pendingHit) return
             val since = tick - ctx.lastHitTick
-            if (since in 0..1 && tp.deltaY > 0.3) {
+            if (since in 0..1 && tp.deltaY > cfg.threshold) {
                 ctx.pendingHit = false
                 // KB-induced-hop exemption: a recent velocity update means the Δy is server
                 // knockback, not a deliberate jump. Don't count it as a jump-reset coincidence.

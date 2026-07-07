@@ -12,9 +12,10 @@ import org.spongepowered.asm.mixin.injection.Inject
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
 
 /**
- * Tab-list badge (Phase B): prepends the cheat-tier prefix (green [+] / yellow [!] / red [X], plus
- * the confidence score when [IustitiaConfig.nametagBadge] is on) to each OTHER player's name in the
- * Tab (player list) HUD, so the tier cue is visible without looking at the player in-world.
+ * Tab-list badge (Phase B): prepends the cheat-tier prefix (green [+] / yellow [!] / red [X]) to
+ * each OTHER player's name in the Tab (player list) HUD, so the tier cue is visible without looking
+ * at the player in-world. Just the tier glyph — no numeric confidence score on the tab (the score
+ * is still available in `/ius hist`, `/ius session`, the snapshot, and the crosshair confidence HUD).
  *
  * Read-only on the tab render path: it rewrites the **return value** of `PlayerListHud.getPlayerName`
  * (`@At("RETURN")`, cancellable) — the single per-entry name source that both the row text and the
@@ -27,9 +28,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
  * - **GREEN gating:** clean players are only badged when `nametagGreenEnabled` is on (same rule as
  *   the nametag / target-highlight / ghost-trail — no `[+]` spam on every clean row by default).
  * - **Idempotent:** `getPlayerName` is called once per entry per render (row + width share the same
- *   returned `Text`); replacing the return value is idempotent — no `[X 82][X 82] Name` accumulation.
+ *   returned `Text`); replacing the return value is idempotent — no `[X][X] Name` accumulation.
  * - **No burst-pulse:** the tab surface is secondary; the nametag carries the pulse. The badge here
- *   is the steady tier glyph + score (consistent with `/ius hist`).
+ *   is the steady tier glyph (consistent with the in-world nametag).
  *
  * Runtime-caveat (same class as the nametag mixin was originally developed under): the inject POINT
  * in `getPlayerName` is build-confirmed (`@At("RETURN")` on a public method), so a build GREEN + a
@@ -61,10 +62,7 @@ class PlayerListHudMixin {
                 FlagHistory.Tier.YELLOW -> "e" to "!"
                 FlagHistory.Tier.RED -> "c" to "X"
             }
-            val inner = if (cfg.nametagBadge) {
-                try { "$glyph " + FlagHistory.confidenceScore(uuid) } catch (_: Throwable) { glyph }
-            } else glyph
-            val prefix = Text.literal("§${color}[$inner]§r ")
+            val prefix = Text.literal("§${color}[$glyph]§r ")
             cir.setReturnValue(Text.empty().append(prefix).append(original))
         } catch (_: Throwable) {
             // fail-open: leave the original name

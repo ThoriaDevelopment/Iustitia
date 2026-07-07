@@ -3,6 +3,7 @@ package dev.iustitia.checks.movement
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
+import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
 import net.minecraft.block.Blocks
@@ -33,6 +34,11 @@ class LongJumpCheck : Check() {
             if (tick - tp.lastTeleportTick < 5) return
             if (tick - tp.hurtTick < 5) return
             if (tick - tp.velocityTick < 40) return
+            // Server-lag exemption: a server-wide hitch / catch-up burst injects a large
+            // horizontal Δ that would trip the boosted-launch gate. Skip the sample.
+            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            ) return
             val ctx = contextOf(tp.uuid) as LongJumpContext
             // a real jump impulse starts the air phase. Arm on the 2nd airborne tick of ANY
             // jump arc — the prior `abs(prevDeltaY - 0.42) < 0.08` armed only a vanilla 0.42
@@ -81,5 +87,12 @@ class LongJumpCheck : Check() {
 
     private class LongJumpContext : CheckContext() {
         var airborneStart: Int = -1
+    }
+
+    private companion object {
+        /** Window (ticks) after a server-wide freeze within which long-jump samples are skipped. */
+        private const val LAG_WINDOW = 8
+        /** Window (ticks) after a batched catch-up burst within which long-jump samples are skipped. */
+        private const val BURST_WINDOW = 3
     }
 }

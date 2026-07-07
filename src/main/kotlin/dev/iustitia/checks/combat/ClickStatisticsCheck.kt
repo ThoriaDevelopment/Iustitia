@@ -5,6 +5,7 @@ import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.event.SwingSignal
+import dev.iustitia.history.Evidence
 import dev.iustitia.math.MathUtil
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
@@ -28,6 +29,13 @@ import java.util.UUID
  *    essentially never sustain -0.7 over 600 clicks) excludes the mildly-platykurtic legit
  *    jitter/drag clicking that the old `< 0` bar flagged 100+ times per player. Borderline
  *    autoclickers (kurt -0.1..-0.5) are still caught by CPS/Robot/StDev.
+ *  - **Record**: a recorded click pattern replayed on loop (LionClient `ClickPatternStore`)
+ *    is exactly periodic at tick resolution — a hand never sustains an exact repeat. This
+ *    catches the replay case Kurt/StDev MISS: a recorded real-human pattern has a human-like
+ *    distribution (passes Kurt/StDev) but is exactly periodic (trips this). Detects a
+ *    non-constant periodic prefix in the last 60 intervals (≥5 cycles of the period);
+ *    transition-gated like Kurt (one flag per loop episode). The non-constant guard excludes
+ *    a steady fixed-delay stream (all-equal intervals), which Kurt already owns.
  *
  * Same-tick swing batches (server/lag collapse, bundle packets) are recorded for the
  * CPS window but excluded from the nano/stat windows so lag never trips the robot/stDev
@@ -114,6 +122,30 @@ class ClickStatisticsCheck : Check() {
                 ctx.kurtActive = false
             }
         }
+
+        // Record-loop fingerprint (LionClient ClickPatternStore replay, plan §3/§8 step 5): a
+        // recorded click pattern replayed on loop is exactly periodic at tick resolution — a hand
+        // never sustains an exact repeat. Catches the replay case Kurt/StDev miss (a recorded
+        // real-human pattern has human-like distribution but is exactly periodic). Detect a
+        // non-constant periodic prefix in the last RECORD_WINDOW intervals; transition-gated like
+        // Kurt so a sustained loop alerts once per episode, not every swing.
+        if (ctx.tickIntervals.size >= RECORD_WINDOW) {
+            val period = detectLoop(newestInts(ctx.tickIntervals, RECORD_WINDOW))
+            if (period > 0) {
+                ctx.nonLoopStreak = 0
+                if (!ctx.recordActive) {
+                    ctx.recordActive = true
+                    flag(tp, ctx, setbackVL + 1.0, "ClickStats(Record)", tick, Evidence(
+                        subLabel = "loop", measurement = period.toDouble(),
+                        threshold = RECORD_MIN_CYCLES.toDouble(),
+                        extra = "period=$period cycles≥$RECORD_MIN_CYCLES"))
+                }
+            } else if (ctx.recordActive && ++ctx.nonLoopStreak >= RECORD_REARM) {
+                // loop clearly gone (≥ RECORD_REARM consecutive non-loop swings) → re-arm.
+                ctx.recordActive = false
+                ctx.nonLoopStreak = 0
+            }
+        }
     }
 
     /**
@@ -133,6 +165,54 @@ class ClickStatisticsCheck : Check() {
         return arr
     }
 
+    /**
+     * Snapshot the newest [n] tick-intervals into a primitive IntArray, newest-first (a[0] =
+     * most recent). Same allocation-avoidance intent as [newestDoubles]; caller guarantees
+     * `deque.size >= n`. Newest-first so [detectLoop] reads the most-recent intervals as the
+     * prefix (a loop currently active shows as a periodic prefix).
+     */
+    private fun newestInts(deque: ArrayDeque<Int>, n: Int): IntArray {
+        val arr = IntArray(n)
+        var i = 0
+        val iter = deque.iterator()
+        while (i < n && iter.hasNext()) arr[i++] = iter.next()
+        return arr
+    }
+
+    /**
+     * Record-loop detector (plan §3/§8 step 5). [a] is newest-first (a[0] = most recent
+     * interval). Returns the period `p` of a non-constant periodic *prefix* of [a] with ≥
+     * [RECORD_MIN_CYCLES] cycles, or 0 if none.
+     *
+     * For each candidate period p (2..w/2), find the first index where a[i] != a[i+p]; the
+     * prefix [0..i-1] is then p-periodic (length i). Require i >= MIN_CYCLES*p (≥ MIN_CYCLES
+     * exact repetitions — a hand never sustains that) and a non-constant base pattern a[0..p-1]
+     * (a steady fixed-delay stream is all-equal → already owned by Kurt). The w/p < MIN_CYCLES
+     * break is monotonic in p (a period too long to fit MIN_CYCLES cycles in the window can't
+     * have a MIN_CYCLES-cycle prefix).
+     */
+    private fun detectLoop(a: IntArray): Int {
+        val w = a.size
+        for (p in 2..w / 2) {
+            if (w / p < RECORD_MIN_CYCLES) break
+            var firstBreak = w  // no break ⇒ whole array is p-periodic
+            for (i in 0 until w - p) {
+                if (a[i] != a[i + p]) { firstBreak = i; break }
+            }
+            if (firstBreak >= RECORD_MIN_CYCLES * p) {
+                var minV = Int.MAX_VALUE
+                var maxV = Int.MIN_VALUE
+                for (k in 0 until p) {
+                    val v = a[k]
+                    if (v < minV) minV = v
+                    if (v > maxV) maxV = v
+                }
+                if (minV != maxV) return p  // non-constant loop of period p
+            }
+        }
+        return 0
+    }
+
     private fun <T> pushFront(deque: ArrayDeque<T>, value: T, cap: Int) {
         deque.addFirst(value)
         while (deque.size > cap) deque.removeLast()
@@ -147,6 +227,12 @@ class ClickStatisticsCheck : Check() {
         /** Transition gate for the Kurt signal: true while kurt holds below KURT_STRICT, so
          *  we flag only the false→true edge (one flag per autoclicker episode), not every swing. */
         var kurtActive: Boolean = false
+        /** Transition gate for the Record signal: true while a periodic loop holds, so we flag
+         *  only the false→true edge (one flag per loop episode). */
+        var recordActive: Boolean = false
+        /** Consecutive non-loop swings since the last detected loop — counts up to [RECORD_REARM]
+         *  to debounce flicker before re-arming the Record transition gate. */
+        var nonLoopStreak: Int = 0
     }
 
     companion object {
@@ -159,5 +245,15 @@ class ClickStatisticsCheck : Check() {
         /** Recovery bar: kurt rising back to >= this re-arms the transition gate so a stop-then-
          *  restart autoclicker triggers a fresh alert. */
         private const val KURT_RECOVER = -0.2
+
+        // -- Record-loop sub-signal (LionClient ClickPatternStore replay, plan §3/§8 step 5) --
+        /** Window of recent tick-intervals scanned for a periodic prefix. */
+        private const val RECORD_WINDOW = 60
+        /** Min exact cycles of the period required in the prefix — a hand never sustains ≥5 exact
+         *  repetitions of a click-interval pattern. Tuned in step 14. */
+        private const val RECORD_MIN_CYCLES = 5
+        /** Consecutive non-loop swings to re-arm the Record transition gate (debounces a one-off
+         *  miss within an otherwise-loopy stream). */
+        private const val RECORD_REARM = 8
     }
 }

@@ -10,7 +10,7 @@ object FeatureInfo {
 
     private val DESCRIPTIONS: Map<String, String> = mapOf(
         "transcript" to
-            "/ius transcript <name> prints a Discord-copyable timeline of a player's session — swings, inferred hits, reach samples, velocity received, and which checks fired. Add `panel` to toggle the live side panel for your crosshair target (also a keybind + a config toggle).",
+            "/ius transcript <name> prints a Discord-copyable timeline of a player's session — swings, inferred hits, reach samples, velocity received, and which checks fired — straight to chat. It's the chat-print form of `/ius report <name> text` (same builder, different output: transcript → chat + export file, report → clipboard). Add `panel` to toggle the live side panel for your crosshair target (also a keybind + a config toggle).",
         "evidence" to
             "/ius evidence <name> collapses the last few seconds of a player's flags (window set by the Evidence window config) into ONE chat line you can paste straight into a report.",
         "note" to
@@ -28,7 +28,7 @@ object FeatureInfo {
         "hist" to
             "/ius hist opens the searchable player list; /ius hist <name> opens that player's profile card (tier, confidence, max-VL-per-check bar) + filtered flag timeline with evidence rows. Click an alert to jump there.",
         "report" to
-            "/ius report <name> [markdown|json] builds a full report card from the same data as the history screen and copies it to your clipboard — paste it into a Discord report.",
+            "/ius report <name> [markdown|json|text] builds a full report card from the same data as the history screen and copies it to your clipboard — paste it into a Discord report. `text` is the chat-friendly transcript form (session stats + moderator note + timeline) — the same builder `/ius transcript <name>` prints to chat.",
         "alerts" to
             "/ius alerts toggles all chat alerts on/off. /ius alerts <name|check> [on|off] mutes one player or check's chat (detection + tiering keep running).",
         "watch" to

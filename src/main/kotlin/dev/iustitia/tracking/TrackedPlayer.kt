@@ -33,6 +33,11 @@ class TrackedPlayer(val uuid: UUID, var entityId: Int, val joinTick: Int) {
     var pitch: Float = 0f
     var lastPitch: Float = 0f
 
+    /** Axis A substrate: per-player mouse-sensitivity estimate (MX SensitivityProcessor port).
+     *  Converges to a 0..200 sensitivity + MCP table value from pitch-delta GCD fit. Fed by the
+     *  tracker only on full-float-look protocols; no flags (consumed by the step-2 aimGcd check). */
+    val sensitivity: SensitivityProcessor = SensitivityProcessor()
+
     // --- polled metadata flags ---
     var onGroundPacket: Boolean = false
     var groundedProxy: Boolean = false

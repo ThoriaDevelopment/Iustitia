@@ -33,7 +33,6 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
             c.alertsEnabled = true
             c.nametagPrefixes = true
             c.nametagGreenEnabled = true
-            c.nametagBadge = true
             c.nametagBurstPulse = true
             c.audioCues = false
             c.audioNuclear = true
@@ -50,7 +49,6 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
             c.alertsEnabled = true
             c.nametagPrefixes = true
             c.nametagGreenEnabled = false
-            c.nametagBadge = true
             c.nametagBurstPulse = true
             c.audioCues = true
             c.audioNuclear = true
@@ -67,7 +65,6 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
             c.alertsEnabled = true
             c.nametagPrefixes = true
             c.nametagGreenEnabled = false
-            c.nametagBadge = true
             c.nametagBurstPulse = true
             c.audioCues = true
             c.audioNuclear = true

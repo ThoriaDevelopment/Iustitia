@@ -163,10 +163,10 @@ class PlayerEntityRendererMixin {
             val tier = entry.tier
             if (tier == FlagHistory.Tier.GREEN && !cfg.nametagGreenEnabled) return
 
-            val (color, glyph, _) = when (tier) {
-                FlagHistory.Tier.GREEN -> Triple("a", "+", GREEN_MARK)
-                FlagHistory.Tier.YELLOW -> Triple("e", "!", YELLOW_MARK)
-                FlagHistory.Tier.RED -> Triple("c", "X", RED_MARK)
+            val (color, glyph) = when (tier) {
+                FlagHistory.Tier.GREEN -> "a" to "+"
+                FlagHistory.Tier.YELLOW -> "e" to "!"
+                FlagHistory.Tier.RED -> "c" to "X"
             }
             // Burst pulse: for ~3s (60 ticks) after a fresh red-capable alert, alternate the glyph
             // color between the tier color and white (§f) on a ~400ms cycle so the prefix "pulses"
@@ -179,14 +179,11 @@ class PlayerEntityRendererMixin {
                     if ((System.currentTimeMillis() / 200L) % 2L == 0L) color else "f"
                 } else color
             } else color
-            // Prefix: the tier glyph and the confidence score share ONE bracketed group in the tier
-            // color (the score copies the glyph color — including the burst-pulse §f white), directly
-            // adjacent with no gap: `[X 82]` rather than the old `[X] §7[82]` (gray, separated).
-            // nametagBadge off → just the glyph `[X]`.
-            val inner = if (cfg.nametagBadge) {
-                try { "$glyph " + FlagHistory.confidenceScore(entry.uuid) } catch (_: Throwable) { glyph }
-            } else glyph
-            val prefix = Text.literal("§${glyphColor}[$inner]§r ")
+            // Prefix: just the tier glyph in a bracket, tier-colored (including the burst-pulse §f
+            // white variant). The numeric confidence score is NOT shown on the nametag — only the
+            // glyph. (The score is still available in `/ius hist`, `/ius session`, the snapshot, and
+            // the crosshair confidence HUD.)
+            val prefix = Text.literal("§${glyphColor}[$glyph]§r ")
 
             val dnAcc = state as? EntityRenderStateAccessor ?: return
             val displayName = dnAcc.iustitia_getDisplayName()
@@ -275,30 +272,23 @@ class PlayerEntityRendererMixin {
         // Mixin requires all static fields to be private (it rejects non-private static fields at
         // apply time with InvalidMixinException). These are companion-object vals/consts = static
         // fields in bytecode, so they MUST be `private` — a green build does NOT catch this.
-        private const val GREEN_MARK = "§a[+]§r "
-        private const val YELLOW_MARK = "§e[!]§r "
-        private const val RED_MARK = "§c[X]§r "
         /** Backstop size for [stateTier] — far above any realistic per-frame live-entity count. */
         private const val CAP = 512
     }
 
     /**
      * Color-agnostic "already prefixed" guard: strips any leading `§<code>` formatting codes then
-     * checks for our tier-glyph bracket opening — `[` + one of `+`/`!`/`X` + either `]` (no-badge
-     * form `[X]`) or a space (badge form `[X 82]`). The burst-pulse modulates the glyph color (tier
-     * color ↔ `§f` white) and the badge appends the score, so the old explicit `startsWith("[+]")` /
-     * `startsWith("[X ")` list MISSED the green/yellow badge forms `[+ ` / `[! ` — on the shadow +
-     * main multi-pass per frame that re-prefixed them, stacking `[! 82][! 82] Name`. This form-based
-     * match covers all six glyph×badge combinations and any leading color. Fail-safe: on any parse
-     * error returns false (prefix — safe side is to prefix; worst case a one-frame double glyph,
-     * not a dropped tier cue).
+     * checks for our tier-glyph bracket opening — `[` + one of `+`/`!`/`X` + `]`. The burst-pulse
+     * modulates the glyph color (tier color ↔ `§f` white), so the leading-color strip is what makes
+     * the match color-agnostic — on the shadow + main multi-pass per frame this stops a re-prefix
+     * stacking `[X][X] Name`. Fail-safe: on any parse error returns false (prefix — safe side is to
+     * prefix; worst case a one-frame double glyph, not a dropped tier cue).
      */
     private fun alreadyPrefixed(s: String): Boolean = try {
         var i = 0
         val n = s.length
         while (i + 1 < n && s[i] == '§' && s[i + 1] in "0123456789abcdefklmnorABCDEFKLMNOR") i += 2
-        // `[` + glyph(+/!/X) + (`]` or ` `)  — covers [+] [!] [X] and [+ 82] [! 82] [X 82].
-        n - i >= 3 && s[i] == '[' && (s[i + 1] == '+' || s[i + 1] == '!' || s[i + 1] == 'X') &&
-            (s[i + 2] == ']' || s[i + 2] == ' ')
+        // `[` + glyph(+/!/X) + `]`.
+        n - i >= 3 && s[i] == '[' && (s[i + 1] == '+' || s[i + 1] == '!' || s[i + 1] == 'X') && s[i + 2] == ']'
     } catch (_: Throwable) { false }
 }

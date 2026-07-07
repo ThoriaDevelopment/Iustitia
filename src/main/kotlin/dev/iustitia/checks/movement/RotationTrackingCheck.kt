@@ -5,9 +5,12 @@ import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.event.AttackEvent
+import dev.iustitia.history.Evidence
+import dev.iustitia.math.MathUtil.gcd
+import dev.iustitia.math.Vectors
+import dev.iustitia.protocol.ProtocolDetector
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
-import dev.iustitia.math.Vectors
 import java.util.ArrayDeque
 import java.util.UUID
 import kotlin.math.abs
@@ -36,6 +39,13 @@ import kotlin.math.sqrt
  *    the window. AimAssist activates to land hits, so combat-gating targets exactly the cheat
  *    window while removing the idle-stare FP.
  *  - **Higher sample bar (60).** Raises the bar above short lucky stretches.
+ *
+ * Sub-flag **gcd** (Nemesis `AimAssistD`, Axis A plan §8 step 2): flags a pitch-delta
+ * GCD below 0.009 (the double Euclidean base-0.001 GCD) under a yaw/pitch-accel gate —
+ * the "too-clean pitch step while locking" aim-assist fingerprint. Gated on
+ * `ProtocolDetector.fullFloatLook && tp.sensitivity.valid` (fail-open pre-1.21.2 /
+ * before the substrate converges) and the same combat window. Shares this check's VL
+ * pool; flag level 1.0 (matches `AimTrack`).
  */
 class RotationTrackingCheck : Check() {
 
@@ -59,6 +69,11 @@ class RotationTrackingCheck : Check() {
             val ctx = contextOf(tp.uuid) as TrackContext
             // combat gate: only accumulate while in/around a fight; idle looking never feeds VL.
             if (tick - ctx.lastAttackTick > COMBAT_WINDOW) return
+            // Sub-flag gcd (Nemesis AimAssistD, Axis A §8 step 2): too-clean pitch GCD while
+            // in combat. Runs before the geometric target search — aim-assist can lock onto a
+            // target just outside the 6-block match window, so the GCD signal is combat-gated,
+            // not target-gated.
+            gcdComponent(tp, ctx, tick)
             // find nearest other player within 6 blocks
             var best: TrackedPlayer? = null
             var bestD = 6.0
@@ -106,9 +121,71 @@ class RotationTrackingCheck : Check() {
         while (ctx.window.size > WINDOW) ctx.window.removeLast()
     }
 
+    /**
+     * Nemesis `AimAssistD` (Axis A, plan §8 step 2). Flags a pitch-delta GCD below
+     * [PITCH_GCD_MAX] under a yaw/pitch-accel gate — the "too-clean pitch step while
+     * aim-assist is locking" fingerprint. Gated on the full-float-look substrate;
+     * fail-open (clears predecessors) when cold / lagging / teleported. Faithful to
+     * Nemesis: flags on the 2nd consecutive hit, decays 0.005 when the GCD is clean,
+     * 0.3 when the accel gate fails.
+     */
+    private fun gcdComponent(tp: TrackedPlayer, ctx: TrackContext, tick: Int) {
+        // version + readiness gate; clear predecessor when cold
+        if (!ProtocolDetector.fullFloatLook || !tp.sensitivity.valid) {
+            ctx.hasChange = false; ctx.pitchGcdVl = 0.0; return
+        }
+        // lag gate: catch-up snaps distort deltas → don't pair a stale predecessor.
+        if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
+            tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+        ) {
+            ctx.hasChange = false; return
+        }
+        // teleport guard: a >8b jump (the tracker teleport threshold) snaps rotation.
+        if (tp.delta.lengthSquared() > 64.0) {
+            ctx.hasChange = false; ctx.hasRotation = false; return
+        }
+        if (!ctx.hasRotation) {
+            ctx.lastYaw = tp.yaw; ctx.lastPitch = tp.pitch; ctx.hasRotation = true; return
+        }
+        val yawChange = abs(tp.yaw - ctx.lastYaw)
+        val pitchChange = abs(tp.pitch - ctx.lastPitch)
+        ctx.lastYaw = tp.yaw; ctx.lastPitch = tp.pitch
+        if (!ctx.hasChange) {
+            ctx.lastYawChange = yawChange; ctx.lastPitchChange = pitchChange; ctx.hasChange = true; return
+        }
+        val yawAccel = abs(ctx.lastYawChange - yawChange)
+        val pitchAccel = abs(ctx.lastPitchChange - pitchChange)
+        val gate = yawChange > YAW_CHANGE_MIN && pitchChange < PITCH_CHANGE_MAX &&
+            yawAccel > ACCEL_MIN && pitchAccel > ACCEL_MIN && pitchChange < yawChange
+        if (gate) {
+            val pitchGcd = gcd(pitchChange.toDouble(), ctx.lastPitchChange.toDouble())
+            if (pitchGcd < PITCH_GCD_MAX) {
+                ctx.pitchGcdVl += 1.0
+                if (ctx.pitchGcdVl > 1.0) {  // Nemesis: flag on the 2nd hit
+                    flag(tp, ctx, VL_GCD, "gcd", tick, Evidence(
+                        pos = tp.pos, measurement = pitchGcd, threshold = PITCH_GCD_MAX,
+                        extra = "vl=${ctx.pitchGcdVl} sens=${tp.sensitivity.sensitivity}"))
+                }
+            } else {
+                ctx.pitchGcdVl = maxOf(0.0, ctx.pitchGcdVl - 0.005)  // Nemesis decreaseVl(0.005)
+            }
+        } else {
+            ctx.pitchGcdVl = maxOf(0.0, ctx.pitchGcdVl - 0.3)  // Nemesis decreaseVl(0.3)
+        }
+        ctx.lastYawChange = yawChange; ctx.lastPitchChange = pitchChange
+    }
+
     private class TrackContext : CheckContext() {
         val window = ArrayDeque<Boolean>()
         var lastAttackTick: Int = -10000
+        // sub-flag gcd (Nemesis AimAssistD, Axis A §8 step 2)
+        var lastYaw: Float = 0f
+        var lastPitch: Float = 0f
+        var hasRotation: Boolean = false
+        var lastYawChange: Float = 0f
+        var lastPitchChange: Float = 0f
+        var hasChange: Boolean = false
+        var pitchGcdVl: Double = 0.0
     }
 
     private companion object {
@@ -118,5 +195,18 @@ class RotationTrackingCheck : Check() {
         const val MIN_SAMPLES = 60
         /** Ticks after an attack during which samples accumulate (combat window). */
         const val COMBAT_WINDOW = 60
+
+        // -- sub-flag gcd: Nemesis AimAssistD (Axis A §8 step 2) --
+        /** Flag level for the aim-assist GCD sub-flag (matches the AimTrack flag level). */
+        const val VL_GCD = 1.0
+        /** Nemesis floor: pitch GCD below this (double Euclidean, base 0.001) is sub-mouse-grid. */
+        const val PITCH_GCD_MAX = 0.009
+        /** Nemesis accel gate: a real flick has yaw motion + both-axis accel; pitch < yaw. */
+        const val YAW_CHANGE_MIN = 3.0f
+        const val PITCH_CHANGE_MAX = 10.0f
+        const val ACCEL_MIN = 2.0f
+        /** Standard lag gate (§1.8 posture + step-1 sensitivity feed). */
+        const val LAG_WINDOW = 8
+        const val BURST_WINDOW = 3
     }
 }

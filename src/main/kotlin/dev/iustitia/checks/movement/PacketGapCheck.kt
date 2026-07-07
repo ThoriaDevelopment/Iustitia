@@ -3,7 +3,9 @@ package dev.iustitia.checks.movement
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
+import dev.iustitia.history.Evidence
 import dev.iustitia.tracking.EntityTrackerManager
+import dev.iustitia.tracking.LagCombatCorrelator
 import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
 import kotlin.math.sqrt
@@ -60,6 +62,21 @@ class PacketGapCheck : Check() {
             } else {
                 if (ctx.freeze >= 5 && mag > cfg.threshold) {
                     flag(tp, ctx, 1.0, "Blink", tick)
+                    // Axis B amplifier (plan §2.2/§6): FakeLag Dynamic flushes its packet queue *on*
+                    // a combat event — the freeze-snap lands right at a combat hurt on the frozen
+                    // entity. A non-combat blink (Vape auto-disables on place/dig; a generic lag
+                    // switch) has no such coincidence. A combat hurt on this entity within the
+                    // tight flush window amplifies the Blink flag toward FakeLag Dynamic. The
+                    // freeze-snap itself is already detected above; this is the combat-coincidence
+                    // gate. Distinct label, shares `packetGap`'s VL pool (no new check id).
+                    try {
+                        if (LagCombatCorrelator.combatHurtNear(tp.uuid, tick, LAG_CORR_WINDOW)) {
+                            flag(tp, ctx, VL_LAG_CORR, "Blink(LagCorr)", tick, Evidence(
+                                subLabel = "combat-correlated", measurement = ctx.freeze.toDouble(),
+                                threshold = 5.0, pos = tp.pos,
+                                extra = "freeze=${ctx.freeze} snap-mag=$mag combat hurt nearby"))
+                        }
+                    } catch (_: Throwable) {}
                 }
                 ctx.freeze = 0
             }
@@ -75,5 +92,12 @@ class PacketGapCheck : Check() {
         private const val LAG_WINDOW = 8
         /** Ticks after a batched catch-up burst during which freezes/snaps are exempt. */
         private const val BURST_WINDOW = 3
+        // -- Combat-correlation amplifier (Axis B, plan §3/§8 step 6) --
+        /** Window (ticks) around the snap within which a combat hurt on the frozen entity makes
+         *  the blink a FakeLag-Dynamic flush. The flush is tight (~80–150ms ≈ 4–7 ticks). Tuned
+         *  in step 14. */
+        const val LAG_CORR_WINDOW = 4
+        /** Amplifier sub-flag level — "weight up" on top of the Blink flag. Tuned in step 14. */
+        const val VL_LAG_CORR = 1.0
     }
 }

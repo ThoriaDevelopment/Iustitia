@@ -3,8 +3,8 @@
 
 Reads scripts/checks.json (one entry per check, authored from the Kotlin source)
 and emits:
-  docs/index.html       - the catalog (all 32 checks grouped)
-  docs/<id>.html x 32    - one deep page per check, with prev/next nav
+  docs/index.html       - the catalog (all 36 checks grouped)
+  docs/<id>.html x 36   - one deep page per check, with prev/next nav
 
 Pure stdlib (json, html, pathlib). Re-run after editing checks.json:
     python scripts/gen_docs.py
@@ -233,14 +233,14 @@ def catalog_page(checks: list) -> str:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Checks &mdash; Iustitia</title>
-  <meta name="description" content="All 32 Iustitia anticheat checks, grouped by category: what each detects, its observer signature, false-positive guards, and configuration.">
+  <meta name="description" content="All 36 Iustitia anticheat checks, grouped by category: what each detects, its observer signature, false-positive guards, and configuration.">
   <link rel="stylesheet" href="../assets/iustitia.css">
 </head>
 <body>
 {nav("checks", 1)}
   <div class="container" style="padding:46px 24px 10px">
     <div class="section-label fade-in-scroll">Documentation</div>
-    <h1 class="section-title fade-in-scroll"><span class="grad">32 checks</span>, four categories.</h1>
+    <h1 class="section-title fade-in-scroll"><span class="grad">36 checks</span>, four categories.</h1>
     <p class="section-lead fade-in-scroll">Every check Iustitia ships &mdash; what it detects, the observer signature it keys on, the false-positive guards it applies, and its configuration defaults. Each card opens a deep page with the full detail.</p>
   </div>
   <div class="container" style="padding:0 24px 70px">
@@ -264,8 +264,8 @@ def main() -> None:
     checks = json.loads(CHECKS_JSON.read_text(encoding="utf-8"))
     # validate
     ids = [c["id"] for c in checks]
-    assert len(checks) == 32, f"expected 32 checks, got {len(checks)}"
-    assert len(set(ids)) == 32, "duplicate check id"
+    assert len(checks) == 36, f"expected 36 checks, got {len(checks)}"
+    assert len(set(ids)) == 36, "duplicate check id"
     for c in checks:
         for f in ("id", "class", "name", "group", "definitive", "what", "signature", "fpGuards", "defaults", "source"):
             assert f in c, f"check {c.get('id')} missing field {f}"

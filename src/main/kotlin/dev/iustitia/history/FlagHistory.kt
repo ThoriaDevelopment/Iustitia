@@ -55,7 +55,7 @@ object FlagHistory {
         val evidence: Evidence? = null,
     )
 
-    enum class Tier { GREEN, YELLOW, RED }
+    enum class Tier(val label: String) { GREEN("GREEN"), YELLOW("YELLOW"), RED("RED") }
 
     /**
      * Primary red-capable checks (the former "definitive" set, trimmed): a single alert from
@@ -68,19 +68,22 @@ object FlagHistory {
      * unchanged.
      */
     val DEFINITIVE: Set<String> = setOf(
-        "reach", "multiTarget", "criticals", "autoBlock", "throughWalls",
+        "reach", "multiTarget", "criticals", "maceSmash", "autoBlock", "throughWalls",
         "hitFlick", "flyEnvelope", "longJump", "phaseClip", "teleport",
-        "timerRate", "waterWalk", "scaffoldRotation",
+        "waterWalk", "scaffoldRotation",
+        "wallSprint", "spider", "sprintHack",
     )
 
     /**
      * Checks that corroborate but never initiate a tier: a [CORROBORATOR] alert counts toward
      * RED's ≥ [RED_DISTINCT] distinct total ONLY when ≥1 primary [DEFINITIVE] check has also
      * alerted (proper diagnostic — it adds weight to an already-suspect player, never flags a
-     * clean one on its own). killAura is the sole member (silent-aim suite: strong when it
-     * agrees with reach/criticals/etc., weak / FP-prone standalone).
+     * clean one on its own). killAura is the silent-aim suite (strong when it agrees with
+     * reach/criticals/etc., weak / FP-prone standalone); hitsWithoutSwing is the no-swing-attack
+     * signal (weak / noisy — an out-of-view attacker or packet ordering can drop the swing — so
+     * it corroborates a killaura case but never initiates a tier on its own).
      */
-    val CORROBORATOR: Set<String> = setOf("killAura")
+    val CORROBORATOR: Set<String> = setOf("killAura", "hitsWithoutSwing")
 
     /** Distinct red-capable (primary + corroborating) checks that must alert to mark RED.
      *  Loosened 3→2 (display-only) so a 2-signal-corroborated cheater reaches RED instead of
@@ -277,7 +280,7 @@ object FlagHistory {
             return if (sessionAlertCount(uuid) > 0) "tier-neutral signals only (no red-capable alert)" else "clean (no red-capable alerts)"
         }
         val tier = tierFor(uuid)
-        val tierName = when (tier) { Tier.GREEN -> "GREEN"; Tier.YELLOW -> "YELLOW"; Tier.RED -> "RED" }
+        val tierName = tier.label
         val sp = span(uuid)
         val window = if (sp == null) "" else " within ${(sp.second - sp.first) / 20}s"
         if (primaries.isEmpty()) {
@@ -318,29 +321,43 @@ object FlagHistory {
         uuid: UUID, name: String, alertCount: Int, alertedChecks: Set<String>,
         lastAlertWallMs: Long, flagCountMap: Map<String, Int>, maxVlMap: Map<String, Double>,
         persistedFlags: List<Flag>,
+        // Ids of checks still registered in this build — supplied by the caller
+        // (PersistenceManager, from ConfigManager.config.checks()). Used as a one-way migration
+        // filter: persisted entries for a REMOVED check (e.g. timerRate after its deletion) are
+        // dropped before merging, so they can't survive forever in alertedChecks / flagCounts /
+        // maxVl / flags — which would otherwise re-evaluate against the trimmed DEFINITIVE set
+        // (silently downgrading a latched RED tier) and render as dangling rows in /ius hist +
+        // /ius report. emptySet (default) = filter disabled, preserving the pre-filter behaviour
+        // (defensive against an init-order gap where the caller can't yet read the check set).
+        validCheckIds: Set<String> = emptySet(),
     ) {
         try {
+            val filterOn = validCheckIds.isNotEmpty()
+            val alerted = if (filterOn) alertedChecks.filter { it in validCheckIds }.toSet() else alertedChecks
+            val fc = if (filterOn) flagCountMap.filterKeys { it in validCheckIds } else flagCountMap
+            val mv = if (filterOn) maxVlMap.filterKeys { it in validCheckIds } else maxVlMap
+            val flags = if (filterOn) persistedFlags.filter { it.checkId in validCheckIds } else persistedFlags
             if (name.isNotEmpty()) nameByUuid[uuid] = name
             if (alertCount > 0) alertCountByUuid[uuid] = alertCount
-            if (alertedChecks.isNotEmpty()) {
+            if (alerted.isNotEmpty()) {
                 val set = alertedChecksByUuid.computeIfAbsent(uuid) { HashSet() }
-                synchronized(set) { set.addAll(alertedChecks) }
+                synchronized(set) { set.addAll(alerted) }
             }
             if (lastAlertWallMs > 0) lastAlertWallMsByUuid[uuid] = lastAlertWallMs
-            if (flagCountMap.isNotEmpty()) {
+            if (fc.isNotEmpty()) {
                 val m = flagCounts.computeIfAbsent(uuid) { ConcurrentHashMap() }
-                flagCountMap.forEach { (cid, c) -> m.merge(cid, c) { a, b -> a + b } }
+                fc.forEach { (cid, c) -> m.merge(cid, c) { a, b -> a + b } }
             }
-            if (maxVlMap.isNotEmpty()) {
+            if (mv.isNotEmpty()) {
                 val m = maxVlByUuidCheck.computeIfAbsent(uuid) { ConcurrentHashMap() }
-                maxVlMap.forEach { (cid, v) -> m.merge(cid, v) { a, b -> kotlin.math.max(a, b) } }
+                mv.forEach { (cid, v) -> m.merge(cid, v) { a, b -> kotlin.math.max(a, b) } }
             }
-            if (persistedFlags.isNotEmpty()) {
+            if (flags.isNotEmpty()) {
                 val dq = flagsByUuid.getOrPut(uuid) { ArrayDeque() }
                 synchronized(dq) {
                     // persistedFlags are oldest→newest; insert at the tail (oldest end) so live
                     // flags (added at head) stay newest. Cap to [CAP].
-                    persistedFlags.forEach { dq.addLast(it) }
+                    flags.forEach { dq.addLast(it) }
                     while (dq.size > CAP) dq.removeLast()
                 }
             }
@@ -406,6 +423,13 @@ object FlagHistory {
 
     /** uuid → last-known name (for displaying muted-player lists by a friendly name). */
     fun nameFor(uuid: UUID): String? = try { nameByUuid[uuid] } catch (_: Throwable) { null }
+
+    /** [nameFor] or a short uuid fallback — the `nameFor(uuid) ?: uuid.toString().take(8)` pattern
+     *  repeated across the report builders, [dev.iustitia.replay.ReplayState.focusName], and clip
+     *  feedback. Consolidated here so the fallback shape can't drift. Fail-open to the short id. */
+    fun nameOrShort(uuid: UUID): String = try { nameFor(uuid) ?: uuid.toString().take(8) } catch (_: Throwable) {
+        uuid.toString().take(8)
+    }
 
     /** Names known this session (for tab-completion of `/ius hist <name>` etc.). */
     fun knownNames(): List<String> = try {

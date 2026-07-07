@@ -26,7 +26,7 @@ object Snapshot {
     /** Build the one-line chat/clipboard summary: `[Iustitia] PlayerX: Reach 4.2 | Tier: RED [87]`. */
     fun buildSummary(uuid: UUID, name: String): String = try {
         val tier = FlagHistory.tierFor(uuid)
-        val tierName = when (tier) { FlagHistory.Tier.GREEN -> "GREEN"; FlagHistory.Tier.YELLOW -> "YELLOW"; FlagHistory.Tier.RED -> "RED" }
+        val tierName = tier.label
         val score = FlagHistory.confidenceScore(uuid)
         val counts = FlagHistory.flagCounts(uuid)
         val top = if (counts.isEmpty()) "no flags" else counts.entries.take(3).joinToString(", ") {
@@ -42,7 +42,7 @@ object Snapshot {
      *  name / label containing a newline or control char produced invalid JSON. */
     fun buildJson(uuid: UUID, name: String): String = try {
         val tier = FlagHistory.tierFor(uuid)
-        val tierName = when (tier) { FlagHistory.Tier.GREEN -> "GREEN"; FlagHistory.Tier.YELLOW -> "YELLOW"; FlagHistory.Tier.RED -> "RED" }
+        val tierName = tier.label
         val obj = JsonObject()
         obj.addProperty("name", name)
         obj.addProperty("uuid", uuid.toString())

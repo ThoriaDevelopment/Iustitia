@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Iustitia &mdash; client-sided Fabric anticheat for Minecraft 1.21.11</title>
-  <meta name="description" content="Iustitia is a free, open-source, client-sided Fabric anticheat for Minecraft 1.21.11. 32 read-only checks, lag-aware false-positive guards, in-game YACL config, nametag cheat-tier prefixes, and a full moderator suite &mdash; instant replay (/ius replay), directional sonar audio, portable evidence clips (/ius clip, /ius playclip), player exemptions, and Phase B render overlays (watch follow-cam, target highlight, ghost trail, offender selfie). Zero outgoing packets, zero telemetry.">
+  <meta name="description" content="Iustitia is a free, open-source, client-sided Fabric anticheat for Minecraft 1.21.11. 31 read-only checks, lag-aware false-positive guards, in-game YACL config, nametag cheat-tier prefixes, and a full moderator suite &mdash; instant replay (/ius replay), directional sonar audio, portable evidence clips (/ius clip, /ius playclip), player exemptions, and Phase B render overlays (watch follow-cam, target highlight, ghost trail, offender selfie). Zero outgoing packets, zero telemetry.">
   <link rel="stylesheet" href="assets/iustitia.css">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='4' y='2' width='8' height='8' rx='1.5' transform='rotate(45 8 6)' fill='%238b5cf6'/%3E%3C/svg%3E">
 </head>
@@ -30,7 +30,7 @@
       <div>
         <span class="hero-badge"><span class="dot"></span> Client-sided &middot; Fabric &middot; 1.21.11</span>
         <h1>Justice, <span class="grad">observed.</span></h1>
-        <p class="tagline">A free, open-source Fabric anticheat that watches <em>other</em> players from your client &mdash; 32 read-only checks, lag-aware guards, cheater-tier nametag prefixes, and a full observer toolkit (/ius transcript, evidence, note, session). No server install, no outgoing packets, no telemetry.</p>
+        <p class="tagline">A free, open-source Fabric anticheat that watches <em>other</em> players from your client &mdash; 31 read-only checks, lag-aware guards, cheater-tier nametag prefixes, and a full observer toolkit (/ius transcript, evidence, note, session). No server install, no outgoing packets, no telemetry.</p>
         <div class="hero-cta">
           <a class="btn btn-primary" href="https://github.com/ThoriaDevelopment/Iustitia/releases/latest">Install Iustitia</a>
           <a class="btn" href="docs/index.html">Explore the docs &nearr;</a>
@@ -44,7 +44,7 @@
         </div>
         <div class="console-body" id="console-body">
           <div class="line"><span class="prompt">&gt; </span>iustitia --status</div>
-          <div class="line"><span class="ok">32 checks loaded across 4 groups</span></div>
+          <div class="line"><span class="ok">31 checks loaded across 4 groups</span></div>
           <div class="line"><span class="ok">protocol: 1.21.11 + 1.8.9 combat ready</span></div>
           <div class="line"><span class="dim">keybinds: 12 binds · replay · sonar · clips</span></div>
           <div class="line"><span class="dim">0 outgoing packets sent. 0 telemetry.</span></div>
@@ -112,7 +112,7 @@
         </div>
         <div class="card slide-in-bottom delay-2">
           <div class="icon">⚔</div>
-          <h3>32 checks, 4 groups</h3>
+          <h3>31 checks, 4 groups</h3>
           <p>Combat, movement, rotation, and packet checks &mdash; from lag-compensated reach and a 7-sub KillAura suite to blink/timer and silent-aim tracking.</p>
         </div>
         <div class="card slide-in-bottom delay-3">
@@ -133,7 +133,7 @@
         <div class="card slide-in-bottom delay-2">
           <div class="icon">🏷</div>
           <h3>Nametag tier prefixes</h3>
-          <p>Other players get a colored, confidence-scored prefix &mdash; <span style="color:#4ade80">[+ 0]</span> clean, <span style="color:#facc15">[! 12]</span> suspicious, <span style="color:#f87171">[X 87]</span> definitive cheater &mdash; at a glance.</p>
+          <p>Other players get a colored tier prefix &mdash; <span style="color:#4ade80">[+]</span> clean, <span style="color:#facc15">[!]</span> suspicious, <span style="color:#f87171">[X]</span> definitive cheater &mdash; at a glance. (The numeric confidence score behind a tier lives in <code>/ius hist</code>, <code>/ius session</code>, and the crosshair HUD, not on the tag.)</p>
         </div>
         <div class="card slide-in-bottom delay-3">
           <div class="icon">✓</div>
@@ -154,7 +154,7 @@
     <div class="container">
       <div class="section-label fade-in-scroll">Philosophy</div>
       <h2 class="section-title fade-in-scroll">False-positive <span class="grad">reduction first.</span></h2>
-      <p class="section-lead fade-in-scroll">A client-sided anticheat that cries wolf is worse than none &mdash; you stop trusting the prefix. So Iustitia is tuned conservatively: 13 of 32 checks are <em>primary definitive</em> (their alert proves cheating), KillAura acts as a corroborator only, and the remaining 18 are inferential. Tiers require cross-check corroboration to reach red.</p>
+      <p class="section-lead fade-in-scroll">A client-sided anticheat that cries wolf is worse than none &mdash; you stop trusting the prefix. So Iustitia is tuned conservatively: 12 of 31 checks are <em>primary definitive</em> (their alert proves cheating), KillAura acts as a corroborator only, and the remaining 18 are inferential. Tiers require cross-check corroboration to reach red.</p>
       <div class="pillars">
         <div class="pillar slide-in-left">
           <span class="num">01 / OBSERVE ONLY</span>
@@ -164,11 +164,11 @@
         <div class="pillar slide-in-bottom">
           <span class="num">02 / LAG-AWARE</span>
           <h4>Shared lag signal</h4>
-          <p>Server lag freezes every rebroadcast position. A single lag-tick signal exempts Speed, Fly, Phase, PacketGap, Timer and more &mdash; the frozen-in-wall and catch-up-burst FP classes are gone.</p>
+          <p>Server lag freezes every rebroadcast position. A single lag-tick signal exempts Speed, Fly, Phase, PacketGap and more &mdash; the frozen-in-wall and catch-up-burst FP classes are gone.</p>
         </div>
         <div class="pillar slide-in-right">
           <span class="num">03 / CONSERVATIVE TIERS</span>
-          <h4>13 definitive + 1 corroborator, 18 inferential</h4>
+          <h4>12 definitive + 1 corroborator, 18 inferential</h4>
           <p>Only checks whose signature is impossible for a legit player are <span style="color:#f87171">primary definitive [X]</span>. KillAura is a corroborator &mdash; strong when it agrees with reach/criticals, but never marks a player alone. The rest are inferential and cannot push a tier to red.</p>
         </div>
       </div>
@@ -182,8 +182,8 @@
       <h2 class="section-title fade-in-scroll">Honest <span class="grad">engineering stats.</span></h2>
       <p class="section-lead fade-in-scroll">No marketing percentages &mdash; just what the mod actually is.</p>
       <div class="stats">
-        <div class="stat zoom-in delay-1"><div class="n">32</div><div class="l">checks</div></div>
-        <div class="stat zoom-in delay-2"><div class="n">13</div><div class="l">definitive</div></div>
+        <div class="stat zoom-in delay-1"><div class="n">31</div><div class="l">checks</div></div>
+        <div class="stat zoom-in delay-2"><div class="n">12</div><div class="l">definitive</div></div>
         <div class="stat zoom-in delay-3"><div class="n">0</div><div class="l">outgoing packets</div></div>
         <div class="stat zoom-in delay-4"><div class="n">100%</div><div class="l">client-side</div></div>
         <div class="stat zoom-in delay-5"><div class="n">0</div><div class="l">telemetry</div></div>
@@ -223,7 +223,7 @@
   <section class="section" style="padding-top:0">
     <div class="container">
       <div class="section-label fade-in-scroll">The checks</div>
-      <h2 class="section-title fade-in-scroll">32 across <span class="grad">four categories.</span></h2>
+      <h2 class="section-title fade-in-scroll">31 across <span class="grad">four categories.</span></h2>
       <p class="section-lead fade-in-scroll">Each links to a deep page &mdash; what it detects, the observer signature, false-positive guards, and configuration defaults.</p>
       <div class="groups" style="margin-top:34px">
         <a class="group-card slide-in-bottom delay-1" href="docs/index.html#combat">

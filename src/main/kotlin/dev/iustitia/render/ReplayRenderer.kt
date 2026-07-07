@@ -155,12 +155,25 @@ object ReplayRenderer {
                 .associate { it.uuid() to it.label }
         } catch (_: Throwable) { emptyMap() }
         matrices.push()
-        matrices.translate(-camPos.x, -camPos.y, -camPos.z)
+        // Fold the relocation offset into the single shared origin translate: every per-snap
+        // translate(s.x, s.y, s.z) below then lands the ghost at (recordedPos + offset) - camPos, i.e.
+        // the whole scene shifts as a rigid block to the user (focus player's start → the user). The
+        // terrain overlay draws in this same frame, so its absolute-coord quads relocate by the same
+        // offset. null offset ⇒ legacy absolute rendering (relocate disabled / unavailable).
+        val o = ReplayState.relocOffset ?: net.minecraft.util.math.Vec3d.ZERO
+        matrices.translate(-camPos.x + o.x, -camPos.y + o.y, -camPos.z + o.z)
         try {
+            // Chunk world (v6+ clip-only; null for /ius replay + pre-v6 clips). Solid, textured blocks
+            // — the real captured map, face-culled to the surface shell — so the user can free-spectate
+            // anywhere, including underground. Drawn first (under ghosts + the v5 wireframe terrain).
+            try { ChunkWorldRenderer.render(matrices, vcp, camPos, o) } catch (_: Throwable) {}
+            // Terrain shell (clip-only; null for /ius replay). Face-culled, so only the visible
+            // surface blocks draw — fully-enclosed blocks contribute nothing. Fail-open per frame.
+            try { TerrainOverlay.render(matrices, lines) } catch (_: Throwable) {}
             for (s in frame.snaps) {
                 try {
                     if (skipFocus && s.uuid() == focusUuid) continue
-                    drawHumanoid(matrices, lines, vcp, tr, s, focusUuid, camPos, cameraYaw, alertLabelFor[s.uuid()], nowTick)
+                    drawHumanoid(matrices, lines, vcp, tr, s, focusUuid, camPos, o, cameraYaw, alertLabelFor[s.uuid()], nowTick)
                 } catch (_: Throwable) {
                     // skip one bad ghost, keep the rest
                 }
@@ -183,10 +196,17 @@ object ReplayRenderer {
         s: ReplayBuffer.PlayerSnap,
         focusUuid: java.util.UUID?,
         camPos: net.minecraft.util.math.Vec3d,
+        offset: net.minecraft.util.math.Vec3d,
         cameraYaw: Float,
         alertLabel: String?,
         tick: Int,
     ) {
+        // Offset floats for the name-tag / alert-marker distance scaling — the apparent distance must
+        // be to the RELOCATED ghost (recorded + offset), not the original recorded spot (which on a
+        // cross-server playclip could be far away and would blow the tag up to max scale).
+        val oxF = offset.x.toFloat()
+        val oyF = offset.y.toFloat()
+        val ozF = offset.z.toFloat()
         val uuid = s.uuid()
         val isFocus = focusUuid != null && uuid == focusUuid
         val tier = try { FlagHistory.tierFor(uuid) } catch (_: Throwable) { FlagHistory.Tier.GREEN }
@@ -265,9 +285,9 @@ object ReplayRenderer {
             matrices.push()
             try {
                 matrices.translate(s.x.toDouble(), (s.y + labelY).toDouble(), s.z.toDouble())
-                val dx = s.x - camPos.x.toFloat()
-                val dy = (s.y + labelY) - camPos.y.toFloat()
-                val dz = s.z - camPos.z.toFloat()
+                val dx = (s.x + oxF) - camPos.x.toFloat()
+                val dy = (s.y + labelY + oyF) - camPos.y.toFloat()
+                val dz = (s.z + ozF) - camPos.z.toFloat()
                 val dist = sqrt((dx * dx + dy * dy + dz * dz).toDouble()).toFloat()
                 val scale = (0.025f * (dist / 8f)).coerceIn(0.015f, 0.09f)
                 // Billboard to face the render camera (see drawGhosts): rotate about world Y by
@@ -297,9 +317,9 @@ object ReplayRenderer {
                 matrices.push()
                 try {
                     matrices.translate(s.x.toDouble(), (s.y + ay).toDouble(), s.z.toDouble())
-                    val dx = s.x - camPos.x.toFloat()
-                    val dy = (s.y + ay) - camPos.y.toFloat()
-                    val dz = s.z - camPos.z.toFloat()
+                    val dx = (s.x + oxF) - camPos.x.toFloat()
+                    val dy = (s.y + ay + oyF) - camPos.y.toFloat()
+                    val dz = (s.z + ozF) - camPos.z.toFloat()
                     val dist = sqrt((dx * dx + dy * dy + dz * dz).toDouble()).toFloat()
                     val scale = (0.025f * (dist / 8f)).coerceIn(0.015f, 0.09f)
                     matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(-cameraYaw))

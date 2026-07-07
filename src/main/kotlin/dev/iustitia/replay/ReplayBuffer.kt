@@ -79,8 +79,16 @@ object ReplayBuffer {
     private val frames: ArrayDeque<Frame> = ArrayDeque()
     private val alerts: ArrayDeque<AlertRec> = ArrayDeque()
 
-    /** Snapshot frames + alerts for a replay/clip, copied out so live recording can't mutate playback. */
-    data class Window(val frames: List<Frame>, val alerts: List<AlertRec>)
+    /** Snapshot frames + alerts for a replay/clip, copied out so live recording can't mutate playback.
+     *  [terrain] is only set on clip exports ([TerrainCapture] runs in the `/ius clip` handler); a live
+     *  `/ius replay` snapshot leaves it null — replay never bundles the map (you're already on it).
+     *  [chunks] (v6+) is the full-chunk world capture ([ChunkCapture]) — also clip-only, null for replay
+     *  and pre-v6 clips; supersedes [terrain] for the solid-world render path (terrain stays as the v5
+     *  wireframe fallback). */
+    data class Window(
+        val frames: List<Frame>, val alerts: List<AlertRec>,
+        val terrain: TerrainSnapshot? = null, val chunks: ChunkSnapshot? = null,
+    )
 
     /** True when the capture buffer is turned on ([IustitiaConfig.replayCapture]). Fail-open. */
     private val enabled: Boolean get() = try { ConfigManager.config.replayCapture } catch (_: Throwable) { false }

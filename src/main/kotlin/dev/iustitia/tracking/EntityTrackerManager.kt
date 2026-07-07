@@ -5,6 +5,7 @@ import net.minecraft.client.network.OtherClientPlayerEntity
 import net.minecraft.client.world.ClientWorld
 import net.minecraft.item.consume.UseAction
 import net.minecraft.util.math.Vec3d
+import dev.iustitia.protocol.ProtocolDetector
 import dev.iustitia.world.WorldQueries
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -20,6 +21,12 @@ import java.util.concurrent.ConcurrentHashMap
  * swallowed so one bad entity never stops the tick.
  */
 object EntityTrackerManager {
+
+    /** Window (ticks) after a server-wide freeze within which sensitivity samples are skipped
+     *  (catch-up snap distorts the pitch-delta GCD). Matches the lag gate the movement checks use. */
+    private const val LAG_FEED_WINDOW = 8
+    /** Window (ticks) after a batched catch-up burst within which sensitivity samples are skipped. */
+    private const val BURST_FEED_WINDOW = 3
 
     private val byUuid = ConcurrentHashMap<UUID, TrackedPlayer>()
 
@@ -195,6 +202,23 @@ object EntityTrackerManager {
         tp.pos = newPos
         tp.lastYaw = tp.yaw; tp.yaw = newYaw
         tp.lastPitch = tp.pitch; tp.pitch = newPitch
+        // Axis A substrate: feed the per-player sensitivity processor. Only on full-float-look
+        // protocols (1.21.2+) — byte-quantized pre-1.21.2 deltas carry no GCD signal (plan §1.1).
+        // Skip + clear the predecessor around a teleport (an arbitrary yaw/pitch jump poisons the
+        // GCD) and skip during server-lag bursts (catch-up snaps distort the deltas). The lag
+        // signals are published AFTER the per-player loop (lines 169-173), so this feed sees the
+        // previous tick's signal — the correct available value.
+        if (ProtocolDetector.fullFloatLook) {
+            val sinceTp = tick - tp.lastTeleportTick
+            if (sinceTp >= 3 &&
+                tick - lastServerLagTick > LAG_FEED_WINDOW &&
+                tick - lastLagBurstTick > BURST_FEED_WINDOW
+            ) {
+                tp.sensitivity.process((tp.pitch - tp.lastPitch).toDouble())
+            } else if (sinceTp < 3) {
+                tp.sensitivity.clearLastDelta()
+            }
+        }
         // Hand-swing phase for the replay ghost's arm-swing animation (vanilla advances this
         // client-side for other players; plain public field read, no side effects).
         tp.handSwingTicks = try { e.handSwingTicks } catch (_: Throwable) { 0 }

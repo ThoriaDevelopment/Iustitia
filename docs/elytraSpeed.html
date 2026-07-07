@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ElytraSpeed &mdash; Iustitia checks</title>
-  <meta name="description" content="ElytraFly detector — vanilla elytra caps ~1.5 b/t (30 bps); firework boosts briefly 40-50 bps. Flags when gliding is active for &gt;=3 sustained ticks of either blatant (bps &gt; 40) or a pitch-vs-speed anomaly (bps &gt; 34 while |pitch| &lt; 8deg).">
+  <meta name="description" content="ElytraFly detector — vanilla elytra caps ~1.5 b/t (30 bps); firework boosts briefly 40-50 bps. Flags when gliding is active for &gt;=3 sustained ticks of blatant (bps &gt; 40), a pitch-vs-speed anomaly (bps &gt; 34 while |pitch| &lt; 8deg), OR the glidingSprint sub-flag (sprint metadata held while gliding — Grim SprintF, plan §7.1 fold; vanilla cancels sprint on elytra deploy).">
   <link rel="stylesheet" href="../assets/iustitia.css">
 </head>
 <body>
@@ -25,30 +25,35 @@
   <div class="container docs-layout">
     <aside class="docs-side">
       <a href="index.html" style="display:block;margin-bottom:14px;color:var(--accent);font-size:13px;font-weight:600">&larr; All checks</a>
-      <h4>⚔ Combat <span style="color:var(--text-faint);font-weight:400">(14)</span></h4>
+      <h4>⚔ Combat <span style="color:var(--text-faint);font-weight:400">(16)</span></h4>
       <a href="reach.html">Reach<span class="badge-t">●</span></a>
       <a href="multiTarget.html">MultiTarget<span class="badge-t">●</span></a>
       <a href="clickStatistics.html">Autoclicker<span class="badge-t">○</span></a>
       <a href="throughWalls.html">ThroughWalls<span class="badge-t">●</span></a>
       <a href="criticals.html">Criticals<span class="badge-t">●</span></a>
+      <a href="maceSmash.html">MaceSmash<span class="badge-t">●</span></a>
+      <a href="hitsWithoutSwing.html">HitsWithoutSwing<span class="badge-t">○</span></a>
       <a href="noKnockback.html">NoKnockback<span class="badge-t">○</span></a>
       <a href="keepSprint.html">KeepSprint<span class="badge-t">○</span></a>
       <a href="wTap.html">WTap<span class="badge-t">○</span></a>
       <a href="jumpOnHurt.html">JumpReset<span class="badge-t">○</span></a>
       <a href="backtrack.html">Backtrack<span class="badge-t">○</span></a>
-      <a href="killAura.html">KillAura<span class="badge-t">●</span></a>
+      <a href="killAura.html">KillAura<span class="badge-t">○</span></a>
       <a href="autoBlock.html">AutoBlock<span class="badge-t">●</span></a>
       <a href="hitFlick.html">HitFlick<span class="badge-t">●</span></a>
       <a href="triggerbot.html">Triggerbot<span class="badge-t">○</span></a>
-      <h4>↗ Movement <span style="color:var(--text-faint);font-weight:400">(11)</span></h4>
+      <h4>↗ Movement <span style="color:var(--text-faint);font-weight:400">(14)</span></h4>
       <a href="speedEnvelope.html">Speed<span class="badge-t">○</span></a>
       <a href="flyEnvelope.html">Fly<span class="badge-t">●</span></a>
-      <a href="noFallDamage.html">NoFall<span class="badge-t">●</span></a>
+      <a href="spider.html">Spider<span class="badge-t">●</span></a>
+      <a href="noFallDamage.html">NoFall<span class="badge-t">○</span></a>
       <a href="stepHeight.html">Step<span class="badge-t">○</span></a>
       <a href="teleport.html">Teleport<span class="badge-t">●</span></a>
       <a href="longJump.html">LongJump<span class="badge-t">●</span></a>
       <a href="noSlow.html">NoSlow<span class="badge-t">○</span></a>
       <a href="backwardSprint.html">BackwardSprint<span class="badge-t">○</span></a>
+      <a href="wallSprint.html">WallSprint<span class="badge-t">●</span></a>
+      <a href="sprintHack.html">SprintHack<span class="badge-t">●</span></a>
       <a href="waterWalk.html">WaterWalk<span class="badge-t">●</span></a>
       <a href="elytraSpeed.html" class="cur">ElytraSpeed<span class="badge-t">○</span></a>
       <a href="phaseClip.html">PhaseClip<span class="badge-t">●</span></a>
@@ -58,9 +63,8 @@
       <a href="aimWrap.html">AimWrap<span class="badge-t">○</span></a>
       <a href="pitchBound.html">PitchBound<span class="badge-t">○</span></a>
       <a href="scaffoldRotation.html">Scaffold<span class="badge-t">●</span></a>
-      <h4>■ Packet <span style="color:var(--text-faint);font-weight:400">(2)</span></h4>
+      <h4>■ Packet <span style="color:var(--text-faint);font-weight:400">(1)</span></h4>
       <a href="packetGap.html">PacketGap<span class="badge-t">○</span></a>
-      <a href="timerRate.html">Timer<span class="badge-t">●</span></a>
     </aside>
     <main>
       <div class="breadcrumb"><a href="../index.html">Iustitia</a> <span class="sep">/</span> <a href="index.html">Docs</a> <span class="sep">/</span> <a href="index.html#movement">Movement</a> <span class="sep">/</span> ElytraSpeed</div>
@@ -69,7 +73,7 @@
           <h1>ElytraSpeed</h1>
           <span class="badge badge-inf"><span class="glyph">[!]</span> Inferential</span>
         </div>
-        <div class="check-sub">ElytraFly detector — vanilla elytra caps ~1.5 b/t (30 bps); firework boosts briefly 40-50 bps. Flags when gliding is active for &gt;=3 sustained ticks of either blatant (bps &gt; 40) or a pitch-vs-speed anomaly (bps &gt; 34 while |pitch| &lt; 8deg).</div>
+        <div class="check-sub">ElytraFly detector — vanilla elytra caps ~1.5 b/t (30 bps); firework boosts briefly 40-50 bps. Flags when gliding is active for &gt;=3 sustained ticks of blatant (bps &gt; 40), a pitch-vs-speed anomaly (bps &gt; 34 while |pitch| &lt; 8deg), OR the glidingSprint sub-flag (sprint metadata held while gliding — Grim SprintF, plan §7.1 fold; vanilla cancels sprint on elytra deploy).</div>
         <div class="meta" style="margin-top:10px;color:var(--text-faint);font-family:var(--mono);font-size:13px">id: <span style="color:var(--accent)">elytraSpeed</span> &nbsp;&middot;&nbsp; class: ElytraSpeedCheck &nbsp;&middot;&nbsp; group: Movement</div>
       </div>
       <div class="doc-nav">
@@ -79,12 +83,12 @@
 
       <section class="doc-section fade-in-scroll">
         <h2>What it detects</h2>
-        <p>ElytraFly detector — vanilla elytra caps ~1.5 b/t (30 bps); firework boosts briefly 40-50 bps. Flags when gliding is active for &gt;=3 sustained ticks of either blatant (bps &gt; 40) or a pitch-vs-speed anomaly (bps &gt; 34 while |pitch| &lt; 8deg).</p>
+        <p>ElytraFly detector — vanilla elytra caps ~1.5 b/t (30 bps); firework boosts briefly 40-50 bps. Flags when gliding is active for &gt;=3 sustained ticks of blatant (bps &gt; 40), a pitch-vs-speed anomaly (bps &gt; 34 while |pitch| &lt; 8deg), OR the glidingSprint sub-flag (sprint metadata held while gliding — Grim SprintF, plan §7.1 fold; vanilla cancels sprint on elytra deploy).</p>
       </section>
 
       <section class="doc-section slide-in-bottom">
         <h2>Observer signature</h2>
-        <div class="sig">bps = hypot(...) * 20.0; blatant = bps &gt; threshold (40); levelFast = bps &gt; threshold*0.85 &amp;&amp; |pitch| &lt; 8.0; flag when streak &gt;= 3. The 3-tick sustain absorbs firework-boost spikes; steep-pitch legit glides never trip the anomaly.</div>
+        <div class="sig">bps = hypot(...) * 20.0; blatant = bps &gt; threshold (40); levelFast = bps &gt; threshold*0.85 &amp;&amp; |pitch| &lt; 8.0; sprintGliding = tp.sprinting; flag (label ElytraSpeed(Sprint) when sprint, else ElytraSpeed) when streak &gt;= 3. The 3-tick sustain absorbs firework-boost spikes; steep-pitch legit glides never trip the anomaly.</div>
       </section>
 
       <section class="doc-section fade-in-scroll">
@@ -93,7 +97,7 @@
       <li>Vehicle exempt</li>
       <li>Not gliding resets</li>
       <li>Teleport exempt (tick - lastTeleportTick &lt; 5, resets)</li>
-      <li>3-tick sustain gate absorbs firework-boost spikes</li>
+      <li>3-tick sustain gate absorbs firework-boost spikes and sprint metadata-lag edges</li>
     </ul>
       </section>
 
@@ -110,6 +114,7 @@
         <tr class="const-row"><td>ANOMALY_FACTOR</td><td class="val">0.85</td></tr>
         <tr class="const-row"><td>LEVEL_PITCH</td><td class="val">8.0deg</td></tr>
         <tr class="const-row"><td>streak</td><td class="val">3 ticks</td></tr>
+        <tr class="const-row"><td>sub-flags</td><td class="val">ElytraSpeed / ElytraSpeed(Sprint) (one VL pool)</td></tr>
       </tbody>
     </table>
       </section>

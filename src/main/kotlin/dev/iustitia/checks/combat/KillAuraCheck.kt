@@ -6,6 +6,8 @@ import dev.iustitia.checks.CheckContext
 import dev.iustitia.event.AttackEvent
 import dev.iustitia.event.SwingSignal
 import dev.iustitia.history.Evidence
+import dev.iustitia.math.MathUtil.expandedGcd
+import dev.iustitia.protocol.ProtocolDetector
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
@@ -63,9 +65,28 @@ import kotlin.math.sqrt
  *  - **consume**: swinging at entities while using an item (Rain's old Killaura
  *    B) — driven by the inferred [AttackEvent] + `tp.usingItem` sustained.
  *
- * Not ported from MX (needs exact packet floats / known sensitivity, destroyed
- * by quantization + interpolation): GCD/sensitivity, exact 0.1/0.01 deltas,
- * 1e-4 accel patterns, Shannon entropy, jolt duplicate statistics, ML modules.
+ *  - **heuristic(gcd)**: MX `AimConstantCheck` Type1 — flags a pitch-delta GCD
+ *    below the finest mouse-sensitivity grid (EXPANDER-scaled `gcd < 131072L` =
+ *    1/128°, finer than any mouse produces) under a valid-angles + not-low-sens
+ *    gate. The "constant rotation" aimbot fingerprint. Gated on
+ *    `ProtocolDetector.fullFloatLook && tp.sensitivity.valid` (Axis A, plan §1.1/§8
+ *    step 2): the §1.1 correction is that this signal is portable on native
+ *    1.21.2+ full-float look — it is byte-quantized away only pre-1.21.2.
+ *
+ *  - **drift** (Axis C, plan §2.3 / §8 step 13): combat-ward drift-direction
+ *    correlation — `Σ sign(Δyaw) == sign(bearing-error) > 70%` over a 50-tick
+ *    rolling window while in combat. A smooth AimAssist that never snaps (slips
+ *    `silent(snap)`) and never fully locks (slips `silent(track)`) still drifts
+ *    its packet yaw toward the target's bearing every tick; a real mouse
+ *    overshoots/idles and matches <70%. Survives Movement Fix (drift is in the
+ *    rotation stream, which Movement Fix reads velocity from but doesn't alter)
+ *    and is portable to 1.8 (sign survives byte-quantization, so no
+ *    `fullFloatLook` gate). Transition-gated one-shot per drift episode.
+ *
+ * Not ported from MX (needs exact packet floats / known sensitivity): exact
+ * 0.1/0.01 deltas, 1e-4 accel patterns, Shannon entropy, jolt duplicate
+ * statistics, ML modules. (GCD/sensitivity Type1 is now ported as `heuristic(gcd)`
+ * — the "destroyed by quantization+interpolation" caveat applied only pre-1.21.2.)
  *
  * setbackVL 5, decay 0.05/tick (slow — these are sustained/corroborating
  * behaviors; a single sub-flag shouldn't reset the pool).
@@ -80,6 +101,13 @@ class KillAuraCheck : Check() {
     }
 
     override fun newContext(uuid: UUID): CheckContext = KillAuraContext()
+
+    // Per-tick snapshot of EntityTrackerManager.all() shared across all attackers processed
+    // in the same tick, so targetsNear doesn't re-iterate the global map once per combat-active
+    // attacker (O(N²) per tick). Refreshed on first use each tick; fail-open (purge is between
+    // ticks, so a snapshot is valid for the whole tick batch).
+    private var scanTick = -1
+    private var scanAll: List<TrackedPlayer> = emptyList()
 
     // ---- shared geometry / burst / track constants (port verbatim from Rain) ----
     /** Sentinel for "never" tick fields (Int.MIN_VALUE; tick counters are small positives). */
@@ -148,6 +176,56 @@ class KillAuraCheck : Check() {
     private val VL_MOVE_LOCK = 1.7
     private val VL_MOVE_SPRINT = 1.7
     private val VL_CONSUME = 1.0
+
+    // ---- heuristic(gcd): MX AimConstantCheck Type1 (Axis A, plan §8 step 2) ----
+    /** Flag level for the constant-rotation GCD sub-flag (tuned in step 14). */
+    private val VL_GCD = 1.5
+    /** MX `constant(1)_needVl` (8) + 2 — buffer crossings before a flag. */
+    private val GCD1_NEED = 10
+    /** MX resets the buffer to 4 after a punish so one run can re-fire. */
+    private val GCD1_RESET = 4
+    /** MX Type1 floor (gcd in EXPANDER units): 2^17 = 1/128°, finer than any mouse
+     *  sensitivity produces → "constant rotation." Below this the pitch step is
+     *  sub-mouse-grid, i.e. synthetic. */
+    private val GCD_PITCH_THRESHOLD = 131072L
+    /** MX valid-angles bounds (MIN_DELTA / MAX_DELTA). */
+    private val GCD_MIN_DELTA = 0.25f
+    private val GCD_MAX_DELTA = 20.0f
+    /** MX `sensitivityTooLow`: a legit <50-sens player makes tiny constant pitch
+     *  deltas that would false-flag — exempt them; cheaters at sens>=50 still trip. */
+    private val GCD_SENS_LOW = 50
+    /** Standard lag gate (§1.8 posture + step-1 sensitivity feed): skip + clear the
+     *  GCD predecessor during a server-wide freeze / catch-up burst window. */
+    private val GCD_LAG_WINDOW = 8
+    private val GCD_BURST_WINDOW = 3
+
+    // ---- drift-direction correlation (Axis C, plan §8 step 13) ----
+    /** Flag level for the combat-ward drift sub-flag (tuned in step 14). Corroborating
+     *  AimAssist signal — a smooth aimbot drifts its yaw toward the target's bearing
+     *  consistently; a real mouse overshoots/idles and matches <70%. */
+    private val VL_DRIFT = 1.5
+    /** Rolling window (ticks) over which sign matches accumulate (plan §2.3: "50-tick"). */
+    private val DRIFT_WINDOW_TICKS = 50
+    /** Minimum samples inside the window before the ratio is evaluated — statistical weight
+     *  so a few combat ticks don't trip a 70% bar on noise. */
+    private val DRIFT_MIN_SAMPLES = 15
+    /** Sign-match ratio over the window that flags (plan §2.3: ">70%"). */
+    private val DRIFT_RATIO = 0.70f
+    /** Ratio below which the active latch releases (hysteresis so the flag is one-shot per
+     *  drift episode, not re-fired every tick the ratio lingers above 70%). */
+    private val DRIFT_RESET_RATIO = 0.50f
+    /** Minimum |Δyaw| to count as a drift sample — stationary yaw is neither match nor miss
+     *  (a still player isn't "drifting toward" anything). */
+    private val DRIFT_MIN_DELTA = QUANTUM * 0.5f
+    /** Skip samples where the yaw already points at the bearing (|error| < this) — the
+     *  on-target lock-on case is `silent(track)`'s signal, not drift's. Drift measures
+     *  the *closing* phase where the target is still off-bore (behind/beside the cheater). */
+    private val DRIFT_ON_TARGET_TOL = QUANTUM
+    /** Lag gate (§1.8 posture): a catch-up snap produces a spurious large Δyaw that
+     *  coincidentally matches the bearing direction (rubberband toward target) — skip
+     *  sampling so the legit window stays intact. */
+    private val DRIFT_LAG_WINDOW = 8
+    private val DRIFT_BURST_WINDOW = 3
 
     /** Per-player position history (newest at 0), shared across all attackers as target trails. */
     private val trails = ConcurrentHashMap<UUID, Trail>()
@@ -226,6 +304,10 @@ class KillAuraCheck : Check() {
                 ctx.moveSamples = 0
                 ctx.moveDesyncTicks = 0
                 ctx.residualSum = 0.0f
+                ctx.lastDeltaPitch = 0f
+                ctx.gcdBuffer = 0
+                ctx.driftRing.clear()
+                ctx.driftActive = false
                 return
             }
 
@@ -241,6 +323,11 @@ class KillAuraCheck : Check() {
                 }
                 return
             }
+
+            // component: GCD constant-rotation (MX AimConstantCheck Type1, Axis A §8 step 2).
+            // Runs only in-combat (the gate above already returned otherwise) and on the
+            // full-float-look substrate; reuses the yawChange/pitchChange already computed.
+            gcdComponent(tp, ctx, tick, yawChange, pitchChange)
 
             // component: windowed rotation heuristics (AimBasicCheck port)
             val absYawChange = abs(yawChange)
@@ -258,6 +345,7 @@ class KillAuraCheck : Check() {
             burstMachine(tp, ctx, tick, yawChange, prevYaw, targets)
             trackComponent(tp, ctx, yaw, targets, tick)
             movementComponent(tp, ctx, moveX, moveY, moveZ, yaw, targets, tick)
+            driftComponent(tp, ctx, tick, yawChange, yaw, targets)
 
             // prune stale trails so despawned players don't accumulate
             if (trails.size > 80) {
@@ -267,6 +355,47 @@ class KillAuraCheck : Check() {
         } catch (_: Throwable) {
             // fail-open: never crash the tick
         }
+    }
+
+    /**
+     * MX `AimConstantCheck` Type1 (Axis A, plan §8 step 2). Flags a pitch-delta GCD
+     * below the finest mouse-sensitivity grid (`expandedGcd < 131072L` = 1/128°) under
+     * a valid-angles gate — the "constant rotation" aimbot fingerprint. Gated on the
+     * full-float-look substrate; fail-open (clears the predecessor) when cold / lagging.
+     * Faithful to MX: `sensitivityTooLow` (<50) exempts legit low-sens players.
+     */
+    private fun gcdComponent(tp: TrackedPlayer, ctx: KillAuraContext, tick: Int,
+                             yawChange: Float, pitchChange: Float) {
+        if (!ProtocolDetector.fullFloatLook || !tp.sensitivity.valid) {
+            ctx.lastDeltaPitch = 0f
+            return
+        }
+        // lag gate: catch-up snaps distort deltas → don't pair a stale predecessor.
+        if (tick - EntityTrackerManager.lastServerLagTick <= GCD_LAG_WINDOW ||
+            tick - EntityTrackerManager.lastLagBurstTick <= GCD_BURST_WINDOW
+        ) {
+            ctx.lastDeltaPitch = 0f
+            return
+        }
+        val dYaw = abs(yawChange)
+        val dPitch = abs(pitchChange)
+        val validAngles = dYaw > GCD_MIN_DELTA && dPitch > GCD_MIN_DELTA &&
+            dPitch < GCD_MAX_DELTA && dYaw < GCD_MAX_DELTA
+        val sensTooLow = tp.sensitivity.sensitivity < GCD_SENS_LOW
+        val gcd = expandedGcd(dPitch, ctx.lastDeltaPitch)
+        if (gcd < GCD_PITCH_THRESHOLD && validAngles && !sensTooLow) {
+            ctx.gcdBuffer = minOf(ctx.gcdBuffer + 1, 200)
+            if (ctx.gcdBuffer > GCD1_NEED) {
+                flag(tp, ctx, VL_GCD, "heuristic(gcd)", tick, Evidence(
+                    pos = tp.pos, measurement = gcd.toDouble(),
+                    threshold = GCD_PITCH_THRESHOLD.toDouble(),
+                    extra = "buffer=${ctx.gcdBuffer} sens=${tp.sensitivity.sensitivity}"))
+                ctx.gcdBuffer = GCD1_RESET
+            }
+        } else if (ctx.gcdBuffer > 0) {
+            ctx.gcdBuffer -= 2
+        }
+        ctx.lastDeltaPitch = dPitch
     }
 
     /** Port of AimBasicCheck.checkDefaultAim(): robotized rotation + snap pattern. */
@@ -510,6 +639,80 @@ class KillAuraCheck : Check() {
         }
     }
 
+    /**
+     * **drift** — Axis C combat-ward drift-direction correlation (plan §2.3 / §8 step 13).
+     *
+     * A smooth AimAssist (Vape/Slinky linear+sigmoid, Raven `rps` cap, Meteor adaptive)
+     * never snaps and never fully locks, so it slips `silent(snap)` and `silent(track)`.
+     * But it consistently drifts the packet yaw *toward* the target's bearing — even when
+     * the target is behind/beside the cheater — because the cheat closes the angular error
+     * every tick. A real mouse overshoots, idles, and re-centres, so its sign(Δyaw) matches
+     * sign(bearing-error) well under 70% of the time. `Σ sign match > 70%` over a 50-tick
+     * rolling window while in combat is the tell.
+     *
+     * **Why it survives Movement Fix:** the drift is in the *rotation stream* (the broadcast
+     * look packets), which Movement Fix re-derives velocity from but does not alter — the
+     * yaw still drifts combat-ward regardless of body movement. **Why it's portable across
+     * versions:** it's a *direction* (sign) test, not a magnitude/quantization test — the
+     * sign of Δyaw survives the 1.8 byte-quantization (360/256) for any non-trivial turn, so
+     * unlike `heuristic(gcd)` it needs no `fullFloatLook` gate and runs on 1.8 too.
+     *
+     * Only the *closing* phase is sampled: ticks where the yaw is already on the bearing
+     * (|error| < [DRIFT_ON_TARGET_TOL]) are skipped — that's `silent(track)`'s on-target
+     * lock-on case, not drift. Drift measures the approach while the target is still off-bore.
+     * Transition-gated (one-shot per drift episode via the [KillAuraContext.driftActive] latch
+     * with hysteresis) so it doesn't re-fire every tick the ratio lingers above 70%.
+     */
+    private fun driftComponent(tp: TrackedPlayer, ctx: KillAuraContext, tick: Int,
+                               yawChange: Float, yaw: Float, targets: List<TrackedPlayer>) {
+        // lag gate: a catch-up snap produces a spurious large Δyaw matching the bearing
+        // direction (rubberband toward target) — skip sampling, keep the legit window intact.
+        if (tick - EntityTrackerManager.lastServerLagTick <= DRIFT_LAG_WINDOW ||
+            tick - EntityTrackerManager.lastLagBurstTick <= DRIFT_BURST_WINDOW) return
+
+        val absYaw = abs(yawChange)
+        if (absYaw < DRIFT_MIN_DELTA) return // stationary yaw — neither drift match nor miss
+
+        // nearest target = the combat-ward reference (same pick as trackComponent)
+        var target: TrackedPlayer? = null
+        var bestDistSq = Double.MAX_VALUE
+        for (c in targets) {
+            val dx = c.pos.x - tp.pos.x
+            val dy = c.pos.y - tp.pos.y
+            val dz = c.pos.z - tp.pos.z
+            val d = dx * dx + dy * dy + dz * dz
+            if (d < bestDistSq) { bestDistSq = d; target = c }
+        }
+        if (target == null) return // no nearby combat target — drift direction is undefined
+        val trail = trail(target.uuid)
+        val bearing = bearingTo(tp, trail.x[0], trail.z[0])
+        val error = wrapDegrees(bearing - yaw)
+        if (abs(error) < DRIFT_ON_TARGET_TOL) return // already on bearing — silent(track) owns it
+
+        // sign match: is the yaw drifting TOWARD the target's bearing? (error>0 → yaw must
+        // increase to close; yawChange>0 → it is. Symmetric for the negative side.)
+        val match = (yawChange > 0.0f && error > 0.0f) || (yawChange < 0.0f && error < 0.0f)
+        ctx.driftRing.addLast(tick to match)
+        // prune to the rolling 50-tick window
+        while (ctx.driftRing.isNotEmpty() && ctx.driftRing.first().first < tick - DRIFT_WINDOW_TICKS) {
+            ctx.driftRing.removeFirst()
+        }
+        if (ctx.driftRing.size < DRIFT_MIN_SAMPLES) return
+
+        val matches = ctx.driftRing.count { it.second }
+        val ratio = matches.toFloat() / ctx.driftRing.size.toFloat()
+        if (ratio >= DRIFT_RATIO) {
+            if (!ctx.driftActive) {
+                ctx.driftActive = true
+                flag(tp, ctx, VL_DRIFT, "drift", tick, Evidence(
+                    pos = tp.pos, measurement = ratio.toDouble(), threshold = DRIFT_RATIO.toDouble(),
+                    extra = "match=${matches}/${ctx.driftRing.size}"))
+            }
+        } else if (ratio < DRIFT_RESET_RATIO && ctx.driftActive) {
+            ctx.driftActive = false // hysteresis: re-arm once the drift genuinely stops
+        }
+    }
+
     /** Distance (deg) from an angle to the nearest multiple of 45 — the legal strafe offsets. */
     private fun bucketResidual(offset: Float): Float {
         val nearest = 45.0f * round(offset / 45.0f)
@@ -518,8 +721,14 @@ class KillAuraCheck : Check() {
 
     /** Players within aura range of the attacker that could be aim targets. */
     private fun targetsNear(attacker: TrackedPlayer, tick: Int): List<TrackedPlayer> {
+        // Refresh the per-tick snapshot once (see scanTick/scanAll); all attackers processed in
+        // this tick then share one read of the global map instead of each re-iterating it.
+        if (tick != scanTick) {
+            scanAll = EntityTrackerManager.all().toList()
+            scanTick = tick
+        }
         val out = ArrayList<TrackedPlayer>()
-        for (p in EntityTrackerManager.all()) {
+        for (p in scanAll) {
             if (p.uuid == attacker.uuid) continue
             val dx = p.pos.x - attacker.pos.x
             val dy = p.pos.y - attacker.pos.y
@@ -592,6 +801,8 @@ class KillAuraCheck : Check() {
         ctx.lockDesync = 0
         ctx.sprintDesync = 0
         ctx.moveTickCounter = 0
+        ctx.driftRing.clear()
+        ctx.driftActive = false
     }
 
     private fun wrapDegrees(angle: Float): Float {
@@ -656,5 +867,11 @@ class KillAuraCheck : Check() {
         var moveTickCounter: Int = 0
         // consume component
         var useItemTicks: Int = 0
+        // heuristic(gcd): MX AimConstantCheck Type1 (Axis A §8 step 2)
+        var lastDeltaPitch: Float = 0f
+        var gcdBuffer: Int = 0
+        // drift-direction correlation (Axis C §8 step 13): rolling (tick, signMatch) window
+        val driftRing: ArrayDeque<Pair<Int, Boolean>> = ArrayDeque()
+        var driftActive: Boolean = false
     }
 }

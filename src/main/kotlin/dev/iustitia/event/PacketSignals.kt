@@ -52,13 +52,19 @@ data class GameJoinSignal(
  * A status effect was added to or removed from [entity]. [speedAmplifier] is the Speed
  * effect's amplifier (0 = Speed I, 1 = Speed II) when [isSpeed]; -1 when not Speed or on
  * removal. Drives the SpeedEnvelope cap raise so Speed-potioned players aren't flagged.
- * Other effects are unobserved (Dolphin/Levitation/SlowFalling mitigated in-check).
+ * [isBlind] / [blindAmplifier] forward the Blindness effect (added in §8 step 12) so the
+ * sprintHack check can flag sprint-while-blind (vanilla blocks sprint under Blindness); the
+ * amplifier is informational only (any Blindness level cancels sprint) and -1 on removal or
+ * when not Blind. Other effects are unobserved (Dolphin/Levitation/SlowFalling mitigated
+ * in-check).
  */
 data class EffectSignal(
     val entity: UUID,
     val tick: Int,
     val isSpeed: Boolean,
     val speedAmplifier: Int,
+    val isBlind: Boolean = false,
+    val blindAmplifier: Int = -1,
     val added: Boolean,
 )
 

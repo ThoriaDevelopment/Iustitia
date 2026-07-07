@@ -57,6 +57,12 @@ class NoFallDamageCheck : Check() {
         try {
             if (tp.inVehicle || tp.gliding) return
             if (tick - tp.lastTeleportTick < 5) return
+            // Server-lag exemption: a server-wide hitch / catch-up burst injects a large Δy
+            // sample that would inflate fallAccum (the stair-step spoof also keys on a big
+            // negative Δy). Skip the sample so lag never poisons the fall accumulator.
+            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            ) return
             val world = MinecraftClient.getInstance().world ?: return
             val ctx = contextOf(tp.uuid) as NoFallContext
             val dy = tp.deltaY
@@ -124,5 +130,12 @@ class NoFallDamageCheck : Check() {
         var lastHurtTick = -10000
         var stairPhase = 0
         var stairCycle = 0
+    }
+
+    private companion object {
+        /** Window (ticks) after a server-wide freeze within which fall samples are skipped. */
+        private const val LAG_WINDOW = 8
+        /** Window (ticks) after a batched catch-up burst within which fall samples are skipped. */
+        private const val BURST_WINDOW = 3
     }
 }

@@ -1,7 +1,7 @@
 package dev.iustitia.ui
 
-import dev.iustitia.config.ConfigManager
 import dev.iustitia.replay.ClipCodec
+import dev.iustitia.replay.ClipPlayback
 import dev.iustitia.replay.ClipStore
 import dev.iustitia.replay.ReplayState
 import net.minecraft.client.gui.Click
@@ -64,8 +64,12 @@ class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
                 val y = listTop + i * ROW_H
                 val hovered = mouseX in listLeft..(listLeft + rowWidth()) && mouseY in y..(y + ROW_H)
                 if (hovered) context.fill(listLeft, y, listLeft + rowWidth(), y + ROW_H, 0x40FFFFFF)
-                val counts = r.meta?.let { "§7frames §f${it.frameCount} §7alerts §f${it.alertCount}" }
-                    ?: "§8(unreadable)"
+                val counts = r.meta?.let {
+                    val base = "§7frames §f${it.frameCount} §7alerts §f${it.alertCount}"
+                    val terrain = if (it.terrainBlocks > 0) " §7terrain §f${it.terrainBlocks}§7 blocks" else ""
+                    val chunks = if (it.chunkSections > 0) " §7world §f${it.chunkSections}§7 sections" else ""
+                    "$base$terrain$chunks"
+                } ?: "§8(unreadable)"
                 context.drawTextWithShadow(tr, Text.literal("§f${r.name} §7— $counts §8[▶ play] §c[✕ del]"), listLeft + 2, y + 3, WHITE)
             }
             if (maxScroll > 0) drawScrollbar(context, visible, maxScroll)
@@ -103,18 +107,19 @@ class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
         return super.mouseScrolled(x, y, h, v)
     }
 
-    /** Play a clip: load it fully + start a replay (like `/ius playclip`), then close back to the game. */
+    /** Play a clip: load it fully + start a replay (like `/ius playclip`), then close back to the game.
+     *  Delegates the load → validate → start sequence to [ClipPlayback] (shared with `/ius playclip`)
+     *  so the two entry points can't drift. */
     private fun play(name: String) {
         try {
             val mc = client ?: return
-            val clip = ClipStore.load(name)
-            if (clip == null || clip.window.frames.isEmpty()) { status = "§c couldn't read §f$name"; return }
-            val started = ReplayState.start(clip.window, clip.focus, ReplayState.SPEED_FULL, ConfigManager.config.replayHideLive)
-            if (started) {
-                mc.setScreen(null)
-                mc.player?.sendMessage(Text.literal("§8[§diustitia§8] §7playing clip §f$name§7 at §f1.00×§7 — §f${clip.window.frames.size}§7 frames. Auto-stops at the end (or §f/ius playclip off§7)."), false)
-            } else {
-                status = "§c couldn't start §f$name"
+            when (val r = ClipPlayback.start(name, ReplayState.SPEED_FULL)) {
+                is ClipPlayback.Result.Started -> {
+                    mc.setScreen(null)
+                    mc.player?.sendMessage(Text.literal("§8[§diustitia§8] §7playing clip §f$name§7 at §f${"%.2f".format(ReplayState.SPEED_FULL)}×§7 — §f${r.frames}§7 frames. Auto-stops at the end (or §f/ius playclip off§7)."), false)
+                }
+                ClipPlayback.Result.LoadFailed -> { status = "§c couldn't read §f$name" }
+                ClipPlayback.Result.StartFailed -> { status = "§c couldn't start §f$name" }
             }
         } catch (_: Throwable) { status = "§c play failed" }
     }
