@@ -30,7 +30,7 @@ Detection pipeline, `IustitiaConfig.CONFIG_VERSION`, and `ClipCodec.VERSION` are
 Iustitia is a Fabric client mod that watches every *other* player on your server and flags impossible world/combat interactions — the kind of thing a reach hack, a killaura, a fly hack, or a timer cheat produces. It does this entirely on your client:
 
 - **Read-only on incoming packets.** A single mixin (`ClientPlayNetworkHandlerMixin`) observes server packets and feeds them into a tracking pipeline. It never sends anything to the server and never mutates the local player. The **watch follow-cam** (`/ius spectate`, see below) is the one deliberate exception: it overrides the *camera only*, while you're actively spectating, and auto-reverts the instant you stop, move, get hit, or the target leaves — vanilla re-derives the camera every frame so it can never get stuck.
-- **Other players only.** It builds a server-space model of every other client player (position, yaw/pitch, sprint/sneak, hurt ticks, vehicle, deltas) from rebroadcast state, then runs 31 detection checks against that model each tick.
+- **Other players only.** It builds a server-space model of every other client player (position, yaw/pitch, sprint/sneak, hurt ticks, vehicle, deltas) from rebroadcast state, then runs 36 detection checks against that model each tick.
 - **Fail-open everywhere.** Every check and mixin body is wrapped so a thrown exception is swallowed and skipped — a detection error never crashes your client and never produces a false positive. A chunk-unloaded player is a false *negative*, never a false *positive*.
 - **Two streams, kept separate.** *Chat alerts* fire only when a check's violation level crosses its setback threshold. *Verbose console logging* (every flag, a pipeline heartbeat) is opt-in via `/ius verbose` for validation/debugging and is **off by default** — the release build is silent in `latest.log` unless you turn it on.
 
@@ -114,7 +114,7 @@ See **[USERMANUAL.md](USERMANUAL.md)** for a non-developer walkthrough.
                                  │  TrackedPlayer (pos, yaw/pitch, deltas, sprint, hurtTick…)
                                  ▼
                       ┌──────────────────────┐   per tick:  ClientTickEvents.END_CLIENT_TICK
-                      │   31 Checks (combat +  │   ──► Check.process() / onAttack() / onSwing()
+                      │   36 Checks (combat +  │   ──► Check.process() / onAttack() / onSwing()
                       │   movement/rotation/   │   ──► vl += level ; decay each clean tick
                       │   packet)              │
                       └──────────┬───────────┘
@@ -150,11 +150,11 @@ No `@Redirect` or `@Overwrite` is used anywhere. No send-path mixins. No local-p
 
 `ProtocolDetector` distinguishes 1.8-era combat (via ViaFabricPlus) from modern 1.21.11 combat and adjusts the hurt-confirmation lookback (3 ticks on 1.8 vs 2 on modern), so attack-inference timing is correct on both. Checks that depend on server ticking (timer/blinker, teleport) carry a server-lag exemption so a lagging server doesn't manufacture false positives.
 
-## The 31 checks
+## The 36 checks
 
 Each check has its own config slice (`enabled`, `setbackVL`, `decay`, `threshold`) editable live via `/ius` or YACL. Checks marked **definitive** can prove cheating and drive the red nametag tier; the rest are inferential and drive yellow.
 
-### Combat (14)
+### Combat (16)
 
 | id | detects | definitive |
 |---|---|:--:|
@@ -163,30 +163,35 @@ Each check has its own config slice (`enabled`, `setbackVL`, `decay`, `threshold
 | `clickStatistics` | Click cadence too uniform / too fast (autoclicker). | |
 | `throughWalls` | Attacked a victim with no line-of-sight to the torso. | ✓ |
 | `criticals` | Spoofed a grounded crit hop to crit while on the ground. | ✓ |
+| `maceSmash` | Warped Y around an attack to inflate mace smash fall-damage (MaceKill). | ✓ |
 | `noKnockback` | Took a hit without the expected knockback (anti-KB). | |
 | `keepSprint` | Kept sprinting through an attack instead of the legit slowdown. | |
 | `wTap` | Reset sprint KB pattern mismatch (W-Tap / SuperKB cheat). | |
 | `jumpOnHurt` | Jumped instantly on taking damage (anti-KB hop). | |
 | `backtrack` | Hit a victim from a stale (backtracked) position. | |
-| `killAura` | Silent-aim / aim-snap suite (7 sub-components, one VL pool). | ✓ |
+| `hitsWithoutSwing` | Dealt melee damage with no swing animation (no-swing / hit-select). | |
+| `killAura` | Silent-aim / aim-snap suite (ten sub-components, one VL pool). | |
 | `autoBlock` | Swung while a shield was raised (auto-block / block-hit). | ✓ |
 | `hitFlick` | Redirected aim off the hitbox at the attack tick (HitFlick). | ✓ |
 | `triggerbot` | Auto-attacked the instant the crosshair reached a hitbox (sub-reaction). | |
 
-`killAura` is a port of Rain-Anticheat's 1.8.9 silent-aim suite; `hitFlick` is a Vape/Slinky-style knockback-redirect detector; `triggerbot` is a lax, blatant-only rising-edge reaction-timing detector (deliberately **not** definitive — yellow tier — pending live validation).
+`killAura` is a port of Rain-Anticheat's 1.8.9 silent-aim suite (corroborator-tier — ten sub-components, one VL pool); `hitFlick` is a Vape/Slinky-style knockback-redirect detector; `triggerbot` is a lax, blatant-only rising-edge reaction-timing detector (deliberately **not** definitive — yellow tier — pending live validation). `maceSmash` catches the 1.21 mace fall-damage fake; `hitsWithoutSwing` is a weak no-swing corroborator that never initiates a tier alone.
 
-### Movement / rotation / packet (17)
+### Movement / rotation / packet (20)
 
 | id | detects | definitive |
 |---|---|:--:|
 | `speedEnvelope` | Moved horizontally faster than the vanilla speed envelope. | |
 | `flyEnvelope` | Vertical motion broke vanilla physics (fly / hover / ascend). | ✓ |
-| `noFallDamage` | Spoofed on-ground to avoid fall damage. | ✓ |
+| `spider` | Climbed a solid wall with no ladder/vine/scaffold (wall-climb). | ✓ |
+| `noFallDamage` | Spoofed on-ground to avoid fall damage. | |
 | `stepHeight` | Stepped up a block higher than the vanilla step height. | |
 | `teleport` | Position jumped in a way that isn't a vanilla teleport/pearl. | ✓ |
 | `longJump` | Covered too much horizontal distance in one air tick. | ✓ |
 | `noSlow` | Moved at full speed while using an item that should slow you. | |
 | `backwardSprint` | Sprinted backward (OmniSprint) — blatant-only, KB-exempt. | |
+| `wallSprint` | Held sprint metadata while pressed against a wall (OmniSprint wall-sprint). | ✓ |
+| `sprintHack` | Sprint metadata set where vanilla cancels it — in water, while sneaking, or while Blind. | ✓ |
 | `waterWalk` | Walked on water (Jesus / water-walk). | ✓ |
 | `elytraSpeed` | Elytra glide exceeded the vanilla speed cap. | |
 | `rotationTracking` | Aim rotated too uniformly while tracking a target. | |
