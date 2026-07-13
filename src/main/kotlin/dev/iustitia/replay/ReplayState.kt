@@ -52,6 +52,17 @@ object ReplayState {
      *  reference's 2-block back-off. */
     private const val FREECAM_BACKOFF: Double = 2.0
 
+    /** Per-tick velocity added per unit input (blocks/tick²). Tuned for a spectator-like acceleration
+     *  ramp; runtime-tunable feel. */
+    private const val FC_FLY_ACCEL: Double = 0.06
+    /** Sprint multiplier on the acceleration (vanilla spectator sprint ≈ 2×). */
+    private const val FC_FLY_SPRINT: Double = 2.0
+    /** Per-tick velocity retention (drag). 0.6 → release the key and the camera coasts to a stop over
+     *  a few ticks (vanilla creative-flight deceleration feel). Steady-state speed ≈ accel/(1-drag). */
+    private const val FC_FLY_DRAG: Double = 0.6
+    /** Speed cap (blocks/tick) so accumulated velocity can't run away (≈ vanilla spectator sprint). */
+    private const val FC_FLY_MAX: Double = 0.96
+
     @Volatile var active: Boolean = false
         private set
     @Volatile var focusUuid: UUID? = null
@@ -146,6 +157,12 @@ object ReplayState {
      *  too (mirrors vanilla: prevYaw = end-of-last-tick, yaw = post-this-tick). Client-thread only. */
     @Volatile private var pendingYawDelta: Double = 0.0
     @Volatile private var pendingPitchDelta: Double = 0.0
+    /** FREECAM velocity (blocks/tick) — integrated from input with acceleration + drag, so the camera
+     *  has momentum (accelerate while a key is held, decelerate when released) like vanilla spectator
+     *  flight, instead of the old instant-velocity step. Client-thread only. */
+    @Volatile private var fcVX: Double = 0.0
+    @Volatile private var fcVY: Double = 0.0
+    @Volatile private var fcVZ: Double = 0.0
     @Volatile var freecamActive: Boolean = false
         private set
     /** True while a **playclip** is running in LEGACY mode (v1.1.0 behavior). Set from [start]'s
@@ -426,6 +443,7 @@ object ReplayState {
             prevFcX = fcX; prevFcY = fcY; prevFcZ = fcZ
             prevFcYaw = fcYaw; prevFcPitch = fcPitch
             pendingYawDelta = 0.0; pendingPitchDelta = 0.0
+            fcVX = 0.0; fcVY = 0.0; fcVZ = 0.0
         } catch (_: Throwable) {
             // fail-open: if seeding fails, leave freecam off (camera stays on the player this run)
             freecamActive = false
@@ -440,6 +458,7 @@ object ReplayState {
         freecamActive = false
         pendingYawDelta = 0.0
         pendingPitchDelta = 0.0
+        fcVX = 0.0; fcVY = 0.0; fcVZ = 0.0
     }
 
     /**
@@ -476,11 +495,10 @@ object ReplayState {
             val yawRad = fcYaw * (PI / 180.0)
             val fwdX = -sin(yawRad)
             val fwdZ = cos(yawRad)
-            // Player's RIGHT in MC's yaw convention (yaw 0 = south/+Z): right = (-cos, -sin). The
-            // naive (cos, sin) is the LEFT vector — facing south, (cos0,sin0)=(1,0)=+X=east=left —
-            // which inverted A/D (A went right, D went left). Negating both gives the true right vector.
+            // Player's RIGHT in MC's yaw convention (yaw 0 = south/+Z): right = (-cos, -sin).
             val rightX = -cos(yawRad)
             val rightZ = -sin(yawRad)
+            // Build a unit wish-direction from the held keys (camera-relative).
             var dx = 0.0
             var dz = 0.0
             var dy = 0.0
@@ -490,18 +508,30 @@ object ReplayState {
             if (left) { dx -= rightX; dz -= rightZ }
             if (jump) dy += 1.0
             if (sneak) dy -= 1.0
-            val speed = if (sprint) 1.2 else 0.5  // blocks/tick
             val hlen = dx * dx + dz * dz
             if (hlen > 1e-8) {
-                val s = speed / kotlin.math.sqrt(hlen)
+                val s = 1.0 / kotlin.math.sqrt(hlen)
                 dx *= s; dz *= s
             } else {
                 dx = 0.0; dz = 0.0
             }
-            dy *= speed
-            fcX = fcX + dx
-            fcY = fcY + dy
-            fcZ = fcZ + dz
+            // Acceleration: wishDir * ACCEL * (sprint ? SPRINT : 1). Vertical (jump/sneak) same accel.
+            val mul = if (sprint) FC_FLY_SPRINT else 1.0
+            val ax = dx * FC_FLY_ACCEL * mul
+            val az = dz * FC_FLY_ACCEL * mul
+            val ay = dy * FC_FLY_ACCEL * mul
+            // Integrate with drag: v = v*DRAG + accel. Drag always applies so releasing keys decelerates.
+            fcVX = fcVX * FC_FLY_DRAG + ax
+            fcVY = fcVY * FC_FLY_DRAG + ay
+            fcVZ = fcVZ * FC_FLY_DRAG + az
+            // Cap horizontal + vertical speed so accumulated velocity can't run away.
+            val vh = kotlin.math.sqrt(fcVX * fcVX + fcVZ * fcVZ)
+            if (vh > FC_FLY_MAX) { val k = FC_FLY_MAX / vh; fcVX *= k; fcVZ *= k }
+            if (kotlin.math.abs(fcVY) > FC_FLY_MAX) fcVY = fcVY.coerceIn(-FC_FLY_MAX, FC_FLY_MAX)
+            // Integrate position (the prev/current pair above still drives per-frame interpolation).
+            fcX = fcX + fcVX
+            fcY = fcY + fcVY
+            fcZ = fcZ + fcVZ
         } catch (_: Throwable) {}
     }
 
