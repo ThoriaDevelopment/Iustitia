@@ -138,6 +138,14 @@ object ReplayState {
     @Volatile var legacyPlayclip: Boolean = false
         private set
 
+    /** True once playback has reached the end and is being held (not advancing). Set in [tick] when
+     *  the playhead reaches the last frame; cleared in [start]/[stop] and whenever a seek/step moves
+     *  the playhead off the last frame. While true, [tick] does not advance and [stop] is NOT called
+     *  — the mode stays active (freecam, ghosts, controls all live) until the user explicitly exits
+     *  (/ius replay|playclip off, the numpad-0 exit keybind, or the replayToggle keybind). */
+    @Volatile var held: Boolean = false
+        private set
+
     /** Immutable frame list — set once at [start], read cross-thread. Empty when inactive. */
     private var frames: List<ReplayBuffer.Frame> = emptyList()
     private var alerts: List<ReplayBuffer.AlertRec> = emptyList()
@@ -171,6 +179,7 @@ object ReplayState {
             this.hideLive = hideLive
             playhead = 0f
             paused = false
+            held = false
             cameraMode = CameraMode.FREE
             lastFrameTick = window.frames.last().tick
             // Legacy drops any terrain/chunks embedded in a v5/v6 clip so the render path + the
@@ -221,6 +230,7 @@ object ReplayState {
             focusUuid = null
             playhead = 0f
             paused = false
+            held = false
             cameraMode = CameraMode.FREE
             relocOffset = null
             terrain = null
@@ -246,8 +256,15 @@ object ReplayState {
         if (!active) return null
         if (paused) return null
         try {
+            if (held) return null  // held at end — do not advance until the user seeks back / stops
             playhead += speed
-            if (playhead >= frames.size) return stop("replay finished")
+            if (playhead >= frames.size) {
+                // Hold on the last frame instead of exiting — the replay/clip stays active (freecam,
+                // ghosts, controls) until an explicit stop. Returning null means onClientTick does
+                // NOT chat "live view restored"; the still-rendered ghosts + freecam are the signal.
+                playhead = (frames.size - 1).toFloat()
+                held = true
+            }
             return null
         } catch (_: Throwable) {
             return stop("replay error")
@@ -302,6 +319,7 @@ object ReplayState {
             if (!active || frames.isEmpty()) return
             val target = (seconds * 20f).coerceIn(0f, (frames.size - 1).toFloat())
             playhead = target
+            held = target >= (frames.size - 1)
         } catch (_: Throwable) {}
     }
 
@@ -313,6 +331,7 @@ object ReplayState {
             if (!active || frames.isEmpty()) return
             val target = (playhead + deltaSeconds * 20f).coerceIn(0f, (frames.size - 1).toFloat())
             playhead = target
+            held = target >= (frames.size - 1)
         } catch (_: Throwable) {}
     }
 
@@ -321,7 +340,9 @@ object ReplayState {
     fun step(frames: Int) {
         try {
             if (!active || this.frames.isEmpty() || !paused) return
-            playhead = (playhead + frames).coerceIn(0f, (this.frames.size - 1).toFloat())
+            val target = (playhead + frames).coerceIn(0f, (this.frames.size - 1).toFloat())
+            playhead = target
+            held = target >= (this.frames.size - 1)
         } catch (_: Throwable) {}
     }
 

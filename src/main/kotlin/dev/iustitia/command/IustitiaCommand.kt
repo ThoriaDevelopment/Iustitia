@@ -1070,7 +1070,7 @@ object IustitiaCommand {
         val started = try { dev.iustitia.replay.ReplayState.start(window, focus, speed, cfg.replayHideLive, relocate = false, legacy = false) } catch (_: Throwable) { false }
         if (!started) { send(ctx, "$tag §7couldn't start the replay (empty window)."); return 0 }
         val hideTxt = if (cfg.replayHideLive) " §7(live players hidden)" else ""
-        send(ctx, "$tag §7replaying last §f${secs}s §7for §f$focusTxt§7 at §f${"%.2f".format(speed)}×§7 — ghosts drawn in-world$hideTxt. Auto-stops at the end (or §f/ius replay off§7).")
+        send(ctx, "$tag §7replaying last §f${secs}s §7for §f$focusTxt§7 at §f${"%.2f".format(speed)}×§7 — ghosts drawn in-world$hideTxt. Holds at the end (or §f/ius replay off§7).")
         return 1
     }
 
@@ -1154,7 +1154,7 @@ object IustitiaCommand {
         when (val r = ClipPlayback.start(nameArg, speed)) {
             is ClipPlayback.Result.Started -> {
                 val focusTxt = r.focus?.let { " §7focus §f${FlagHistory.nameOrShort(it)}" } ?: ""
-                send(ctx, "$tag §7playing clip §f$nameArg§7 at §f${"%.2f".format(speed)}×§7 — §f${r.frames}§7 frames$focusTxt. Auto-stops at the end (or §f/ius playclip off§7 to stop).")
+                send(ctx, "$tag §7playing clip §f$nameArg§7 at §f${"%.2f".format(speed)}×§7 — §f${r.frames}§7 frames$focusTxt. Holds at the end (or §f/ius playclip off§7).")
                 return 1
             }
             ClipPlayback.Result.LoadFailed -> {
