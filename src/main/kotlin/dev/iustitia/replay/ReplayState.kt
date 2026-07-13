@@ -327,7 +327,7 @@ object ReplayState {
      *  tickDelta-interpolated playhead fraction — so ghosts move smoothly between recorded ticks
      *  (esp. at 0.5×/0.25× speed) AND between client ticks. At full speed (frac≈0 at each tick) this
      *  equals [currentFrame]. Read cross-thread by [dev.iustitia.render.ReplayRenderer]. Null when
-     *  inactive. Non-spatial fields (uuid/name/pose/swing) come from the ceil frame. */
+     *  inactive. UUID from the floor frame; name/pose/swing from the ceil frame. */
     fun currentFrameLerped(tickDelta: Float): ReplayBuffer.Frame? = try {
         if (!active || frames.isEmpty()) return null
         val td = tickDelta.coerceIn(0f, 1f)
@@ -357,8 +357,8 @@ object ReplayState {
         else ReplayBuffer.Window(frames, alerts, terrain, chunks)
     } catch (_: Throwable) { ReplayBuffer.Window(emptyList(), emptyList(), null, null) }
 
-    /** Lerp the spatial fields of two snaps of the same player; keep identity/discrete fields from [b]
-     *  (the ceil/"current" frame). Yaw uses angle-aware lerp. */
+    /** Lerp the spatial fields of two snaps of the same player; UUID from [a] (floor frame),
+     *  swingTicks/pose/name from [b] (the ceil/"current" frame). Yaw uses angle-aware lerp. */
     private fun lerpSnap(a: ReplayBuffer.PlayerSnap, b: ReplayBuffer.PlayerSnap, frac: Float): ReplayBuffer.PlayerSnap {
         val f = frac.coerceIn(0f, 1f)
         return ReplayBuffer.PlayerSnap(
@@ -598,11 +598,11 @@ object ReplayState {
 
     /**
      * Apply a mouse delta to the FREECAM pose — called from [dev.iustitia.mixin.FreecamEntityMixin],
-     * which cancels the player's own `changeLookDirection`. Mirrors vanilla
-     * `Entity.changeLookDirection`'s scaling (×0.15, verified against the Zergatul FreeCam v26.2
-     * reference's `onPlayerTurn`) so freecam look feels identical to vanilla mouse-look: yaw += yawDelta
-     * ×0.15, pitch += pitchDelta ×0.15, pitch clamped to ±90. Client thread only (mouse-look runs on
-     * the client thread). Fail-open.
+     * which cancels the player's own `changeLookDirection`. Defers the delta into
+     * [pendingYawDelta]/[pendingPitchDelta]; the ×0.15 scaling and ±90 pitch clamp are applied in
+     * [tickFreecam] (mirrors vanilla `Entity.changeLookDirection`'s scaling, verified against the
+     * Zergatul FreeCam v26.2 reference's `onPlayerTurn`) so freecam look feels identical to vanilla
+     * mouse-look. Client thread only (mouse-look runs on the client thread). Fail-open.
      */
     fun applyFreecamLook(yawDelta: Double, pitchDelta: Double) {
         try {

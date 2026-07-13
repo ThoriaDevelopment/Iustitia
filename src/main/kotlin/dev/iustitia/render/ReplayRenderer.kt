@@ -133,8 +133,8 @@ object ReplayRenderer {
         // projection), so a name tag drawn with no rotation faces a fixed compass direction and is
         // only visible from one azimuth. We billboard each tag by rotating it about world Y to face
         // the render camera. Sign: MC text quads wind clockwise viewed from +Z (signed area < 0) →
-        // the readable FRONT face is −Z, so the tag faces the camera at rotation = −cameraYaw (the
-        // canonical Fabric in-world text billboard). scale(-scale,-scale,scale): −Y flips glyphs
+        // the readable FRONT face is −Z, so the tag faces the camera at rotation = 180f - cameraYaw
+        // (matches vanilla `EntityRenderer.renderLabelIfPresent`). scale(-scale,-scale,scale): −Y flips glyphs
         // upright (world +Y is up, glyph +Y is down), −X mirrors glyphs so they read L→R toward the
         // camera. Text stays vertical (no pitch billboard — same as vanilla entity labels).
         val cameraYaw = try { camera.getYaw() } catch (_: Throwable) { 0f }
@@ -298,7 +298,7 @@ object ReplayRenderer {
                 val dist = sqrt((dx * dx + dy * dy + dz * dz).toDouble()).toFloat()
                 val scale = (0.025f * (dist / 8f)).coerceIn(0.015f, 0.09f)
                 // Billboard to face the render camera (see drawGhosts): rotate about world Y by
-                // −cameraYaw so the text's −Z front faces the camera, then the canonical scale
+                // 180f - cameraYaw so the text's −Z front faces the camera, then the canonical scale
                 // (−X mirrors glyphs L→R, −Y flips them upright, +Z keeps the front toward camera).
                 matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180f - cameraYaw))
                 matrices.scale(-scale, -scale, scale)
