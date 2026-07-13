@@ -63,4 +63,11 @@ oldversion/
 # ---- Claude Code / commit-message scratch (local only, never committed) ----
 .commit-msg.txt
 *.tmp
+
+# ---- Internal AI-assistant / dev workflow docs (local only, never committed) ----
+# Kept on disk for local dev (Claude Code + superpowers plan/spec workflow) but
+# never served on GitHub. The /docs/ subpath pattern matches the entire
+# docs/superpowers/ tree (plans + specs).
 CLAUDE.md
+/docs/TUNING.md
+/docs/superpowers/
