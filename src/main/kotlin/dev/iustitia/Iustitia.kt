@@ -263,6 +263,24 @@ object Iustitia {
                     dev.iustitia.replay.ReplayState.stop("stopped")
                     chat(mc, "§8[§diustitia§8] §7replay §cstopped§7 — live view restored.")
                 }
+                "replayToggle" -> {
+                    if (dev.iustitia.replay.ReplayState.active) {
+                        dev.iustitia.replay.ReplayState.stop("stopped")
+                        chat(mc, "§8[§diustitia§8] §7replay §cstopped§7 — live view restored.")
+                        return
+                    }
+                    val cfg = ConfigManager.config
+                    if (!cfg.replayCapture) { chat(mc, "§8[§diustitia§8] §7replay capture is §cdisabled§7 in config (enable via §f/ius config§7)."); return }
+                    val secs = try { cfg.replayKeybindSeconds.coerceIn(1, dev.iustitia.replay.ReplayBuffer.MAX_SECONDS) } catch (_: Throwable) { 30 }
+                    val speed = dev.iustitia.replay.ReplayState.SPEED_FULL
+                    val now = tickCounter
+                    val window = try { dev.iustitia.replay.ReplayBuffer.snapshot(secs, now) } catch (_: Throwable) { dev.iustitia.replay.ReplayBuffer.Window(emptyList(), emptyList()) }
+                    if (window.frames.isEmpty()) { chat(mc, "§8[§diustitia§8] §7no buffered data for the last §f${secs}s§7."); return }
+                    val started = try { dev.iustitia.replay.ReplayState.start(window, null, speed, cfg.replayHideLive, relocate = false, legacy = false) } catch (_: Throwable) { false }
+                    if (!started) { chat(mc, "§8[§diustitia§8] §7couldn't start the replay (empty window)."); return }
+                    val hideTxt = if (cfg.replayHideLive) " §7(live players hidden)" else ""
+                    chat(mc, "§8[§diustitia§8] §7replaying last §f${secs}s§7 at §f${"%.2f".format(speed)}×§7 — ghosts drawn in-world$hideTxt. Press again (or §f/ius replay off§7) to stop.")
+                }
                 else -> { /* unknown id: no-op */ }
             }
         } catch (_: Throwable) {

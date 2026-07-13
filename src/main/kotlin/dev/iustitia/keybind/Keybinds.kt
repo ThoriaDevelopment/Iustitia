@@ -67,6 +67,8 @@ object Keybinds {
             "Jump an active replay 5 seconds back (works while playing). Default: numpad −."),
         bind("replayExit", GLFW.GLFW_KEY_KP_0, "Replay exit",
             "Stop the active replay/clip-playback and restore the live view. Default: numpad 0."),
+        bind("replayToggle", GLFW.GLFW_KEY_KP_MULTIPLY, "Replay toggle",
+            "Start a replay of the configured seconds (default numpad *); press again to stop."),
     )
 
     private fun bind(id: String, defaultKey: Int, label: String, description: String): Bind =
