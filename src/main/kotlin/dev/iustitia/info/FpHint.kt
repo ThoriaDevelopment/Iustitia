@@ -16,7 +16,7 @@ object FpHint {
         "reach" to "lag can inflate distance; check the server-lag indicator before calling reach.",
         "multiTarget" to "multi-mob farms / cleave can hit several targets in one tick legitly.",
         "clickStatistics" to "drag-click mice + jitter-bursts can look like an autoclicker.",
-        "throughWalls" to "partial occlusion / corner peeks can block all 3 sample rays on a legit hit.",
+        "throughWalls" to "a legit player repeatedly peeking the same corner can occlude most of their hits; check the rate isn't one snap.",
         "criticals" to "slime/fence-edge bob while attacking can look like a grounded crit hop.",
         "maceSmash" to "slime-bounce / wind-charge launches / lag-rubberband can produce a Y spike near an attack.",
         "noKnockback" to "Velocity/sprint-reset knockback reduction is client-side noisy; intermittent is normal.",

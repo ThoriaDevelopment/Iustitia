@@ -223,7 +223,7 @@ data class IustitiaConfig(
     var reach: CheckConfig = CheckConfig(true, 10.0, 0.25, 3.0),
     var multiTarget: CheckConfig = CheckConfig(true, 2.0, 1.0, 2.0),
     var clickStatistics: CheckConfig = CheckConfig(true, 5.0, 0.05, 20.0),
-    var throughWalls: CheckConfig = CheckConfig(true, 8.0, 0.5, 1.0), // threshold reserved — flag level is fixed 1.0; the 3.0 in Evidence is the body-point count, not a tunable scalar. Will be consumed by the pending NCM match-rate improvement.
+    var throughWalls: CheckConfig = CheckConfig(true, 8.0, 0.5, 0.5), // threshold = occlusion match-rate ratio that flags (NCM-style rolling window). A hit is "occluded" when the attacker's eye→{eye,torso,feet} LOS is blocked for ALL three victim body points; we keep a rolling window of the last 12 occlusion verdicts per attacker and flag when occluded/size ≥ threshold (0.5) with ≥3 samples. Default 0.5: a legit player's occasional occluded hit reads low and never flags; a through-walls aura's repeated full-body-occluded hits read ≥0.5 and flag in <1s of combat. Lower = stricter (fewer through-wall hits required to flag); raise to 1.0 to flag only all-occluded sprees.
     var criticals: CheckConfig = CheckConfig(true, 5.0, 0.1, 0.05),
     var noKnockback: CheckConfig = CheckConfig(true, 5.0, 1.0, 0.61),
     var keepSprint: CheckConfig = CheckConfig(true, 5.0, 0.5, 0.8), // threshold = retained-speed ratio flagging point (was hardcoded 0.8; now wired)
@@ -287,8 +287,12 @@ data class IustitiaConfig(
          *  [ConfigManager] resets stale persisted calibration fields to these defaults.
          *  v4: wired the previously-dead keepSprint (0.5→0.8) and jumpOnHurt (0.4→0.3)
          *  threshold sliders to match the values the checks always hardcoded, so existing
-         *  persisted configs don't shift detection stricter/looser when the slider goes live. */
-        const val CONFIG_VERSION = 4
+         *  persisted configs don't shift detection stricter/looser when the slider goes live.
+         *  v5: repurposed the reserved `throughWalls` threshold (1.0, unused) into the NCM
+         *  occlusion match-rate ratio (0.5). A persisted config saved at v4 has threshold=1.0,
+         *  which under the new meaning would only flag all-occluded sprees (stricter than
+         *  intended) — the bump resets it to the 0.5 default. */
+        const val CONFIG_VERSION = 5
     }
 
     /** `/ius playclip` generation selector — see [IustitiaConfig.playclipMode]. */
