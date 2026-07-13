@@ -218,6 +218,10 @@ data class IustitiaConfig(
     /** Sonar cue volume (0..1). Independent of the chat audio-cue volume — sonar pings are quieter by
      *  design (positional, frequent). */
     var sonarVolume: Double = 0.7,
+    /** Seconds of buffered scene to replay when the replay-toggle keybind (numpad * by default) is
+     *  pressed. 1..60 (clamped to the 60s replay buffer). Default 30. Additive — no CONFIG_VERSION
+     *  bump; a pre-field config keeps the default. */
+    var replayKeybindSeconds: Int = 30,
 
     // --- combat ---
     var reach: CheckConfig = CheckConfig(true, 10.0, 0.25, 3.0),

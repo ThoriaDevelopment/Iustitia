@@ -230,6 +230,7 @@ object ConfigManager {
         addProperty("playclipMode", c.playclipMode.name)
         addProperty("sonarAlerts", c.sonarAlerts)
         addProperty("sonarVolume", c.sonarVolume)
+        addProperty("replayKeybindSeconds", c.replayKeybindSeconds)
         for ((key, cc) in c.checks()) add(key, checkToJson(cc))
     }
 
@@ -303,6 +304,7 @@ object ConfigManager {
             }
             if (o.has("sonarAlerts")) c.sonarAlerts = o.get("sonarAlerts").asBoolean
             if (o.has("sonarVolume")) c.sonarVolume = o.get("sonarVolume").asDouble
+            if (o.has("replayKeybindSeconds")) c.replayKeybindSeconds = o.get("replayKeybindSeconds").asInt
             for ((key, cc) in c.checks()) {
                 if (o.has(key)) readCheck(o.getAsJsonObject(key), cc, resetCalibration)
             }
