@@ -10,6 +10,7 @@ import net.minecraft.client.MinecraftClient
 import net.minecraft.client.render.Camera
 import net.minecraft.entity.Entity
 import net.minecraft.util.math.BlockPos
+import net.minecraft.util.math.MathHelper
 import net.minecraft.util.math.Vec3d
 import net.minecraft.world.World
 import org.spongepowered.asm.mixin.Mixin
@@ -170,8 +171,15 @@ class CameraMixin {
                 // active (e.g. mode flipped mid-frame), return false so watch/selfie can run.
                 ReplayState.CameraMode.FREECAM -> {
                     if (!ReplayState.freecamActive) return false
-                    setRotation(ReplayState.fcYaw, ReplayState.fcPitch)
-                    setPos(Vec3d(ReplayState.fcX, ReplayState.fcY, ReplayState.fcZ))
+                    // Per-frame tickDelta interpolation prev→current (vanilla spectator camera math).
+                    val td = tickDelta.coerceIn(0f, 1f)
+                    val x = MathHelper.lerp(td.toDouble(), ReplayState.prevFcX, ReplayState.fcX)
+                    val y = MathHelper.lerp(td.toDouble(), ReplayState.prevFcY, ReplayState.fcY)
+                    val z = MathHelper.lerp(td.toDouble(), ReplayState.prevFcZ, ReplayState.fcZ)
+                    val yaw = MathHelper.lerpAngleDegrees(td, ReplayState.prevFcYaw, ReplayState.fcYaw)
+                    val pitch = MathHelper.lerp(td, ReplayState.prevFcPitch, ReplayState.fcPitch)
+                    setRotation(yaw, pitch)
+                    setPos(Vec3d(x, y, z))
                 }
                 ReplayState.CameraMode.POV -> {
                     val snap = ReplayState.focusSnap() ?: return false

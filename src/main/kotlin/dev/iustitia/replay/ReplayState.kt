@@ -1,6 +1,7 @@
 package dev.iustitia.replay
 
 import java.util.UUID
+import net.minecraft.util.math.MathHelper
 import net.minecraft.util.math.Vec3d
 import kotlin.math.PI
 import kotlin.math.cos
@@ -127,6 +128,24 @@ object ReplayState {
         private set
     @Volatile var fcPitch: Float = 0f
         private set
+    /** Previous-tick FREECAM pose — snapshot of [fcX..fcPitch] taken at the start of each [tickFreecam]
+     *  advance, so [dev.iustitia.mixin.CameraMixin] can lerp `prev → current` by `tickDelta` per frame
+     *  (vanilla spectator interpolation). Written client-thread only; read cross-thread by the mixin. */
+    @Volatile var prevFcX: Double = 0.0
+        private set
+    @Volatile var prevFcY: Double = 0.0
+        private set
+    @Volatile var prevFcZ: Double = 0.0
+        private set
+    @Volatile var prevFcYaw: Float = 0f
+        private set
+    @Volatile var prevFcPitch: Float = 0f
+        private set
+    /** Mouse-look deltas accumulated since the last [tickFreecam] (via [applyFreecamLook]), applied
+     *  inside [tickFreecam] AFTER the prev-pose snapshot so look is smoothed across the tick boundary
+     *  too (mirrors vanilla: prevYaw = end-of-last-tick, yaw = post-this-tick). Client-thread only. */
+    @Volatile private var pendingYawDelta: Double = 0.0
+    @Volatile private var pendingPitchDelta: Double = 0.0
     @Volatile var freecamActive: Boolean = false
         private set
     /** True while a **playclip** is running in LEGACY mode (v1.1.0 behavior). Set from [start]'s
@@ -404,6 +423,9 @@ object ReplayState {
             fcYaw = p.yaw
             fcPitch = p.pitch
             freecamActive = true
+            prevFcX = fcX; prevFcY = fcY; prevFcZ = fcZ
+            prevFcYaw = fcYaw; prevFcPitch = fcPitch
+            pendingYawDelta = 0.0; pendingPitchDelta = 0.0
         } catch (_: Throwable) {
             // fail-open: if seeding fails, leave freecam off (camera stays on the player this run)
             freecamActive = false
@@ -416,6 +438,8 @@ object ReplayState {
      *  flag is enough; the next frame's camera mixin FREECAM branch returns false → vanilla view. */
     private fun exitFreecam() {
         freecamActive = false
+        pendingYawDelta = 0.0
+        pendingPitchDelta = 0.0
     }
 
     /**
@@ -428,7 +452,18 @@ object ReplayState {
      */
     fun tickFreecam() {
         try {
-            if (!freecamActive || !active) return
+            if (!freecamActive || !active) { pendingYawDelta = 0.0; pendingPitchDelta = 0.0; return }
+            // Snapshot prev = current pose BEFORE this tick's advance, so the render-thread camera
+            // mixin can lerp prev→current by tickDelta (vanilla spectator interpolation).
+            prevFcX = fcX; prevFcY = fcY; prevFcZ = fcZ
+            prevFcYaw = fcYaw; prevFcPitch = fcPitch
+            // Apply deferred mouse-look (accumulated since last tick via applyFreecamLook) AFTER the
+            // snapshot, so look changes are smoothed across the tick boundary too.
+            if (pendingYawDelta != 0.0 || pendingPitchDelta != 0.0) {
+                fcYaw = fcYaw + (pendingYawDelta * 0.15).toFloat()
+                fcPitch = (fcPitch + (pendingPitchDelta * 0.15).toFloat()).coerceIn(-90f, 90f)
+                pendingYawDelta = 0.0; pendingPitchDelta = 0.0
+            }
             val mc = net.minecraft.client.MinecraftClient.getInstance()
             val opts = mc.options
             val fwd = opts.forwardKey.isPressed
@@ -481,8 +516,10 @@ object ReplayState {
     fun applyFreecamLook(yawDelta: Double, pitchDelta: Double) {
         try {
             if (!freecamActive) return
-            fcYaw = fcYaw + (yawDelta * 0.15).toFloat()
-            fcPitch = (fcPitch + (pitchDelta * 0.15).toFloat()).coerceIn(-90f, 90f)
+            // Defer into pending — applied inside tickFreecam after the prev-pose snapshot so the
+            // render lerp smooths look across the tick boundary (same model as vanilla prevYaw/yaw).
+            pendingYawDelta += yawDelta
+            pendingPitchDelta += pitchDelta
         } catch (_: Throwable) {}
     }
 
