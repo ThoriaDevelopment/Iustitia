@@ -60,9 +60,11 @@ class ClientPlayerEntityMixin {
             // so their walking inputs must not move the live player. Zeroing playerInput here makes the
             // vanilla movement read see no held keys; the packet-cancel mixin (ClientConnectionMixin)
             // is the belt-and-suspenders for movement + the sole mechanism for break/place/attack/etc.
-            if (ReplayState.active && !ReplayState.legacyPlayclip) {
+            if (ReplayState.active) {
                 // PlayerInput.DEFAULT is the vanilla all-false instance (forward/backward/left/right/jump/sneak/sprint).
-                // Legacy playclip (v1.1.0) skips suppression so the player walks normally while watching.
+                // Suppressed whenever a replay/clip is active (every mode incl. Legacy playclip) so the
+                // player never walks server-side while spectating a rewind/clip. Mouse-look (rotation)
+                // is untouched so the user can still look around in modes with no freecam (Legacy, /ius replay).
                 input?.playerInput = PlayerInput.DEFAULT
             }
         } catch (_: Throwable) {
