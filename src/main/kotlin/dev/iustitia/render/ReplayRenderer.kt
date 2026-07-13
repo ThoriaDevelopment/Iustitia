@@ -300,7 +300,7 @@ object ReplayRenderer {
                 // Billboard to face the render camera (see drawGhosts): rotate about world Y by
                 // −cameraYaw so the text's −Z front faces the camera, then the canonical scale
                 // (−X mirrors glyphs L→R, −Y flips them upright, +Z keeps the front toward camera).
-                matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(-cameraYaw))
+                matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180f - cameraYaw))
                 matrices.scale(-scale, -scale, scale)
                 val w = tr.getWidth(label)
                 val textColor = if (isFocus) FOCUS_COLOR else color
@@ -329,7 +329,7 @@ object ReplayRenderer {
                     val dz = (s.z + ozF) - camPos.z.toFloat()
                     val dist = sqrt((dx * dx + dy * dy + dz * dz).toDouble()).toFloat()
                     val scale = (0.025f * (dist / 8f)).coerceIn(0.015f, 0.09f)
-                    matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(-cameraYaw))
+                    matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180f - cameraYaw))
                     matrices.scale(-scale, -scale, scale)
                     val w = tr.getWidth(alert)
                     tr.draw(
