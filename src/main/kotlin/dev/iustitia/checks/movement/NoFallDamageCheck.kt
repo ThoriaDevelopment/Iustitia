@@ -5,6 +5,7 @@ import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.event.HurtSignal
+import dev.iustitia.history.Evidence
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
@@ -79,7 +80,9 @@ class NoFallDamageCheck : Check() {
                     val soft = state != null && isSoftLand(state)
                     if (!soft && tick - ctx.lastHurtTick > 2) {
                         val level = max(1.0, ceil((tp.fallAccum - 3.0) * 2.0))
-                        flag(tp, ctx, level, "NoFall", tick)
+                        flag(tp, ctx, level, "NoFall", tick, Evidence(
+                            subLabel = "landed-no-hurt", measurement = tp.fallAccum, threshold = cfg.threshold,
+                            extra = "landed a ${"%.1f".format(tp.fallAccum)}-block fall with no hurt signal"))
                     }
                 }
                 tp.fallAccum = 0.0
@@ -97,7 +100,9 @@ class NoFallDamageCheck : Check() {
                     ctx.stairCycle++
                     ctx.stairPhase = 0
                     if (ctx.stairCycle >= 3) {
-                        flag(tp, ctx, 1.0, "NoFall(Stair)", tick)
+                        flag(tp, ctx, 1.0, "NoFall(Stair)", tick, Evidence(
+                            subLabel = "stair-step", measurement = ctx.stairCycle.toDouble(), threshold = 3.0,
+                            extra = "packet-level fall reset (${ctx.stairCycle} ≈-2.0/0 Δy cycles)"))
                         ctx.stairCycle = 0
                     }
                 }
@@ -113,7 +118,9 @@ class NoFallDamageCheck : Check() {
             if (tp.onGroundPacket && tp.fallAccum > 4.0 &&
                 !WorldQueries.isSolidBelow(world, tp.pos.x, tp.pos.y, tp.pos.z, 0.5)
             ) {
-                flag(tp, ctx, 1.0, "NoFall(Spoof)", tick)
+                flag(tp, ctx, 1.0, "NoFall(Spoof)", tick, Evidence(
+                    subLabel = "ground-spoof-over-air", measurement = tp.fallAccum, threshold = 4.0,
+                    extra = "onGround spoofed over air — Δy ${"%.3f".format(dy)}, fell ${"%.1f".format(tp.fallAccum)} blocks"))
             }
         } catch (_: Throwable) {}
     }

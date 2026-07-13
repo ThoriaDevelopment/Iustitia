@@ -3,6 +3,7 @@ package dev.iustitia.checks.movement
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
+import dev.iustitia.history.Evidence
 import dev.iustitia.math.Vectors
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
@@ -68,11 +69,17 @@ class BackwardSprintCheck : Check() {
             // where θ is the angle from facing to the movement vector.
             val look = Vectors.lookVector(tp.yaw.toDouble(), 0.0)
             val dot = tp.delta.x * look.x + tp.delta.z * look.z
+            // Angle of the movement vector off the facing direction (0° = forward, 90° = pure
+            // sideways, 180° = backward). horiz is gated ≥ cfg.threshold/20 above so the divide
+            // is safe; coerceIn guards the acos domain against float drift at ±1.
+            val angleDeg = Math.toDegrees(Math.acos((dot / horiz).coerceIn(-1.0, 1.0)))
             if (dot < -0.02 * horiz) {
                 // backward (θ > ~91°) — moving away from facing. Unchanged from the original gate.
                 ctx.streak++
                 ctx.strafeStreak = 0
-                if (ctx.streak >= BLATANT_SUSTAIN) flag(tp, ctx, 1.0, "BackwardSprint", tick)
+                if (ctx.streak >= BLATANT_SUSTAIN) flag(tp, ctx, 1.0, "BackwardSprint", tick, Evidence(
+                    subLabel = "backward-sprint", measurement = angleDeg, threshold = 91.0,
+                    extra = "${"%.0f".format(angleDeg)}° off facing — sprinting backward"))
             } else if (!tp.swimming &&
                 abs(dot) <= STRAFE_FORWARD_FRAC * horiz &&
                 abs(tp.delta.x * look.z - tp.delta.z * look.x) >= STRAFE_SIDEWAYS_FRAC * horiz
@@ -83,7 +90,9 @@ class BackwardSprintCheck : Check() {
                 // above, so the two streaks never both accrue for one tick.
                 ctx.strafeStreak++
                 ctx.streak = 0
-                if (ctx.strafeStreak >= STRAFE_SUSTAIN) flag(tp, ctx, 1.0, "BackwardSprint(strafe)", tick)
+                if (ctx.strafeStreak >= STRAFE_SUSTAIN) flag(tp, ctx, 1.0, "BackwardSprint(strafe)", tick, Evidence(
+                    subLabel = "strafe-sprint", measurement = angleDeg, threshold = 75.0,
+                    extra = "${"%.0f".format(angleDeg)}° off facing — Strafe-Sprinting"))
             } else {
                 ctx.streak = 0
                 ctx.strafeStreak = 0

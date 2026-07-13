@@ -59,6 +59,16 @@ object Snapshot {
             fo.addProperty("check", f.checkId)
             fo.addProperty("label", f.label)
             fo.addProperty("vl", String.format(java.util.Locale.US, "%.2f", f.vl).toDouble())
+            // Evidence — the human reading behind the flag. `extra` is the phrase shown in the
+            // hover "why" line; subLabel/measurement/threshold are the structured numbers for
+            // the report. (pos/victim stay report-only — not useful in the quick clipboard JSON.)
+            val ev = f.evidence
+            if (ev != null) {
+                ev.subLabel?.let { fo.addProperty("subLabel", it) }
+                ev.measurement?.let { fo.addProperty("measurement", it) }
+                ev.threshold?.let { fo.addProperty("threshold", it) }
+                ev.extra?.let { fo.addProperty("extra", it) }
+            }
             arr.add(fo)
         }
         obj.add("flags", arr)

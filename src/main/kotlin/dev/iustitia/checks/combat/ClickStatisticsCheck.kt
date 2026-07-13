@@ -85,7 +85,9 @@ class ClickStatisticsCheck : Check() {
         // CPS over the last 20 ticks (≈ swings/sec)
         val cps = ctx.swingTicks.count { it >= tick - 20 }
         if (cps > cfg.threshold) {
-            flag(tp, ctx, 1.0, "ClickStats(CPS)", tick)
+            flag(tp, ctx, 1.0, "ClickStats(CPS)", tick, Evidence(
+                subLabel = "cps", measurement = cps.toDouble(), threshold = cfg.threshold,
+                extra = "$cps CPS (cap ${cfg.threshold.toInt()})"))
         }
 
         // Robot / click-assist sub-10ms cluster
@@ -93,15 +95,20 @@ class ClickStatisticsCheck : Check() {
             val a = ctx.nanoIntervals.first()
             val b = ctx.nanoIntervals.elementAt(1)
             if (a < 10_000_000L && b < 50_000_000L) {
-                flag(tp, ctx, 2.0, "ClickStats(Robot)", tick)
+                flag(tp, ctx, 2.0, "ClickStats(Robot)", tick, Evidence(
+                    subLabel = "robot", measurement = a / 1_000_000.0, threshold = 10.0,
+                    extra = "${"%.1f".format(a / 1_000_000.0)}ms double-click — below human ~10ms"))
             }
         }
 
         // StDev window (40 samples)
         if (ctx.tickIntervals.size >= 40) {
             val sample = newestDoubles(ctx.tickIntervals, 40)
-            if (MathUtil.populationStDev(sample) < 0.45) {
-                flag(tp, ctx, 1.0, "ClickStats(StDev)", tick)
+            val stdev = MathUtil.populationStDev(sample)
+            if (stdev < 0.45) {
+                flag(tp, ctx, 1.0, "ClickStats(StDev)", tick, Evidence(
+                    subLabel = "stdev", measurement = stdev, threshold = 0.45,
+                    extra = "click intervals too uniform: stDev ${"%.2f".format(stdev)} (human > 0.45)"))
             }
         }
 
@@ -115,7 +122,9 @@ class ClickStatisticsCheck : Check() {
                     ctx.kurtActive = true
                     // One flag clears setbackVL so a single high-confidence episode alerts once,
                     // then vl decays away with no re-flag while the autoclicker holds the bar.
-                    flag(tp, ctx, setbackVL + 1.0, "ClickStats(Kurt)", tick)
+                    flag(tp, ctx, setbackVL + 1.0, "ClickStats(Kurt)", tick, Evidence(
+                        subLabel = "kurtosis", measurement = k, threshold = KURT_STRICT,
+                        extra = "near-uniform clicks: excess kurtosis ${"%.2f".format(k)} (human > $KURT_STRICT)"))
                 }
             } else if (k >= KURT_RECOVER) {
                 // kurt rose back toward human-like → re-arm so a stop-then-restart re-triggers.
@@ -138,7 +147,7 @@ class ClickStatisticsCheck : Check() {
                     flag(tp, ctx, setbackVL + 1.0, "ClickStats(Record)", tick, Evidence(
                         subLabel = "loop", measurement = period.toDouble(),
                         threshold = RECORD_MIN_CYCLES.toDouble(),
-                        extra = "period=$period cycles≥$RECORD_MIN_CYCLES"))
+                        extra = "replaying a recorded click loop (period $period ticks)"))
                 }
             } else if (ctx.recordActive && ++ctx.nonLoopStreak >= RECORD_REARM) {
                 // loop clearly gone (≥ RECORD_REARM consecutive non-loop swings) → re-arm.

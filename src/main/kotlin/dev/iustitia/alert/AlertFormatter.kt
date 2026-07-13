@@ -122,6 +122,22 @@ object AlertFormatter {
         } catch (_: Throwable) {
             // counts unavailable — skip the line
         }
+        // Human "why" line: the last evidenced flag for this check, read as a phrase so the
+        // hover explains the specific reading behind the alert (e.g. "hit from 4.20 blocks
+        // (vanilla max 3.0)"). Prefers the flag's human `extra` phrase; falls back to the
+        // sub-label + measurement/threshold. A check's flags share one evidence shape, so the
+        // most recent evidenced flag is the representative reading. Fail-open — skip on miss.
+        try {
+            val ev = FlagHistory.flagsForCheck(uuid, checkId).lastOrNull { it.evidence != null }?.evidence
+            if (ev != null) {
+                val why = ev.extra
+                    ?: listOfNotNull(ev.subLabel,
+                        if (ev.measurement != null || ev.threshold != null)
+                            "${ev.measurement ?: "?"}/${ev.threshold ?: "?"}" else null)
+                      .joinToString(" · ")
+                if (why.isNotEmpty()) lines.append(Text.literal("\n§bwhy §7$why"))
+            }
+        } catch (_: Throwable) {}
         // FP-cause hint (Phase 2 #18 text version): one benign-cause line so users learn when not
         // to hackusate. The standalone HUD note is a deferred Phase B render piece.
         try { dev.iustitia.info.FpHint.hint(checkId)?.let { lines.append(Text.literal("\n§8FP note: §7$it")) } } catch (_: Throwable) {}

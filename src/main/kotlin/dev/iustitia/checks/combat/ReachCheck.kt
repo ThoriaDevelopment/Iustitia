@@ -150,7 +150,7 @@ class ReachCheck : Check() {
                             flag(attacker, ctx, VL_HITBOX_MISS, "HitboxMiss", ev.tick, Evidence(
                                 subLabel = "miss", measurement = minAngle, threshold = HITBOX_MISS_ANGLE,
                                 pos = eye, victim = victim.uuid,
-                                extra = "nearestFace=$nearestFace angle=${"%.1f".format(minAngle)}°"))
+                                extra = "looked ${"%.1f".format(minAngle)}° off a hittable victim (within reach, not facing them)"))
                         }
                     }
                     // within reach but the angular miss wasn't clear → interpolation, fail-open
@@ -169,7 +169,8 @@ class ReachCheck : Check() {
                     val level = max(1.0, ceil((nearestFace - maxReach) * 2.0))
                     flag(attacker, ctx, level, "Reach", ev.tick, Evidence(
                         subLabel = "face", measurement = nearestFace, threshold = maxReach + 0.8,
-                        pos = eye, victim = victim.uuid, extra = "nearest-face over reach"))
+                        pos = eye, victim = victim.uuid,
+                        extra = "hit from ${"%.2f".format(nearestFace)} blocks (vanilla max ${"%.1f".format(maxReach)})"))
                     lagRangeAmplify(attacker, victim, ctx, eye, ev)
                 }
                 return
@@ -188,7 +189,8 @@ class ReachCheck : Check() {
                 val level = max(1.0, ceil((minDist - maxReach) * 2.0))
                 flag(attacker, ctx, level, "Reach", ev.tick, Evidence(
                     subLabel = "in-box", measurement = minDist, threshold = maxReach + 0.8,
-                    pos = eye, victim = victim.uuid, extra = "hitbox intercept"))
+                    pos = eye, victim = victim.uuid,
+                    extra = "hit from ${"%.2f".format(minDist)} blocks (vanilla max ${"%.1f".format(maxReach)})"))
                 lagRangeAmplify(attacker, victim, ctx, eye, ev)
             }
         } catch (_: Throwable) {

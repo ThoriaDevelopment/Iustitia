@@ -223,7 +223,14 @@ class NoKnockbackCheck : Check() {
         var expectedDisp = impulse * KB_FRICTION_INTEGRAL
         if (ctx.attackSlowdown) expectedDisp *= ATTACK_SLOWDOWN
         if (ctx.windowDisp < cfg.threshold * expectedDisp) {
-            flag(tp, ctx, 1.0, "NoKB", tick)
+            val ratio = if (expectedDisp > 0.0) ctx.windowDisp / expectedDisp else 0.0
+            val captured = tick - ctx.kbTick <= 3 && ctx.kbImpulseH > 0.1
+            val expected = if (captured)
+                "vs server impulse ${"%.3f".format(ctx.kbImpulseH)}"
+            else "vs vanilla sprint-KB ~$ASSUMED_SPRINT_KB (assumed)"
+            flag(tp, ctx, 1.0, "NoKB", tick, Evidence(
+                subLabel = "kb-absorbed", measurement = ratio, threshold = cfg.threshold, pos = tp.pos,
+                extra = "took ${"%.0f".format(ratio * 100)}% of expected KB (absorbed ${"%.0f".format((1 - ratio) * 100)}%) — $expected"))
             // Axis B amplifier (plan §2.2/§6): a KnockbackDelay self-blink freezes the cheater's
             // own outgoing stream through the knockback it just took — observable as an entity-
             // local freeze episode (not global-lag) around the hit. Zero-KB coincident with that
@@ -254,7 +261,8 @@ class NoKnockbackCheck : Check() {
             if (ratio < VELOCITYB_RATIO) {
                 flag(tp, ctx, VL_VELOCITYB, "NoKB(VelocityB)", tick, Evidence(
                     subLabel = "vertical-kb-ratio", measurement = ratio, threshold = VELOCITYB_RATIO,
-                    pos = tp.pos, extra = "Δy=${"%.4f".format(ctx.firstAirborneDy)} kbVy=${"%.4f".format(ctx.kbVy)}"))
+                    pos = tp.pos,
+                    extra = "took ${"%.0f".format(ratio * 100)}% of upward KB (Δy ${"%.4f".format(ctx.firstAirborneDy)} vs kbVy ${"%.4f".format(ctx.kbVy)})"))
             }
         }
         // KB-vector vs attacker-yaw mismatch (Axis C, plan §3/§8 step 11): the server applies KB

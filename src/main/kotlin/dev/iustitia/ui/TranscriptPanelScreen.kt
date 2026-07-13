@@ -64,9 +64,19 @@ class TranscriptPanelScreen(
                 val now = Iustitia.tickCounter
                 for (f in flags) {
                     val ageSec = (now - f.tick) / 20
-                    val meas = f.evidence?.measurement
-                    val measTxt = if (meas != null) " §b${String.format(java.util.Locale.US, "%.2f", meas)}" else ""
-                    val line = "§7${ageSec}s §f${f.checkId}$measTxt"
+                    val ev = f.evidence
+                    // One enriched row: checkId · subLabel · measurement/threshold. The panel is
+                    // ~150px; if the full row won't fit, fall back to checkId + the key number
+                    // (the actionable part) so it survives over the sub-label rather than clipping.
+                    val sub = ev?.subLabel
+                    val numTxt = if (ev?.measurement != null || ev?.threshold != null)
+                        " §b${fmt2(ev.measurement)}/${fmt2(ev.threshold)}" else ""
+                    val subTxt = if (sub != null) " §8· §7$sub" else ""
+                    val full = "§7${ageSec}s §f${f.checkId}$subTxt$numTxt"
+                    val line = if (tr.getWidth(full) > panelW - 8) {
+                        val m = ev?.measurement?.let { " §b${fmt2(it)}" } ?: ""
+                        "§7${ageSec}s §f${f.checkId}$m"
+                    } else full
                     context.drawTextWithShadow(tr, Text.literal(line), x0 + 4, y, WHITE)
                     y += 11
                     if (y > this.height - 12) break
@@ -82,5 +92,7 @@ class TranscriptPanelScreen(
         private val TITLE = Text.literal("Iustitia — transcript")
         private const val WHITE = -1
         private val BG = 0xCC101010.toInt()
+        private fun fmt2(v: Double?): String =
+            if (v == null) "?" else String.format(java.util.Locale.US, "%.2f", v)
     }
 }
