@@ -124,7 +124,7 @@ object ReplayRenderer {
     }
 
     private fun drawGhosts(ctx: WorldRenderContext) {
-        val frame = ReplayState.currentFrame() ?: return
+        val frame = ReplayState.currentFrameLerped(MinecraftClient.getInstance().renderTickCounter.getTickProgress(false)) ?: return
         if (frame.snaps.isEmpty()) return
         val mc = MinecraftClient.getInstance()
         val camera = ctx.gameRenderer().camera

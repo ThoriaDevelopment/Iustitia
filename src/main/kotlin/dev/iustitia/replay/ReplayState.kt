@@ -187,6 +187,7 @@ object ReplayState {
     private var alerts: List<ReplayBuffer.AlertRec> = emptyList()
 
     @Volatile private var playhead: Float = 0f
+    @Volatile private var prevPlayhead: Float = 0f
     @Volatile private var speed: Float = SPEED_HALF
     @Volatile private var lastFrameTick: Int = 0
 
@@ -214,6 +215,7 @@ object ReplayState {
             this.speed = speed
             this.hideLive = hideLive
             playhead = 0f
+            prevPlayhead = 0f
             paused = false
             held = false
             cameraMode = CameraMode.FREE
@@ -265,6 +267,7 @@ object ReplayState {
             alerts = emptyList()
             focusUuid = null
             playhead = 0f
+            prevPlayhead = 0f
             paused = false
             held = false
             cameraMode = CameraMode.FREE
@@ -289,6 +292,12 @@ object ReplayState {
      * or null while still playing / inactive / paused.
      */
     fun tick(): String? {
+        prevPlayhead = playhead   // snapshot every call: when held/paused the playhead doesn't
+                                  // advance, so prev==playhead and currentFrameLerped's lerp is a
+                                  // no-op (static frame). On advancing ticks prev lags by one tick,
+                                  // giving the prev→current lerp its motion. Placing this AFTER the
+                                  // held/paused guards would leave prev stale and cause a one-frame
+                                  // oscillation at the held end / while paused.
         if (!active) return null
         if (paused) return null
         try {
@@ -313,6 +322,48 @@ object ReplayState {
         val idx = playhead.toInt()
         if (idx < 0 || idx >= frames.size) null else frames[idx]
     } catch (_: Throwable) { null }
+
+    /** An interpolated frame at the playhead, lerped between [frames] floor and ceil by the
+     *  tickDelta-interpolated playhead fraction — so ghosts move smoothly between recorded ticks
+     *  (esp. at 0.5×/0.25× speed) AND between client ticks. At full speed (frac≈0 at each tick) this
+     *  equals [currentFrame]. Read cross-thread by [dev.iustitia.render.ReplayRenderer]. Null when
+     *  inactive. Non-spatial fields (uuid/name/pose/swing) come from the ceil frame. */
+    fun currentFrameLerped(tickDelta: Float): ReplayBuffer.Frame? = try {
+        if (!active || frames.isEmpty()) return null
+        val td = tickDelta.coerceIn(0f, 1f)
+        val rh = MathHelper.lerp(td, prevPlayhead, playhead)
+        val idx = rh.toInt().coerceIn(0, frames.size - 1)
+        val frac = (rh - idx).coerceIn(0f, 1f)
+        val a = frames[idx]
+        if (idx + 1 >= frames.size || frac <= 0f) return a
+        val b = frames[idx + 1]
+        val byUuid = HashMap<java.util.UUID, ReplayBuffer.PlayerSnap>(b.snaps.size)
+        for (s in b.snaps) byUuid[s.uuid()] = s
+        val aUuids = HashSet<java.util.UUID>(a.snaps.size)
+        val out = ArrayList<ReplayBuffer.PlayerSnap>(a.snaps.size + b.snaps.size)
+        for (s in a.snaps) {
+            aUuids.add(s.uuid())
+            val t = byUuid[s.uuid()]
+            out.add(if (t != null) lerpSnap(s, t, frac) else s)
+        }
+        for (s in b.snaps) if (s.uuid() !in aUuids) out.add(s)  // entered between ticks
+        ReplayBuffer.Frame(a.tick, out)
+    } catch (_: Throwable) { null }
+
+    /** Lerp the spatial fields of two snaps of the same player; keep identity/discrete fields from [b]
+     *  (the ceil/"current" frame). Yaw uses angle-aware lerp. */
+    private fun lerpSnap(a: ReplayBuffer.PlayerSnap, b: ReplayBuffer.PlayerSnap, frac: Float): ReplayBuffer.PlayerSnap {
+        val f = frac.coerceIn(0f, 1f)
+        return ReplayBuffer.PlayerSnap(
+            a.uuidMost, a.uuidLeast,
+            MathHelper.lerp(f, a.x, b.x),
+            MathHelper.lerp(f, a.y, b.y),
+            MathHelper.lerp(f, a.z, b.z),
+            MathHelper.lerpAngleDegrees(f, a.yaw, b.yaw),
+            MathHelper.lerp(f, a.pitch, b.pitch),
+            b.swingTicks, b.pose, b.name,
+        )
+    }
 
     /** The buffered alerts in this replay (for the on-screen replay HUD / future overlay). */
     fun alerts(): List<ReplayBuffer.AlertRec> = if (active) alerts else emptyList()
@@ -355,6 +406,7 @@ object ReplayState {
             if (!active || frames.isEmpty()) return
             val target = (seconds * 20f).coerceIn(0f, (frames.size - 1).toFloat())
             playhead = target
+            prevPlayhead = target
             held = target >= (frames.size - 1)
         } catch (_: Throwable) {}
     }
@@ -367,6 +419,7 @@ object ReplayState {
             if (!active || frames.isEmpty()) return
             val target = (playhead + deltaSeconds * 20f).coerceIn(0f, (frames.size - 1).toFloat())
             playhead = target
+            prevPlayhead = target
             held = target >= (frames.size - 1)
         } catch (_: Throwable) {}
     }
@@ -378,6 +431,7 @@ object ReplayState {
             if (!active || this.frames.isEmpty() || !paused) return
             val target = (playhead + frames).coerceIn(0f, (this.frames.size - 1).toFloat())
             playhead = target
+            prevPlayhead = target
             held = target >= (this.frames.size - 1)
         } catch (_: Throwable) {}
     }
