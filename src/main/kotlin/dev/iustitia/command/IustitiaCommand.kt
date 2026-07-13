@@ -181,6 +181,10 @@ object IustitiaCommand {
                     .then(ClientCommandManager.argument("mode", StringArgumentType.word())
                         .suggests { _, b -> suggestFiltered(b, listOf("free", "follow", "pov", "freecam")); b.buildFuture() }
                         .executes { replayCam(it, StringArgumentType.getString(it, "mode")) }))
+                .then(ClientCommandManager.literal("save")
+                    .then(ClientCommandManager.argument("name", StringArgumentType.word())
+                        .suggests { _, b -> suggestFiltered(b, dev.iustitia.replay.ClipStore.list()); b.buildFuture() }
+                        .executes { replaySave(it, StringArgumentType.getString(it, "name")) }))
                 // <target> is overloaded: a NUMBER = the seconds to replay (no focus, 1×), e.g.
                 // `/ius replay 60`; a NAME = the focus player, optionally followed by <seconds> [speed],
                 // e.g. `/ius replay thoria 60 0.5`. A bare `/ius replay` replays the default window.
@@ -1071,6 +1075,47 @@ object IustitiaCommand {
         if (!started) { send(ctx, "$tag §7couldn't start the replay (empty window)."); return 0 }
         val hideTxt = if (cfg.replayHideLive) " §7(live players hidden)" else ""
         send(ctx, "$tag §7replaying last §f${secs}s §7for §f$focusTxt§7 at §f${"%.2f".format(speed)}×§7 — ghosts drawn in-world$hideTxt. Holds at the end (or §f/ius replay off§7).")
+        return 1
+    }
+
+    /** `/ius replay save <name>` — export the active replay's window to a `.iusclip` without exiting
+     *  the replay. Requires an active replay (playing or held); errors if none. Contents match the
+     *  configured playclipMode: MODERN → frames + alerts + fresh terrain/chunks captured at save
+     *  time (reusing the /ius clip capture path); LEGACY → frames + alerts only. The replay keeps
+     *  running after a save (you can save again / keep watching). Fail-open. */
+    private fun replaySave(ctx: CommandContext<FabricClientCommandSource>, nameArg: String): Int {
+        if (!dev.iustitia.replay.ReplayState.active) {
+            send(ctx, "$tag §cno active replay to save§7 — start one with §f/ius replay§7 first.")
+            return 0
+        }
+        val cfg = ConfigManager.config
+        val focus = dev.iustitia.replay.ReplayState.focusUuid
+        val base = try { dev.iustitia.replay.ReplayState.exportWindow() } catch (_: Throwable) {
+            dev.iustitia.replay.ReplayBuffer.Window(emptyList(), emptyList())
+        }
+        if (base.frames.isEmpty()) { send(ctx, "$tag §7replay window is empty — nothing to save."); return 0 }
+        // Capture terrain + chunks at save time only when MODERN and the replay isn't already
+        // carrying them (a /ius replay window has none; a playclip-modern window already has them).
+        val modern = cfg.playclipMode == dev.iustitia.config.IustitiaConfig.PlayclipMode.MODERN
+        val w1 = if (modern && cfg.clipTerrain && base.terrain == null) {
+            try { base.copy(terrain = dev.iustitia.replay.TerrainCapture.capture(base, focus)) } catch (_: Throwable) { base }
+        } else base
+        val w2 = if (modern && cfg.clipChunkWorld && base.chunks == null) {
+            try {
+                val radius = try { cfg.clipChunkRadius } catch (_: Throwable) { 8 }
+                w1.copy(chunks = dev.iustitia.replay.ChunkCapture.capture(radius))
+            } catch (_: Throwable) { w1 }
+        } else w1
+        val saved = try { dev.iustitia.replay.ClipStore.save(nameArg, w2, focus) } catch (_: Throwable) { null }
+        if (saved == null) { send(ctx, "$tag §cfailed to write clip (disk error)."); return 0 }
+        val frames = w2.frames.size
+        val alerts = w2.alerts.size
+        val blocks = w2.terrain?.nonAirCount() ?: 0
+        val terrainTxt = if (blocks > 0) "§8, $blocks terrain blocks§7" else ""
+        val chunkSections = w2.chunks?.sectionCount() ?: 0
+        val chunksTxt = if (chunkSections > 0) "§8, $chunkSections chunk sections§7" else ""
+        send(ctx, "$tag §7replay saved as clip §f$saved§7 §8($frames frames, $alerts alerts$terrainTxt$chunksTxt) §7→ §f${dev.iustitia.replay.ClipStore.dirDisplay()}§7. Replay still active.")
+        send(ctx, " §7play it back with §f/ius playclip $saved§7.")
         return 1
     }
 

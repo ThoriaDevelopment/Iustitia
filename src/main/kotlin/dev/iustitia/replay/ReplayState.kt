@@ -350,6 +350,13 @@ object ReplayState {
         ReplayBuffer.Frame(a.tick, out)
     } catch (_: Throwable) { null }
 
+    /** The active replay's full window (frames + alerts + any bundled terrain/chunks), for
+     *  `/ius replay save`. Empty when inactive. Client-thread only (command handler). */
+    fun exportWindow(): ReplayBuffer.Window = try {
+        if (!active) ReplayBuffer.Window(emptyList(), emptyList(), null, null)
+        else ReplayBuffer.Window(frames, alerts, terrain, chunks)
+    } catch (_: Throwable) { ReplayBuffer.Window(emptyList(), emptyList(), null, null) }
+
     /** Lerp the spatial fields of two snaps of the same player; keep identity/discrete fields from [b]
      *  (the ceil/"current" frame). Yaw uses angle-aware lerp. */
     private fun lerpSnap(a: ReplayBuffer.PlayerSnap, b: ReplayBuffer.PlayerSnap, frac: Float): ReplayBuffer.PlayerSnap {
