@@ -14,8 +14,11 @@ import net.minecraft.client.render.RenderLayers
 import net.minecraft.client.render.OverlayTexture
 import net.minecraft.client.render.VertexConsumerProvider
 import net.minecraft.client.render.VertexRendering
+import net.minecraft.client.render.entity.LivingEntityRenderer
 import net.minecraft.client.render.entity.PlayerEntityRenderer
 import net.minecraft.client.render.entity.model.BipedEntityModel
+import net.minecraft.client.render.entity.state.PlayerEntityRenderState
+import net.minecraft.client.util.BufferAllocator
 import net.minecraft.client.util.math.MatrixStack
 import net.minecraft.entity.EntityPose
 import net.minecraft.text.Text
@@ -117,6 +120,18 @@ object ReplayRenderer {
                     // fail-open: a render error never crashes the client
                 }
             })
+            // Flush the name-tag / alert-marker text LATE — after the world consumer
+            // (ctx.consumers: chunk-world blocks in MODERN + ghost models in every mode) has flushed
+            // its entity layers. The text is BUFFERED into the dedicated Immediate at AFTER_ENTITIES
+            // (matrices baked there) but not emitted until here, so it draws ON TOP of the blocks /
+            // models behind each tag instead of being overdrawn by them (the "nametag invisible when
+            // a block/entity is behind it" symptom — the tag was drawn first, then overwritten by the
+            // later opaque flush). tr.draw bakes each vertex's matrix at draw time, so the AFTER_ENTITIES
+            // matrix is correct even though we flush here; the current matrix is irrelevant at flush.
+            // See [textVcp]. Fail-open: a flush error drops the tags this frame, never crashes.
+            WorldRenderEvents.END_MAIN.register(WorldRenderEvents.EndMain { _ ->
+                try { textVcpImmediate?.draw() } catch (_: Throwable) {}
+            })
             HudRenderCallback.EVENT.register(HudRenderCallback { context, _ ->
                 try { if (ReplayState.active) renderHud(context) } catch (_: Throwable) {}
             })
@@ -129,15 +144,18 @@ object ReplayRenderer {
         val mc = MinecraftClient.getInstance()
         val camera = ctx.gameRenderer().camera
         val camPos = camera.getCameraPos()
-        // The AFTER_ENTITIES modelview is WORLD-space (identity rotation; the camera lives in the
-        // projection), so a name tag drawn with no rotation faces a fixed compass direction and is
-        // only visible from one azimuth. We billboard each tag by rotating it about world Y to face
-        // the render camera. Sign: MC text quads wind clockwise viewed from +Z (signed area < 0) →
-        // the readable FRONT face is −Z, so the tag faces the camera at rotation = 180f - cameraYaw
-        // (matches vanilla `EntityRenderer.renderLabelIfPresent`). scale(-scale,-scale,scale): −Y flips glyphs
-        // upright (world +Y is up, glyph +Y is down), −X mirrors glyphs so they read L→R toward the
-        // camera. Text stays vertical (no pitch billboard — same as vanilla entity labels).
-        val cameraYaw = try { camera.getYaw() } catch (_: Throwable) { 0f }
+        // The AFTER_ENTITIES modelview carries the CAMERA ROTATION (the view matrix; the camera
+        // position is NOT on it, so we translate by -camPos below). A name tag drawn with no
+        // counter-rotation inherits that view rotation and renders edge-on / back-facing → invisible.
+        // We billboard each tag the way vanilla `EntityRenderer.renderLabelIfPresent` does: multiply
+        // by the camera's orientation quaternion (`Camera.getRotation` — the same value vanilla stores
+        // as `CameraRenderState.orientation`), which is the inverse of the view rotation already on
+        // the stack, leaving the tag screen-aligned (cancels yaw AND pitch). The old yaw-only
+        // `180f - cameraYaw` billboard only cancels yaw, so it left the tag tilted out of view whenever
+        // the camera pitched and double-rotated it the rest of the time → nametags 100% invisible.
+        // scale(scale,-scale,scale) mirrors vanilla's (0.025,-0.025,0.025): −Y flips glyphs upright
+        // (glyph +Y is down), +X keeps them L→R toward the camera (vanilla labels read correctly at +X).
+        val camRot = try { camera.getRotation() } catch (_: Throwable) { null }
         val matrices = ctx.matrices()
         val vcp: VertexConsumerProvider = ctx.consumers()
         val lines = vcp.getBuffer(RenderLayers.lines())
@@ -150,9 +168,24 @@ object ReplayRenderer {
         // captured tick is within ±1 of the playhead frame (so a ⚠ floats over a ghost exactly as the
         // playhead crosses the moment the cheat fired). Fail-open: an empty/missing map just draws none.
         val nowTick = frame.tick
+        // Dedicated text Immediate (see [textVcp]): the name-tag / alert-marker text is drawn into this
+        // and flushed explicitly after the ghost loop, so it isn't lost to the world consumer's flush.
+        // Falls back to the world vcp if construction failed (and then we skip the explicit flush).
+        val dedicatedText = textVcp()
+        val textVcp: VertexConsumerProvider = dedicatedText ?: vcp
         val alertLabelFor: Map<java.util.UUID, String> = try {
-            ReplayState.alerts().filter { kotlin.math.abs(it.tick - nowTick) <= 1 }
-                .associate { it.uuid() to it.label }
+            // Cache per tick (frame.tick changes once per replay tick, not per render frame); the
+            // common no-alerts case short-circuits to an empty map without allocating a filter.
+            if (nowTick == cachedAlertTick) cachedAlertLabels
+            else {
+                val built: Map<java.util.UUID, String> =
+                    if (ReplayState.alerts().isEmpty()) emptyMap()
+                    else ReplayState.alerts().filter { kotlin.math.abs(it.tick - nowTick) <= 1 }
+                        .associate { it.uuid() to it.label }
+                cachedAlertTick = nowTick
+                cachedAlertLabels = built
+                built
+            }
         } catch (_: Throwable) { emptyMap() }
         matrices.push()
         // Fold the relocation offset into the single shared origin translate: every per-snap
@@ -180,11 +213,15 @@ object ReplayRenderer {
             for (s in frame.snaps) {
                 try {
                     if (skipFocus && s.uuid() == focusUuid) continue
-                    drawHumanoid(matrices, lines, vcp, tr, s, focusUuid, camPos, o, cameraYaw, alertLabelFor[s.uuid()], nowTick)
+                    drawHumanoid(matrices, lines, vcp, textVcp, tr, s, focusUuid, camPos, o, camRot, alertLabelFor[s.uuid()], nowTick)
                 } catch (_: Throwable) {
                     // skip one bad ghost, keep the rest
                 }
             }
+            // NOTE: the dedicated text Immediate is NOT flushed here — it's flushed at END_MAIN so the
+            // name tags draw on top of the chunk-world blocks + ghost models (see [register]). The text
+            // vertices already baked their matrices at tr.draw time above, so the current matrix doesn't
+            // matter by the time the flush runs. Nothing to do here; fall through to the pop.
         } finally {
             matrices.pop()
         }
@@ -199,12 +236,13 @@ object ReplayRenderer {
         matrices: MatrixStack,
         lines: net.minecraft.client.render.VertexConsumer,
         vcp: VertexConsumerProvider,
+        textVcp: VertexConsumerProvider,
         tr: TextRenderer,
         s: ReplayBuffer.PlayerSnap,
         focusUuid: java.util.UUID?,
         camPos: net.minecraft.util.math.Vec3d,
         offset: net.minecraft.util.math.Vec3d,
-        cameraYaw: Float,
+        camRot: org.joml.Quaternionf?,
         alertLabel: String?,
         tick: Int,
     ) {
@@ -220,6 +258,16 @@ object ReplayRenderer {
         val color = if (isFocus) FOCUS_COLOR else tierColor(tier)
         val width = if (isFocus) FOCUS_WIDTH else GHOST_WIDTH
         val laid = s.pose == ReplayBuffer.POSE_GLIDE || s.pose == ReplayBuffer.POSE_SWIM || s.pose == ReplayBuffer.POSE_RIPTIDE
+        // v7 clip overlays (gated, default off): a numeric health indicator + a totem-pop counter badge
+        // on the nametag. Fail-open off. Both are Modern-playclip-only conceptually but the gate is the
+        // config flag (Legacy has no chunk world but ghosts + nametags still render, so the indicator
+        // still applies to a Legacy replay too — harmless; the toggle is the source of truth).
+        val cfg = try { ConfigManager.config } catch (_: Throwable) { null }
+        val healthOn = try { cfg?.clipHealthIndicator == true } catch (_: Throwable) { false }
+        val totemOn = try { cfg?.clipTotemPopCounter == true } catch (_: Throwable) { false }
+        // Per-ghost totem-pop count within the clip window (Phase 4: ReplayState aggregates the clip's
+        // totem events). 0 when the clip has no totems / the accessor is unavailable (pre-v7 clip).
+        val totemCount = if (totemOn) try { ReplayState.totemCountFor(uuid) } catch (_: Throwable) { 0 } else 0
 
         // --- real player model path (experimental, default off): drive vanilla's PlayerEntityRenderer
         //     model with a fabricated render state + the default Steve skin (no skin fetch / no
@@ -283,7 +331,10 @@ object ReplayRenderer {
         // --- name tag (billboarded, see-through) ---
         try {
             val name = s.name
-            val label = if (isFocus) Text.literal("§f▶ $name") else Text.literal(name)
+            // v7 totem-pop counter badge: a gold ⚡<count> appended before the name when the toggle is
+            // on and this ghost popped ≥1 totem in the clip window. Pure text — no feature renderer.
+            val totemBadge = if (totemOn && totemCount > 0) "§6⚡$totemCount§r " else ""
+            val label = if (isFocus) Text.literal("§f▶ $totemBadge$name") else Text.literal("$totemBadge$name")
             // labelY = the text's TOP in world space (after the −Y flip the glyphs extend DOWNWARD
             // from this point). The model + hat reach ~1.95 above the feet, so the baseline must sit
             // high enough that the text's bottom (labelY − ~0.25) clears the head — otherwise the tag
@@ -297,30 +348,82 @@ object ReplayRenderer {
                 val dz = (s.z + ozF) - camPos.z.toFloat()
                 val dist = sqrt((dx * dx + dy * dy + dz * dz).toDouble()).toFloat()
                 val scale = (0.025f * (dist / 8f)).coerceIn(0.015f, 0.09f)
-                // Billboard to face the render camera (see drawGhosts): rotate about world Y by
-                // 180f - cameraYaw so the text's −Z front faces the camera, then the canonical scale
-                // (−X mirrors glyphs L→R, −Y flips them upright, +Z keeps the front toward camera).
-                matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180f - cameraYaw))
-                matrices.scale(-scale, -scale, scale)
+                // Billboard via the camera orientation quaternion (see drawGhosts) — cancels the view
+                // rotation already on the stack so the tag is screen-aligned (yaw + pitch), like vanilla.
+                if (camRot != null) matrices.multiply(camRot)
+                matrices.scale(scale, -scale, scale)
                 val w = tr.getWidth(label)
                 val textColor = if (isFocus) FOCUS_COLOR else color
                 tr.draw(
-                    label, -w / 2f, 0f, textColor, true,
-                    matrices.peek().getPositionMatrix(), vcp,
-                    TextRenderer.TextLayerType.SEE_THROUGH, FULL_LIGHT, 0,
+                    label, -w / 2f, 0f, textColor, false,
+                    matrices.peek().getPositionMatrix(), textVcp,
+                    TextRenderer.TextLayerType.SEE_THROUGH, 0, FULL_LIGHT,
                 )
             } finally {
                 matrices.pop()
             }
         } catch (_: Throwable) {}
 
+        // --- v7 health indicator (billboarded, see-through): a numeric §c<hp>§r/§f<max> line above
+        //     the name, plus a transient §c-<dmg> popup for ~40 ticks after a detected health drop
+        //     (damage amount = health-diff; attack SOURCE is not available client-side for other
+        //     players). Gated by clipHealthIndicator; fail-open per ghost. ---
+        if (healthOn) {
+            try {
+                val hs = healthState.computeIfAbsent(uuid) { HealthState() }
+                val prev = hs.lastHealth
+                if (!prev.isNaN() && s.health < prev - 0.5f) {
+                    hs.dmgAmount = (prev - s.health).coerceIn(0.5f, 40f)
+                    hs.dmgTick = tick
+                }
+                hs.lastHealth = s.health
+                val maxH = if (s.maxHealth > 0f) s.maxHealth else 20f
+                val hp = s.health.coerceIn(0f, maxH)
+                val baseY = if (laid) 0.95 else if (s.pose == ReplayBuffer.POSE_SNEAK) 2.15 else 2.5
+                val hy = baseY + 0.35f
+                matrices.push()
+                try {
+                    matrices.translate(s.x.toDouble(), (s.y + hy).toDouble(), s.z.toDouble())
+                    val dx = (s.x + oxF) - camPos.x.toFloat()
+                    val dy = (s.y + hy + oyF) - camPos.y.toFloat()
+                    val dz = (s.z + ozF) - camPos.z.toFloat()
+                    val dist = sqrt((dx * dx + dy * dy + dz * dz).toDouble()).toFloat()
+                    val scale = (0.025f * (dist / 8f)).coerceIn(0.015f, 0.09f)
+                    if (camRot != null) matrices.multiply(camRot)
+                    matrices.scale(scale, -scale, scale)
+                    val hpInt = (hp + 0.5f).toInt()
+                    val maxInt = (maxH + 0.5f).toInt()
+                    val hpLabel = Text.literal("§c$hpInt§r/§f$maxInt")
+                    val w = tr.getWidth(hpLabel)
+                    tr.draw(
+                        hpLabel, -w / 2f, 0f, WHITE, false,
+                        matrices.peek().getPositionMatrix(), textVcp,
+                        TextRenderer.TextLayerType.SEE_THROUGH, 0, FULL_LIGHT,
+                    )
+                    if (tick - hs.dmgTick in 0..40 && hs.dmgAmount > 0f) {
+                        val dmgInt = (hs.dmgAmount + 0.5f).toInt()
+                        val popup = Text.literal("§c-$dmgInt")
+                        val pw = tr.getWidth(popup)
+                        tr.draw(
+                            popup, w / 2f + 2f, 0f, RED_COLOR, false,
+                            matrices.peek().getPositionMatrix(), textVcp,
+                            TextRenderer.TextLayerType.SEE_THROUGH, 0, FULL_LIGHT,
+                        )
+                    }
+                } finally {
+                    matrices.pop()
+                }
+            } catch (_: Throwable) {}
+        }
+
         // --- alert marker: when the playhead crosses an alert for this player, float a red ⚠ label
-        //     above the name tag so the moment a cheat fired is visible on the ghost itself ---
+        //     above the name tag (and above the health line when it's shown) so the moment a cheat
+        //     fired is visible on the ghost itself ---
         if (alertLabel != null) {
             try {
                 val alert = Text.literal("§c⚠ §f$alertLabel")
                 val baseY = if (laid) 0.95 else if (s.pose == ReplayBuffer.POSE_SNEAK) 2.15 else 2.5
-                val ay = baseY + 0.35
+                val ay = baseY + if (healthOn) 0.7f else 0.35f
                 matrices.push()
                 try {
                     matrices.translate(s.x.toDouble(), (s.y + ay).toDouble(), s.z.toDouble())
@@ -329,13 +432,13 @@ object ReplayRenderer {
                     val dz = (s.z + ozF) - camPos.z.toFloat()
                     val dist = sqrt((dx * dx + dy * dy + dz * dz).toDouble()).toFloat()
                     val scale = (0.025f * (dist / 8f)).coerceIn(0.015f, 0.09f)
-                    matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180f - cameraYaw))
-                    matrices.scale(-scale, -scale, scale)
+                    if (camRot != null) matrices.multiply(camRot)
+                    matrices.scale(scale, -scale, scale)
                     val w = tr.getWidth(alert)
                     tr.draw(
-                        alert, -w / 2f, 0f, RED_COLOR, true,
-                        matrices.peek().getPositionMatrix(), vcp,
-                        TextRenderer.TextLayerType.SEE_THROUGH, FULL_LIGHT, 0,
+                        alert, -w / 2f, 0f, RED_COLOR, false,
+                        matrices.peek().getPositionMatrix(), textVcp,
+                        TextRenderer.TextLayerType.SEE_THROUGH, 0, FULL_LIGHT,
                     )
                 } finally {
                     matrices.pop()
@@ -374,6 +477,37 @@ object ReplayRenderer {
     private var playerRenderer: PlayerEntityRenderer<*>? = null
 
     /**
+     * Dedicated `VertexConsumerProvider.Immediate` for ghost name tags + alert markers. Vanilla
+     * itself draws entity labels into a real `VertexConsumerProvider.Immediate`
+     * (`BufferBuilderStorage.getEntityVertexConsumers`, passed to `LabelCommandRenderer.render`) —
+     * NOT into the batched world consumer — so mirroring that with a private Immediate + an explicit
+     * [draw] is the vanilla-aligned path for world-space text.
+     *
+     * The text is BUFFERED at [drawGhosts] (AFTER_ENTITIES, matrices baked there) and FLUSHED at
+     * [WorldRenderEvents.END_MAIN] — AFTER `ctx.consumers()` flushes the chunk-world blocks (MODERN)
+     * + ghost models (every mode) — so the tags draw on top of the geometry behind them instead of
+     * being overdrawn by the later opaque flush. (The earlier "nametags 100% invisible" bug was the
+     * billboard, not the consumer — see [drawGhosts]; the dedicated Immediate is kept because it's the
+     * proven-correct text path.)
+     *
+     * Reused across frames (one long-lived [BufferAllocator], like vanilla's `Tessellator`); [draw]
+     * resets the buffers each frame. Constructed lazily on first use. Fail-open: if construction
+     * throws the caller falls back to the world consumer so a bad allocator never crashes the frame.
+     * Render-thread only (drawGhosts + END_MAIN are single-threaded on the render thread).
+     */
+    private var textVcpAlloc: BufferAllocator? = null
+    private var textVcpImmediate: VertexConsumerProvider.Immediate? = null
+    private fun textVcp(): VertexConsumerProvider.Immediate? = try {
+        textVcpImmediate ?: run {
+            val alloc = BufferAllocator(786432)
+            val v = VertexConsumerProvider.immediate(alloc)
+            textVcpAlloc = alloc
+            textVcpImmediate = v
+            v
+        }
+    } catch (_: Throwable) { null }
+
+    /**
      * Per-ghost rolling walk-animation state. Vanilla drives a player's legs from a `LimbAnimator`
      * that the entity ticks; a replay ghost has no entity, so we derive the equivalent amplitude +
      * phase from the horizontal position delta between consecutive snaps. `lastX/lastZ` track the
@@ -394,6 +528,24 @@ object ReplayRenderer {
     }
     private val walkState = ConcurrentHashMap<java.util.UUID, WalkState>()
 
+    /** Per-ghost rolling health for the [IustitiaConfig.clipHealthIndicator] damage popup: the last
+     *  snap's health (to detect a drop → popup) + the last detected damage amount + the tick it
+     *  happened (the `-dmg` popup shows for ~40 ticks). Survives across the replay session; bounded in
+     *  practice by player count. Render-thread only (drawHumanoid is single-threaded). */
+    private class HealthState {
+        var lastHealth: Float = Float.NaN
+        var dmgAmount: Float = 0f
+        var dmgTick: Int = Int.MIN_VALUE
+    }
+    private val healthState = ConcurrentHashMap<java.util.UUID, HealthState>()
+
+    // Per-tick alert-label cache (B3): the active-alert map only changes when the playhead frame
+    // (frame.tick) changes — i.e. once per replay tick, not per render frame. Caching it avoids
+    // rebuilding a filtered map every frame (and short-circuits to an empty map in the common
+    // no-alerts case). Render-thread only (drawGhosts is single-threaded).
+    private var cachedAlertTick: Int = Int.MIN_VALUE
+    private var cachedAlertLabels: Map<java.util.UUID, String> = emptyMap()
+
     private fun drawModel(
         matrices: MatrixStack,
         vcp: VertexConsumerProvider,
@@ -412,7 +564,12 @@ object ReplayRenderer {
         val model = try { renderer.model } catch (_: Throwable) { return false }
         // Real skin via the per-UUID cache (async-loaded by vanilla; Steve/Alex fallback). Fail-open → box.
         val skin = try { ReplaySkins.resolve(s.uuid()) } catch (_: Throwable) { return false }
-        val state = try { renderer.createRenderState() } catch (_: Throwable) { return false }
+        // Per-ghost walk state (rolling position-delta stride). The PlayerEntityRenderState is built
+        // fresh per ghost per frame — every field is overwritten below before render, so reuse would
+        // be safe, but createRenderState() is cheap (the profiler shows drawModel at ~0.4% of frame)
+        // and a fresh state keeps this path identical to the proven pre-B4 render. Fail-open → box.
+        val ws = walkState.computeIfAbsent(s.uuid()) { WalkState() }
+        val state: PlayerEntityRenderState = try { renderer.createRenderState() } catch (_: Throwable) { return false }
 
         // --- populate the render state so the ghost poses, faces, walks and swings like the live
         //     player did. Field-by-field rationale (verified by disassembling vanilla 1.21.11):
@@ -443,7 +600,10 @@ object ReplayRenderer {
         state.capeVisible = true
         state.light = FULL_LIGHT
         state.invisible = false
-        state.hurt = false
+        // v7 hurt red-flash: drive the vanilla hurt overlay from the recorded hurtTime (0 = not
+        // recently hit). LivingEntityRenderer.getOverlay reads state.hurt → returns the red hurt-row
+        // overlay UV when true, DEFAULT_UV when false (identical to the pre-v7 fixed DEFAULT_UV).
+        state.hurt = s.hurtTime > 0
         state.deathTime = 0f
         state.shaking = false
         state.bodyYaw = s.yaw
@@ -459,7 +619,6 @@ object ReplayRenderer {
         // the hands flail. Tick-gated advance is FPS-independent and scales with replay speed.
         // Dead-zone: < 0.05 b/tick = standing still / server position noise → amp→0, legs freeze
         // (kills the idle fidget). Capped dist + a seek/gap reset stop teleport/seek from flinging.
-        val ws = walkState.computeIfAbsent(s.uuid()) { WalkState() }
         val tickJump = tick - ws.lastTick
         when {
             tickJump == 1 -> {
@@ -504,7 +663,7 @@ object ReplayRenderer {
         try { model.setAngles(state) } catch (_: Throwable) { return false }
 
         val texture = try { skin.body().texturePath() } catch (_: Throwable) { return false }
-        val layer = try { model.getLayer(texture) } catch (_: Throwable) { return false } ?: return false
+        val layer = try { model.getLayer(texture) ?: return false } catch (_: Throwable) { return false }
         val vc = try { vcp.getBuffer(layer) } catch (_: Throwable) { return false }
 
         matrices.push()
@@ -523,11 +682,18 @@ object ReplayRenderer {
             // space; translate(0,-1.501,0) seats the feet at the snap origin (vanilla's constants).
             matrices.scale(-1f, -1f, 1f)
             matrices.translate(0f, -1.501f, 0f)
-            // OverlayTexture: pass DEFAULT_UV (packUv(0,10) = the transparent no-overlay row).
-            // Passing 0 here samples V=0 = the translucent-RED hurt row (rows 0-7 are red 0xB2FF0000),
-            // which tinted EVERY ghost ~70% red all the time — the "every player always has the red" bug.
-            // DEFAULT_UV is exactly what vanilla's LivingEntityRenderer uses for a non-hurt entity.
-            model.render(matrices, vc, FULL_LIGHT, OverlayTexture.DEFAULT_UV)
+            // OverlayTexture: the hurt red-flash. Vanilla's LivingEntityRenderer.getOverlay(state,
+            // partial) = packUv(getU(partial), getV(state.hurt)) — getV(true) selects the translucent
+            // RED hurt row (rows 0-7), getV(false) returns the transparent DEFAULT row. We set
+            // state.hurt = (hurtTime > 0) above, so a recorded hit tints that ghost red for ~10 ticks
+            // and a non-hit ghost gets DEFAULT_UV (identical to the pre-v7 fixed DEFAULT_UV — no
+            // behaviour change for unhurt ghosts). Passing 0 as the partial just keeps U=0 (the white
+            // hurt sparkle isn't used for the red tint, which lives in V); partialTick=0 is fine since
+            // the playhead advances per-tick. Fail-open to DEFAULT_UV.
+            val overlay = if (s.hurtTime > 0)
+                try { LivingEntityRenderer.getOverlay(state, 0f) } catch (_: Throwable) { OverlayTexture.DEFAULT_UV }
+            else OverlayTexture.DEFAULT_UV
+            model.render(matrices, vc, FULL_LIGHT, overlay)
         } catch (_: Throwable) {
             return false
         } finally {

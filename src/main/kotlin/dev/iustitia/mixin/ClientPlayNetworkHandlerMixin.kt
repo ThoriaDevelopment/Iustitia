@@ -112,11 +112,20 @@ class ClientPlayNetworkHandlerMixin {
     @Inject(method = ["onEntityStatus"], at = [At("HEAD")])
     private fun iustitia_onEntityStatus(packet: EntityStatusS2CPacket, ci: CallbackInfo) {
         try {
-            // EntityStatus byte 2 == living-entity "play hurt animation / took damage".
-            if (packet.status != 2.toByte()) return
             val w = world() ?: return
-            val victim = otherPlayer(packet.getEntity(w)) ?: return
-            Iustitia.bus.publish(HurtSignal(victim, Iustitia.tickCounter, -1, HurtSource.STATUS))
+            // EntityStatus byte 2 == living-entity "play hurt animation / took damage".
+            if (packet.status == 2.toByte()) {
+                val victim = otherPlayer(packet.getEntity(w)) ?: return
+                Iustitia.bus.publish(HurtSignal(victim, Iustitia.tickCounter, -1, HurtSource.STATUS))
+                return
+            }
+            // EntityStatus byte 35 == Totem-of-Undying pop (broadcast to every tracking client).
+            // Recorded into the replay buffer as a (tick, uuid) event → the `⚡<count>` badge on the
+            // ghost's nametag during /ius playclip when clipTotemPopCounter is on. Fail-open.
+            if (packet.status == 35.toByte()) {
+                val who = otherPlayer(packet.getEntity(w)) ?: return
+                dev.iustitia.replay.ReplayBuffer.recordTotemPop(Iustitia.tickCounter, who)
+            }
         } catch (_: Throwable) {}
     }
 

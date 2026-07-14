@@ -1,5 +1,6 @@
 package dev.iustitia.replay
 
+import net.minecraft.block.BlockState
 import net.minecraft.client.MinecraftClient
 import net.minecraft.registry.Registries
 import net.minecraft.world.chunk.ChunkStatus
@@ -19,8 +20,10 @@ import net.minecraft.world.chunk.ChunkStatus
  * … — **names, not numeric state ids**, so a clip is portable across server versions and dimensions),
  * and `data: ByteArray` (4096 palette-index entries, 1 byte when the palette has ≤ 256 entries else 2
  * bytes big-endian). Air is a normal palette entry; fully-air sections are omitted (`ChunkSection.isEmpty`).
- * Block *properties* + *block entities* are dropped in v1 (the mesher renders each block's default state;
- * chest/sign contents + faithful orientations are documented follow-ups).
+ * Since v7 the palette key carries the full state string for stateful blocks (`"minecraft:stairs
+ * [facing=east,half=top]"`) so the mesher resolves the exact recorded orientation + shape; propertyless
+ * blocks keep the bare id. Block *entities* (chest/sign contents, banners) and *fluids* (INVISIBLE
+ * render type, skipped at mesh) are still not rendered; lighting stays fullbright (no AO/skylight).
  *
  * ## Caps + fail-open
  *
@@ -120,7 +123,7 @@ object ChunkCapture {
                     val st = sec.getBlockState(lx, ly, lz)
                     val name = if (st.isAir) "minecraft:air" else {
                         hasNonAir = true
-                        Registries.BLOCK.getId(st.block).toString()
+                        stateKey(st)
                     }
                     // getOrPut on a LinkedHashMap preserves first-seen order → the palette list is stable.
                     val idx = palette.getOrPut(name) { palette.size }
@@ -143,4 +146,25 @@ object ChunkCapture {
         }
         ChunkSnapshot.SectionRec(sectionY, palette.keys.toList(), data)
     } catch (_: Throwable) { null }
+
+    /**
+     * The palette key for a non-air block state: the registry id for a propertyless block
+     * (`"minecraft:stone"` — byte-identical to the pre-v7 registry-id capture, so a propertyless
+     * block's palette entry is unchanged), or the registry id + a `[name=value,...]` property suffix
+     * for a stateful block (`"minecraft:stairs[facing=east,half=top,shape=straight]"`). This is the
+     * `BlockArgumentParser`-compatible form, so [dev.iustitia.render.ChunkMesher.stateFor] can parse
+     * the EXACT recorded state back (orientation + shape) instead of the default state — fixing the
+     * v1 "stairs/slabs render in their default facing" + "blocks behind non-full blocks don't render"
+     * bugs. Built explicitly (NOT via `BlockState.toString()`, which wraps the id in `Block{...}` and
+     * is NOT parser-compatible). Fail-open: on any throw, fall back to the bare registry id (the
+     * pre-v7 default-state behaviour — recognizable block, default orientation).
+     */
+    private fun stateKey(st: BlockState): String = try {
+        val id = Registries.BLOCK.getId(st.block).toString()
+        val entries = st.entries
+        if (entries.isEmpty()) id
+        else id + "[" + entries.entries.joinToString(",") { "${it.key.name}=${it.value}" } + "]"
+    } catch (_: Throwable) {
+        try { Registries.BLOCK.getId(st.block).toString() } catch (_: Throwable) { "minecraft:air" }
+    }
 }

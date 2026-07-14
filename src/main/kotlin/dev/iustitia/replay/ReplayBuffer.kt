@@ -42,6 +42,7 @@ object ReplayBuffer {
     private const val MAX_FRAMES = MAX_SECONDS * 20
     private const val MAX_PLAYERS_PER_FRAME = 64
     private const val MAX_ALERTS = 4000
+    private const val MAX_TOTEMS = 1000
 
     /** Pose encoding for [PlayerSnap.pose] (1 byte). Mirrors [TrackedPlayer] pose derivation. */
     const val POSE_STAND: Byte = 0
@@ -55,12 +56,21 @@ object ReplayBuffer {
      *  look pitch (v3+ clips / live buffer); v2 clips default it to 0 on load — a v2 ghost won't tilt
      *  its head but still faces its yaw. [swingTicks] is the hand-swing phase (v4+ clips / live buffer);
      *  older clips default it to 0 — a pre-v4 ghost's arms hang still but still walk/face/tilt. TrackedPlayer
-     *  has no separate head-yaw, so body yaw IS the look yaw. */
+     *  has no separate head-yaw, so body yaw IS the look yaw.
+     *
+     *  v7 adds the combat-sync fields: [hurtTime] (vanilla `LivingEntity.hurtTime`, 0 when not recently
+     *  hit → drives the red hurt flash), [health] + [maxHealth] (server-authoritative, synced to all
+     *  clients via TrackedData / attribute sync → the health indicator). All three default to
+     *  no-flash / full-health on pre-v7 clips (hurtTime=0, health=maxHealth=20), so an old ghost just
+     *  renders without the new overlays. Attack SOURCE is not capturable client-side for other players. */
     data class PlayerSnap(
         val uuidMost: Long, val uuidLeast: Long,
         val x: Float, val y: Float, val z: Float, val yaw: Float, val pitch: Float,
         val swingTicks: Int, val pose: Byte,
         val name: String,
+        val hurtTime: Byte = 0,
+        val health: Float = 20f,
+        val maxHealth: Float = 20f,
     ) {
         fun uuid(): UUID = UUID(uuidMost, uuidLeast)
     }
@@ -76,8 +86,17 @@ object ReplayBuffer {
         fun uuid(): UUID = UUID(uuidMost, uuidLeast)
     }
 
+    /** One captured Totem-of-Undying pop (v7+): the tick + the player who popped. UUID as two longs.
+     *  Captured client-side from the `EntityStatusS2CPacket` status-byte-35 broadcast (every tracking
+     *  client sees it — no server query needed) and replayed as a `⚡<count>` badge on the ghost's
+     *  nametag when [dev.iustitia.config.IustitiaConfig.clipTotemPopCounter] is on. */
+    data class TotemRec(val tick: Int, val uuidMost: Long, val uuidLeast: Long) {
+        fun uuid(): UUID = UUID(uuidMost, uuidLeast)
+    }
+
     private val frames: ArrayDeque<Frame> = ArrayDeque()
     private val alerts: ArrayDeque<AlertRec> = ArrayDeque()
+    private val totems: ArrayDeque<TotemRec> = ArrayDeque()
 
     /** Snapshot frames + alerts for a replay/clip, copied out so live recording can't mutate playback.
      *  [terrain] is only set on clip exports ([TerrainCapture] runs in the `/ius clip` handler); a live
@@ -88,6 +107,7 @@ object ReplayBuffer {
     data class Window(
         val frames: List<Frame>, val alerts: List<AlertRec>,
         val terrain: TerrainSnapshot? = null, val chunks: ChunkSnapshot? = null,
+        val totems: List<TotemRec> = emptyList(),
     )
 
     /** True when the capture buffer is turned on ([IustitiaConfig.replayCapture]). Fail-open. */
@@ -103,11 +123,18 @@ object ReplayBuffer {
                 try {
                     val u = tp.uuid
                     val nm = tp.username().ifEmpty { u.toString().take(8) }
+                    // v7 combat-sync: hurt time + health, read straight off the live other-player
+                    // entity (TrackedPlayer.entity holds it). Fail-open to no-flash / full-health.
+                    val e = tp.entity
+                    val hurtTime = try { (e?.hurtTime ?: 0).toByte() } catch (_: Throwable) { 0 }
+                    val health = try { e?.getHealth() ?: 20f } catch (_: Throwable) { 20f }
+                    val maxHealth = try { e?.getMaxHealth() ?: 20f } catch (_: Throwable) { 20f }
                     snaps.add(
                         PlayerSnap(
                             u.mostSignificantBits, u.leastSignificantBits,
                             tp.pos.x.toFloat(), tp.pos.y.toFloat(), tp.pos.z.toFloat(),
                             tp.yaw, tp.pitch, tp.handSwingTicks, poseOf(tp), nm,
+                            hurtTime, health, maxHealth,
                         )
                     )
                 } catch (_: Throwable) {
@@ -138,6 +165,20 @@ object ReplayBuffer {
         }
     }
 
+    /** Record a Totem-of-Undying pop (called from the [dev.iustitia.mixin.ClientPlayNetworkHandlerMixin]
+     *  onEntityStatus status-35 branch). Fail-open; bounded by [MAX_TOTEMS] (drop oldest). */
+    fun recordTotemPop(tick: Int, uuid: UUID) {
+        if (!enabled) return
+        try {
+            synchronized(totems) {
+                totems.addLast(TotemRec(tick, uuid.mostSignificantBits, uuid.leastSignificantBits))
+                while (totems.size > MAX_TOTEMS) totems.removeFirst()
+            }
+        } catch (_: Throwable) {
+            // fail-open
+        }
+    }
+
     /**
      * Snapshot the last [seconds] of frames + alerts for a replay or clip. [seconds] is clamped to
      * [MAX_SECONDS]; frames older than the window are excluded. Returns a defensive copy (the deques
@@ -156,7 +197,11 @@ object ReplayBuffer {
         synchronized(alerts) {
             outAlerts = alerts.filter { it.tick >= tickFloor }
         }
-        Window(outFrames, outAlerts)
+        val outTotems: List<TotemRec>
+        synchronized(totems) {
+            outTotems = totems.filter { it.tick >= tickFloor }
+        }
+        Window(outFrames, outAlerts, totems = outTotems)
     } catch (_: Throwable) {
         Window(emptyList(), emptyList())
     }

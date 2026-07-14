@@ -10,14 +10,17 @@ package dev.iustitia.replay
  * ## Storage
  *
  * Each chunk stores its non-empty sections as a **palette + index array**: a section is
- * `(sectionY, palette: List<String>, data: ByteArray)` where `palette` is the block registry ids
- * (`"minecraft:stone"`, `"minecraft:air"`, … — names, not numeric state ids, so a clip is portable
- * across server versions and dimensions) and `data` is 4096 palette-index entries (1 byte each when
- * the palette has ≤ 256 entries, else 2 bytes big-endian). Air is a normal palette entry so a
- * section's full 4096 cells are represented; air-only sections are omitted entirely. Block
- * *properties* are dropped in v1 — the mesher renders each block's default state, so a stairs
- * renders as a stairs (recognizable) but not necessarily the recorded facing. Faithful orientations
- * are a documented follow-up.
+ * `(sectionY, palette: List<String>, data: ByteArray)` where `palette` is the block registry id — or,
+ * since v7, the full state string for a stateful block (`"minecraft:stairs[facing=east,half=top]"` —
+ * `BlockArgumentParser`-compatible form, written by [ChunkCapture.stateKey]; propertyless blocks keep
+ * the bare id `"minecraft:stone"`, byte-identical to pre-v7). Names, not numeric state ids, so a
+ * clip is portable across server versions and dimensions. `data` is 4096 palette-index entries (1
+ * byte each when the palette has ≤ 256 entries, else 2 bytes big-endian). Air is a normal palette
+ * entry so a section's full 4096 cells are represented; air-only sections are omitted entirely. The
+ * v7 state string lets [dev.iustitia.render.ChunkMesher.stateFor] resolve the EXACT recorded state
+ * (orientation + shape) instead of the default — so stairs/slabs face the recorded way and
+ * non-full/transparent blocks no longer cull their neighbours' faces. Pre-v7 clips have only bare-id
+ * palette entries → the mesher falls back to each block's default state (today's behaviour).
  *
  * Iteration order within a section is y-major → z → x: `index = (localY * 16 + localZ) * 16 + localX`
  * (the inverse of [ChunkCapture]'s writer). `localX = x & 15`, `localY = y & 15`, `localZ = z & 15`,

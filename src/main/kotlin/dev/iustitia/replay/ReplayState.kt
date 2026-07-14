@@ -53,15 +53,25 @@ object ReplayState {
     private const val FREECAM_BACKOFF: Double = 2.0
 
     /** Per-tick velocity added per unit input (blocks/tick²). Tuned for a spectator-like acceleration
-     *  ramp; runtime-tunable feel. */
-    private const val FC_FLY_ACCEL: Double = 0.06
-    /** Sprint multiplier on the acceleration (vanilla spectator sprint ≈ 2×). */
-    private const val FC_FLY_SPRINT: Double = 2.0
+     *  ramp; runtime-tunable feel. Scaled ×1.75 (from 0.06) on 2026-07-14 — steady-state speed ∝ accel
+     *  (drag unchanged). The default (no-CTRL) speed uses [FC_FLY_FAST] on this accel → effective
+     *  accel 0.21 → steady-state ≈ 0.525 b/t (the speed the user liked at CTRL and made the default). */
+    private const val FC_FLY_ACCEL: Double = 0.105
+    /** DEFAULT (no-CTRL) acceleration multiplier — the fast spectator speed is what you get by just
+     *  moving, no key held (vanilla spectator sprint ≈ 2×). Steady-state ≈ 0.525 b/t. Runtime-tunable. */
+    private const val FC_FLY_FAST: Double = 2.0
+    /** CTRL-held BOOST multiplier — holding CTRL (the vanilla sprint key) goes ~2× FASTER than the
+     *  default speed (4× the base accel → steady-state ≈ 1.05 b/t = 2× the native 0.525). The
+     *  2026-07-14 rework: native is the fast speed, CTRL is a further boost (was briefly a slow-mode
+     *  in an intermediate pass; the user preferred boost). Stays under [FC_FLY_MAX] (1.68). */
+    private const val FC_FLY_BOOST: Double = 4.0
     /** Per-tick velocity retention (drag). 0.6 → release the key and the camera coasts to a stop over
      *  a few ticks (vanilla creative-flight deceleration feel). Steady-state speed ≈ accel/(1-drag). */
     private const val FC_FLY_DRAG: Double = 0.6
-    /** Speed cap (blocks/tick) so accumulated velocity can't run away (≈ vanilla spectator sprint). */
-    private const val FC_FLY_MAX: Double = 0.96
+    /** Speed cap (blocks/tick) so accumulated velocity can't run away (≈ vanilla spectator sprint).
+     *  Scaled ×1.75 (from 0.96) to keep the cap's ratio to steady-state; it still never bites at
+     *  steady state (default ≈ 0.525 < 0.96 < 1.68), it's only a runaway guard. */
+    private const val FC_FLY_MAX: Double = 1.68
 
     @Volatile var active: Boolean = false
         private set
@@ -106,6 +116,17 @@ object ReplayState {
      * world-suppress mixin.
      */
     @Volatile var chunks: ChunkSnapshot? = null
+        private set
+
+    /**
+     * Totem-of-Undying pop events captured within this replay/clip window (v7+). Each [ReplayBuffer.TotemRec]
+     * is `(tick, uuid)` — the tick the pop happened + the player who popped. Set from [start] (copied from
+     * the [ReplayBuffer.Window]) and cleared in [stop]; read cross-thread by [dev.iustitia.render.ReplayRenderer]
+     * via [totemCountFor] to draw the `⚡<count>` badge on a ghost's nametag when
+     * [dev.iustitia.config.IustitiaConfig.clipTotemPopCounter] is on. Empty for `/ius replay` and pre-v7
+     * clips (no totems recorded → no badge). Fail-open.
+     */
+    @Volatile var totems: List<ReplayBuffer.TotemRec> = emptyList()
         private set
 
     /**
@@ -224,6 +245,7 @@ object ReplayState {
             // live-terrain suppression no-op (v1.1.0 was ghosts-over-live-world only). Modern keeps them.
             terrain = if (legacy) null else window.terrain
             chunks = if (legacy) null else window.chunks
+            totems = if (legacy) emptyList() else window.totems
             relocOffset = if (relocate) computeRelocOffset(window, focus) else null
             legacyPlayclip = legacy
             active = true
@@ -274,6 +296,7 @@ object ReplayState {
             relocOffset = null
             terrain = null
             chunks = null
+            totems = emptyList()
             legacyPlayclip = false
             // Drop the FREECAM pose (pure camera-override — no camera entity to restore; flipping the
             // flag is enough; the next frame's camera mixin FREECAM branch returns false → vanilla view).
@@ -323,6 +346,16 @@ object ReplayState {
         if (idx < 0 || idx >= frames.size) null else frames[idx]
     } catch (_: Throwable) { null }
 
+    // Reused scratch containers for currentFrameLerped (B2): a HashMap + HashSet + ArrayList were
+    // allocated every render frame (sized to ghost count). clear()+reuse keeps the backing capacity
+    // (no per-frame grow after warmup), dropping the per-frame allocation churn. Render-thread only:
+    // currentFrameLerped is called only from ReplayRenderer.drawGhosts, single-threaded, and the
+    // returned Frame's `out` list is consumed synchronously + discarded before the next frame reuses
+    // it — so sharing the mutable list across frames is safe.
+    private val lerpByUuid = HashMap<java.util.UUID, ReplayBuffer.PlayerSnap>()
+    private val lerpAUuids = HashSet<java.util.UUID>()
+    private val lerpOut = ArrayList<ReplayBuffer.PlayerSnap>()
+
     /** An interpolated frame at the playhead, lerped between [frames] floor and ceil by the
      *  tickDelta-interpolated playhead fraction — so ghosts move smoothly between recorded ticks
      *  (esp. at 0.5×/0.25× speed) AND between client ticks. At full speed (frac≈0 at each tick) this
@@ -337,10 +370,13 @@ object ReplayState {
         val a = frames[idx]
         if (idx + 1 >= frames.size || frac <= 0f) return a
         val b = frames[idx + 1]
-        val byUuid = HashMap<java.util.UUID, ReplayBuffer.PlayerSnap>(b.snaps.size)
+        // Reuse scratch containers (B2): clear() keeps the backing arrays, so no per-frame HashMap/
+        // HashSet/ArrayList allocation after warmup. `out` is returned in the Frame and consumed
+        // synchronously by drawGhosts before the next frame reuses it.
+        val byUuid = lerpByUuid.apply { clear() }
         for (s in b.snaps) byUuid[s.uuid()] = s
-        val aUuids = HashSet<java.util.UUID>(a.snaps.size)
-        val out = ArrayList<ReplayBuffer.PlayerSnap>(a.snaps.size + b.snaps.size)
+        val aUuids = lerpAUuids.apply { clear() }
+        val out = lerpOut.apply { clear() }
         for (s in a.snaps) {
             aUuids.add(s.uuid())
             val t = byUuid[s.uuid()]
@@ -354,7 +390,7 @@ object ReplayState {
      *  `/ius replay save`. Empty when inactive. Client-thread only (command handler). */
     fun exportWindow(): ReplayBuffer.Window = try {
         if (!active) ReplayBuffer.Window(emptyList(), emptyList(), null, null)
-        else ReplayBuffer.Window(frames, alerts, terrain, chunks)
+        else ReplayBuffer.Window(frames, alerts, terrain, chunks, totems)
     } catch (_: Throwable) { ReplayBuffer.Window(emptyList(), emptyList(), null, null) }
 
     /** Lerp the spatial fields of two snaps of the same player; UUID from [a] (floor frame),
@@ -374,6 +410,13 @@ object ReplayState {
 
     /** The buffered alerts in this replay (for the on-screen replay HUD / future overlay). */
     fun alerts(): List<ReplayBuffer.AlertRec> = if (active) alerts else emptyList()
+
+    /** Count of Totem-of-Undying pops by [uuid] within this replay/clip window (v7+), for the `⚡<count>`
+     *  nametag badge. 0 when inactive or the player popped no totems. Read cross-thread by the ghost
+     *  renderer. Fail-open. */
+    fun totemCountFor(uuid: UUID): Int = try {
+        if (active) totems.count { it.uuid() == uuid } else 0
+    } catch (_: Throwable) { 0 }
 
     /** Playhead progress 0..1 across the frame list (for a HUD progress bar). */
     fun progress(): Float = try {
@@ -524,7 +567,9 @@ object ReplayState {
 
     /**
      * Advance the FREECAM pose one client tick: camera-relative WASD (forward along [fcYaw], strafe
-     * right, jump=+Y, sneak=−Y), sprint×1.2, noclip (no collision/gravity — spectator feel). Reads the
+     * right, jump=+Y, sneak=−Y), noclip (no collision/gravity — spectator feel). DEFAULT (no key) is
+     *  the fast spectator speed ([FC_FLY_FAST]); holding CTRL (sprint) BOOSTS to [FC_FLY_BOOST] ≈ 2×
+     *  the native speed. Reads the
      * held vanilla [net.minecraft.client.option.KeyBinding]s (public API, no mixin) — the player's own
      * walking is already suppressed by [dev.iustitia.mixin.ClientPlayerEntityMixin], so the keys are
      * free for the camera. No-op when FREECAM isn't active. Client thread only. Fail-open: a tick
@@ -576,8 +621,10 @@ object ReplayState {
             } else {
                 dx = 0.0; dz = 0.0
             }
-            // Acceleration: wishDir * ACCEL * (sprint ? SPRINT : 1). Vertical (jump/sneak) same accel.
-            val mul = if (sprint) FC_FLY_SPRINT else 1.0
+            // Acceleration: wishDir * ACCEL * mul. DEFAULT (no CTRL) is the fast spectator speed
+            // ([FC_FLY_FAST]); holding CTRL (sprint) BOOSTS to [FC_FLY_BOOST] ≈ 2× the native speed.
+            // Vertical (jump/sneak) uses the same mul.
+            val mul = if (sprint) FC_FLY_BOOST else FC_FLY_FAST
             val ax = dx * FC_FLY_ACCEL * mul
             val az = dz * FC_FLY_ACCEL * mul
             val ay = dy * FC_FLY_ACCEL * mul

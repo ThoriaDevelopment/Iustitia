@@ -16,7 +16,8 @@ import java.util.UUID
  *
  * ```
  * magic   : 4 bytes  "IUSC"
- * version : int      (6 — v6 adds the optional chunks section [full-chunk world capture];
+ * version : int      (7 — v7 adds per-snap hurtTime/health/maxHealth + the optional totems section;
+ *                     v6 adds the optional chunks section [full-chunk world capture];
  *                     v5 adds the optional terrain section; v4 had no terrain;
  *                     v3 had no per-snap swingTicks; v2 had no per-snap pitch; v1 no per-snap name)
  * focus?  : byte 0/1, then uuidMost:long, uuidLeast:long  (the highlighted player, if any)
@@ -25,7 +26,9 @@ import java.util.UUID
  *                  uuidMost:long, uuidLeast:long, x:float, y:float, z:float, yaw:float,
  *                  pitch:float  (v3+ ONLY — v2 stops here),
  *                  swingTicks:int  (v4+ ONLY — v3 stops here),
- *                  pose:byte, name:UTF
+ *                  pose:byte,
+ *                  hurtTime:byte, health:float, maxHealth:float  (v7+ ONLY — v6 stops at pose),
+ *                  name:UTF
  * alerts  : int count, then per alert:
  *              tick:int, uuidMost:long, uuidLeast:long,
  *              name:UTF, checkId:UTF, label:UTF, vl:float
@@ -39,17 +42,21 @@ import java.util.UUID
  *                  per section: sectionY:int, paletteSize:short,
  *                      per palette entry: nameLen:short, name UTF-8,
  *                      dataLen:int, data bytes (4096 if paletteSize ≤ 256 else 8192)
+ * totems?: (v7+ ONLY) byte 0/1; if 1:
+ *              totemCount:int, per totem: tick:int, uuidMost:long, uuidLeast:long
  * ```
  *
  * ## Backward compatibility
  *
- * [read] accepts **v2 through v6**. v2 clips have no per-snap pitch → pitch defaults to 0 (the
+ * [read] accepts **v2 through v7**. v2 clips have no per-snap pitch → pitch defaults to 0 (the
  * ghost still faces its yaw, just won't tilt its head). v3 clips have no per-snap swingTicks →
  * swingTicks defaults to 0 (arms hang still, but the ghost still walks / faces / tilts). v4 and
  * earlier clips have no terrain → terrain defaults to null. v5 and earlier clips have no chunks →
  * chunks defaults to null (playclip then renders the v5 wireframe terrain / ghosts only — exactly the
- * path for an old clip recorded before full-chunk capture). v1 (no per-snap name) is not accepted.
- * **Old v2–v5 clips keep loading** so a user's saved library isn't invalidated.
+ * path for an old clip recorded before full-chunk capture). v6 and earlier clips have no per-snap
+ * hurtTime/health/maxHealth → they default to 0/20/20 (no red flash, full-health bar) and no totems
+ * section → the totem list is empty (no `⚡` badge). v1 (no per-snap name) is not accepted.
+ * **Old v2–v6 clips keep loading** so a user's saved library isn't invalidated.
  * [readHeader] reads only up through the counts (no per-snap data, no terrain runs, no chunk
  * section bodies) — cheap for the clip manager's list view.
  *
@@ -60,7 +67,7 @@ import java.util.UUID
 object ClipCodec {
 
     private const val MAGIC = "IUSC"
-    const val VERSION = 6
+    const val VERSION = 7
     /** Lowest version [read] will accept (v2 = no per-snap pitch; loaded with pitch defaulting to 0). */
     const val MIN_VERSION = 2
 
@@ -99,6 +106,11 @@ object ClipCodec {
                     d.writeFloat(s.pitch)
                     d.writeInt(s.swingTicks)
                     d.writeByte(s.pose.toInt())
+                    // v7+ per-snap combat-sync fields (hurt time + health). Written before `name`
+                    // to group the numeric fields; `name` stays last (length-prefixed UTF).
+                    d.writeByte(s.hurtTime.toInt())
+                    d.writeFloat(s.health)
+                    d.writeFloat(s.maxHealth)
                     d.writeUTF(s.name)
                 }
             }
@@ -156,6 +168,21 @@ object ClipCodec {
                     }
                 }
             }
+            // v7+ totems section (Totem-of-Undying pop events). Always written for v7 (byte 0 = no
+            // totems, 1 = totems present) so the reader branches cleanly; v2–v6 clips never had
+            // this byte. Each event is (tick, uuidMost, uuidLeast).
+            val totems = window.totems
+            if (totems.isEmpty()) {
+                d.writeByte(0)
+            } else {
+                d.writeByte(1)
+                d.writeInt(totems.size)
+                for (t in totems) {
+                    d.writeInt(t.tick)
+                    d.writeLong(t.uuidMost)
+                    d.writeLong(t.uuidLeast)
+                }
+            }
             d.flush()
         } catch (_: Throwable) {
             // fail-open: a write error surfaces as a null save result in ClipStore, not a throw
@@ -173,7 +200,8 @@ object ClipCodec {
         val alerts = readAlerts(d) ?: return null
         val terrain = if (version >= 5) readTerrainFlag(d) else null
         val chunks = if (version >= 6) readChunksFlag(d) else null
-        Clip(ReplayBuffer.Window(frames, alerts, terrain, chunks), focus, terrain, chunks)
+        val totems = if (version >= 7) readTotemsFlag(d) else emptyList()
+        Clip(ReplayBuffer.Window(frames, alerts, terrain, chunks, totems), focus, terrain, chunks)
     } catch (_: Throwable) {
         null
     }
@@ -199,6 +227,7 @@ object ClipCodec {
                 if (version >= 3) d.readFloat() // pitch (v3+ only)
                 if (version >= 4) d.readInt()   // swingTicks (v4+ only)
                 d.readByte() // pose
+                if (version >= 7) { d.readByte(); d.readFloat(); d.readFloat() } // hurtTime/health/maxHealth (v7+)
                 d.readUTF() // name
             }
         }
@@ -265,6 +294,21 @@ object ClipCodec {
                 else -> return null
             }
         }
+        // v7+ totems header: flag + event count + skip the event bodies (tick + uuidMost + uuidLeast
+        // = 4 + 8 + 8 = 20 bytes each). Bound-check totemCount so a corrupt file can't force a huge
+        // skip loop. We don't surface a totem count in [ClipMeta] (the row shows frames/alerts/sections).
+        if (version >= 7) {
+            when (d.readByte().toInt()) {
+                0 -> { /* no totems */ }
+                1 -> {
+                    val totemCount = d.readInt()
+                    if (totemCount < 0 || totemCount > 100000) return null
+                    val skipBytes = totemCount * 20
+                    if (d.skipBytes(skipBytes) != skipBytes) return null
+                }
+                else -> return null
+            }
+        }
         ClipMeta(version, focus, frameCount, alertCount, terrainBlocks, chunkSections)
     } catch (_: Throwable) {
         null
@@ -308,8 +352,13 @@ object ClipCodec {
                 val pitch = if (version >= 3) d.readFloat() else 0f
                 val swingTicks = if (version >= 4) d.readInt() else 0
                 val pose = d.readByte()
+                // v7+ per-snap combat-sync fields. Pre-v7 clips default to no-flash / full-health
+                // (hurtTime=0, health=maxHealth=20) → an old ghost renders without the new overlays.
+                val hurtTime = if (version >= 7) d.readByte() else 0
+                val health = if (version >= 7) d.readFloat() else 20f
+                val maxHealth = if (version >= 7) d.readFloat() else 20f
                 val name = d.readUTF()
-                snaps.add(ReplayBuffer.PlayerSnap(most, least, x, y, z, yaw, pitch, swingTicks, pose, name))
+                snaps.add(ReplayBuffer.PlayerSnap(most, least, x, y, z, yaw, pitch, swingTicks, pose, name, hurtTime, health, maxHealth))
             }
             frames.add(ReplayBuffer.Frame(tick, snaps))
         }
@@ -409,5 +458,28 @@ object ClipCodec {
             ChunkSnapshot(chunks)
         }
         else -> throw java.io.IOException("bad chunks flag")
+    }
+
+    /**
+     * Read the v7 totems flag byte and, if present, the totems section → a list of
+     * [ReplayBuffer.TotemRec]. Returns an empty list for the no-totems byte (0). A bad flag value or
+     * truncation throws (caught by [read]'s outer try → null clip). Bound-checks totemCount so a
+     * corrupt file can't OOM the decoder. Each event is `(tick:int, uuidMost:long, uuidLeast:long)`.
+     */
+    private fun readTotemsFlag(d: DataInputStream): List<ReplayBuffer.TotemRec> = when (d.readByte().toInt()) {
+        0 -> emptyList()
+        1 -> {
+            val totemCount = d.readInt()
+            if (totemCount < 0 || totemCount > 100000) throw java.io.IOException("bad totem count")
+            val out = ArrayList<ReplayBuffer.TotemRec>(totemCount)
+            for (i in 0 until totemCount) {
+                val tick = d.readInt()
+                val most = d.readLong()
+                val least = d.readLong()
+                out.add(ReplayBuffer.TotemRec(tick, most, least))
+            }
+            out
+        }
+        else -> throw java.io.IOException("bad totems flag")
     }
 }

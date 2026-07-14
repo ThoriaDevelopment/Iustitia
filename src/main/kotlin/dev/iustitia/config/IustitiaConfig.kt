@@ -207,10 +207,13 @@ data class IustitiaConfig(
      *  world, no chunk/terrain capture, no relocation, no auto-freecam, no spectator input/packet
      *  suppression — the player walks + acts normally while watching). **MODERN** = the current feature
      *  set (solid captured chunk world + free-spectate freecam + relocated scene + spectator-like
-     *  input/packet suppression). Default LEGACY — every config ships with the old playclip behavior
-     *  unless the user opts into Modern. The chunk/terrain/relocate toggles only take effect in Modern;
-     *  in Legacy they're ignored (forced off). User-controlled: NOT overridden by preset applies. */
-    var playclipMode: PlayclipMode = PlayclipMode.LEGACY,
+     *  input/packet suppression). Default MODERN (since v1.2.0 — the C2 static-GPU-mesh fix made Modern's
+     *  FPS match the 120 cap, so the richer mode is the better out-of-box experience). Existing users'
+     *  persisted `playclipMode` is preserved by the [ConfigManager] `if (o.has("playclipMode"))` guard —
+     *  only a fresh install (no persisted field) gets MODERN. The chunk/terrain/relocate toggles only
+     *  take effect in Modern; in Legacy they're ignored (forced off). User-controlled: NOT overridden by
+     *  preset applies. */
+    var playclipMode: PlayclipMode = PlayclipMode.MODERN,
     /** Sonar alerting: on a flushed alert batch, play a DIRECTIONAL note positioned at the offender's
      *  last-known world position (pan = direction, pitch = distance) so you can keep fighting and
      *  listen for cheats. Additive to chat alerts; gated by the same mute/preset rules. */
@@ -222,6 +225,17 @@ data class IustitiaConfig(
      *  pressed. 1..60 (clamped to the 60s replay buffer). Default 30. Additive — no CONFIG_VERSION
      *  bump; a pre-field config keeps the default. */
     var replayKeybindSeconds: Int = 30,
+    /** Show a numeric **health indicator** (`§c<hp>§r/§f<max>`, e.g. `14/20`) above each ghost's
+     *  nametag during `/ius playclip`, plus a transient `§c-<dmg>` popup for ~40 ticks when a recorded
+     *  player's health drops (damage amount = health-diff; attack SOURCE is not available client-side
+     *  for other players). Natively OFF so a default playclip looks like vanilla; turn on in `/ius
+     *  config`. Additive — no CONFIG_VERSION bump; a pre-field config keeps the default (off). */
+    var clipHealthIndicator: Boolean = false,
+    /** Show a **totem-pop counter** (`§6⚡<count>` badge) on each ghost's nametag during `/ius playclip`,
+     *  counting that recorded player's Totem-of-Undying pops within the clip window (captured via the
+     *  EntityStatusS2C status-35 broadcast). Natively OFF; turn on in `/ius config`. Additive — no
+     *  CONFIG_VERSION bump. */
+    var clipTotemPopCounter: Boolean = false,
 
     // --- combat ---
     var reach: CheckConfig = CheckConfig(true, 10.0, 0.25, 3.0),

@@ -76,9 +76,9 @@ object YaclScreenBuilder {
                     .build()
             )
             // PlayClip: Legacy (v1.1.0 experience) vs Modern (current chunk-world + freecam feature
-            // set). Default Legacy. The five post-v1.1.0 sub-options are only editable in Modern —
-            // they're greyed while Legacy is selected, and the mode option's listener toggles their
-            // availability live as the user switches (no need to reopen the screen).
+            // set). Default Modern (since v1.2.0). The post-v1.1.0 sub-options are only editable in
+            // Modern — they're greyed while Legacy is selected, and the mode option's listener toggles
+            // their availability live as the user switches (no need to reopen the screen).
             .group(
                 OptionGroup.createBuilder()
                     .name(Text.literal("PlayClip"))
@@ -100,10 +100,16 @@ object YaclScreenBuilder {
                         val chunkRenderDist = intAvail("Chunk render distance",
                             "Max chunks from the camera that /ius playclip renders of the captured chunk world per frame. Bounds per-frame cost (and thus FPS). Modern-only.",
                             { cfg.clipChunkRenderDistance }, 4, 12, { cfg.clipChunkRenderDistance = it }, ::modern)
-                        val subs = listOf(relocate, terrain, chunkWorld, chunkRadius, chunkRenderDist)
+                        val healthInd = boolAvail("Health indicator on clips",
+                            "Show a numeric health line (e.g. 14/20) above each ghost's nametag during /ius playclip, plus a transient -dmg popup when a recorded player is hit. Natively off. Modern-only.",
+                            { cfg.clipHealthIndicator }, { cfg.clipHealthIndicator = it }, ::modern)
+                        val totemInd = boolAvail("Totem pop counter on clips",
+                            "Show a totem-pop count badge on each ghost's nametag during /ius playclip (Totem of Undying pops within the clip). Natively off. Modern-only.",
+                            { cfg.clipTotemPopCounter }, { cfg.clipTotemPopCounter = it }, ::modern)
+                        val subs = listOf(relocate, terrain, chunkWorld, chunkRadius, chunkRenderDist, healthInd, totemInd)
                         option(Option.createBuilder<IustitiaConfig.PlayclipMode>()
                             .name(Text.literal("Playclip mode"))
-                            .description(OptionDescription.of(Text.literal("LEGACY = the v1.1.0 playclip: ghosts render over the LIVE world at their recorded coords, the player walks and acts normally, no world is downloaded. MODERN = the current feature set: solid captured chunk world (free-spectate anywhere, incl. underground), relocated scene, auto-freecam, and spectator-like input/packet suppression while the clip plays. Default LEGACY.")))
+                            .description(OptionDescription.of(Text.literal("LEGACY = the v1.1.0 playclip: ghosts render over the LIVE world at their recorded coords, the player walks and acts normally, no world is downloaded. MODERN = the current feature set: solid captured chunk world (free-spectate anywhere, incl. underground), relocated scene, auto-freecam, and spectator-like input/packet suppression while the clip plays. Default MODERN (since v1.2.0 — the C2 FPS fix made Modern match the 120 cap); existing configs keep their saved choice.")))
                             .binding(cfg.playclipMode, { cfg.playclipMode }, { cfg.playclipMode = it })
                             .addListener { opt, _ ->
                                 val avail = opt.pendingValue() == IustitiaConfig.PlayclipMode.MODERN
@@ -116,6 +122,8 @@ object YaclScreenBuilder {
                         option(chunkWorld)
                         option(chunkRadius)
                         option(chunkRenderDist)
+                        option(healthInd)
+                        option(totemInd)
                     }
                     .build()
             )

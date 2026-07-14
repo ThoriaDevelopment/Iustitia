@@ -20,6 +20,7 @@ import net.minecraft.client.render.model.BlockModelPart
 import net.minecraft.client.render.model.BlockStateModel
 import net.minecraft.client.util.BufferAllocator
 import net.minecraft.client.util.math.MatrixStack
+import net.minecraft.command.argument.BlockArgumentParser
 import net.minecraft.registry.Registries
 import net.minecraft.util.Identifier
 import net.minecraft.util.math.Direction
@@ -73,11 +74,14 @@ import net.minecraft.util.math.random.Random
  *
  * ## v1 limits (documented follow-ups, unchanged)
  *
- * Block **properties** are dropped — each block renders its default state, so a stairs renders as a
- * stairs (recognizable) but not the recorded facing. Block **entities** (chest contents, sign text,
- * banners) and **fluids** (`INVISIBLE` render type, skipped here) are not rendered. Lighting stays
- * fullbright (no AO/skylight). A full GPU static-mesh bake (`GpuBuffer` + `VertexBufferManager`, one
- * upload / one draw call per chunk per frame) is the perf follow-up if this win is insufficient.
+ * Block **properties** — since v7 the palette key carries the full state string for stateful blocks
+ * and [stateFor] parses the EXACT recorded state, so a stairs renders in its recorded facing (not the
+ * default), and non-full/transparent blocks feed [shouldDrawSide]/[isOpaqueAt] their real shape
+ * (neighbours behind glass/stairs/slabs now render). Pre-v7 clips have only bare-id palette entries
+ * → default state (today's behaviour). Block **entities** (chest contents, sign text, banners) and
+ * **fluids** (`INVISIBLE` render type, skipped here) are still not rendered. Lighting stays fullbright
+ * (no AO/skylight). A full GPU static-mesh bake (`GpuBuffer` + `VertexBufferManager`, one upload / one
+ * draw call per chunk per frame) is the perf follow-up if this win is insufficient.
  */
 object ChunkMesher {
 
@@ -356,15 +360,41 @@ object ChunkMesher {
         if (nState == null) true else Block.shouldDrawSide(state, nState, d)
     } catch (_: Throwable) { true }
 
-    /** Resolve a palette name to its default BlockState, memoized in [stateCache]. null = bad name /
-     *  throw. NB: Registries.BLOCK is a DefaultedRegistry, so get(unknownId) returns AIR (never null)
-     *  — an unknown block resolves to air, which renders as nothing and is a transparent neighbour —
+    /** Resolve a palette name to its BlockState, memoized in [stateCache]. null = bad name / throw.
+     *
+     *  v7 palette keys carry the EXACT recorded state when the block has properties —
+     *  `"minecraft:stairs[facing=east,half=top,shape=straight]"` (BlockArgumentParser-compatible form,
+     *  written by [dev.iustitia.replay.ChunkCapture.stateKey]). A key with `[` is parsed via
+     *  [BlockArgumentParser.block] into the precise state → correct facing/shape/half (fixes the v1
+     *  "stairs/slabs render in their default facing" bug) AND feeds [shouldDrawSide]/[isOpaqueAt] the
+     *  real neighbour shape (fixes the "blocks behind non-full/transparent blocks don't render" cull
+     *  bug). A propertyless key (`"minecraft:stone"`) takes the fast path (today's defaultState lookup).
+     *  Pre-v7 clips have only propertyless/bare-id keys → identical to today. Fail-open: a bad property
+     *  value (CommandSyntaxException) falls back to the bare-id defaultState (today's behaviour — the
+     *  block renders in its default orientation instead of not at all); a bad id → null (skip / treat
+     *  as transparent, same as today's AIR-from-DefaultedRegistry result).
+     *
+     *  NB: Registries.BLOCK is a DefaultedRegistry, so get(unknownId) returns AIR (never null) — an
+     *  unknown block resolves to air, which renders as nothing and is a transparent neighbour —
      *  exactly the fail-open behaviour we want, so no special unknown-skip needed. */
     private fun stateFor(name: String): BlockState? = stateCache.getOrPut(name) {
         try {
-            val id = Identifier.tryParse(name) ?: return@getOrPut null
-            Registries.BLOCK.get(id).defaultState
-        } catch (_: Throwable) { null }
+            if ('[' in name) {
+                // Registries.BLOCK is a DefaultedRegistry<Block> which IS-A RegistryWrapper.Impl<Block>
+                // (Registry extends RegistryWrapper.Impl), so it's passed directly as the wrapper the
+                // parser resolves block ids + properties against.
+                BlockArgumentParser.block(Registries.BLOCK, name, false).blockState()
+            } else {
+                val id = Identifier.tryParse(name) ?: return@getOrPut null
+                Registries.BLOCK.get(id).defaultState
+            }
+        } catch (_: Throwable) {
+            // fall back to the bare-id default state (today's behaviour) — a bad property value still
+            // renders the block in its default orientation instead of skipping it entirely.
+            val bare = name.substringBefore('[')
+            val id = Identifier.tryParse(bare) ?: return@getOrPut null
+            try { Registries.BLOCK.get(id).defaultState } catch (_: Throwable) { null }
+        }
     }
 
     /** Resolve a block's tint colour (ARGB int) for tint index 0, memoized in [tintCache]. Same call

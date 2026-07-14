@@ -231,6 +231,8 @@ object ConfigManager {
         addProperty("sonarAlerts", c.sonarAlerts)
         addProperty("sonarVolume", c.sonarVolume)
         addProperty("replayKeybindSeconds", c.replayKeybindSeconds)
+        addProperty("clipHealthIndicator", c.clipHealthIndicator)
+        addProperty("clipTotemPopCounter", c.clipTotemPopCounter)
         for ((key, cc) in c.checks()) add(key, checkToJson(cc))
     }
 
@@ -305,6 +307,10 @@ object ConfigManager {
             if (o.has("sonarAlerts")) c.sonarAlerts = o.get("sonarAlerts").asBoolean
             if (o.has("sonarVolume")) c.sonarVolume = o.get("sonarVolume").asDouble
             if (o.has("replayKeybindSeconds")) c.replayKeybindSeconds = o.get("replayKeybindSeconds").asInt
+            // clipHealthIndicator / clipTotemPopCounter: additive — a pre-field config keeps the
+            // default (off). No CONFIG_VERSION bump (not check-calibration fields).
+            if (o.has("clipHealthIndicator")) c.clipHealthIndicator = o.get("clipHealthIndicator").asBoolean
+            if (o.has("clipTotemPopCounter")) c.clipTotemPopCounter = o.get("clipTotemPopCounter").asBoolean
             for ((key, cc) in c.checks()) {
                 if (o.has(key)) readCheck(o.getAsJsonObject(key), cc, resetCalibration)
             }
