@@ -577,8 +577,12 @@ object IustitiaCommand {
         val totalPages = ceil(total.toDouble() / dev.iustitia.chathist.ChatHistory.PAGE_SIZE_ROWS).toInt().coerceAtLeast(1)
         val p = page.coerceIn(1, totalPages)
         val pageRows = rows.drop((p - 1) * dev.iustitia.chathist.ChatHistory.PAGE_SIZE_ROWS).take(dev.iustitia.chathist.ChatHistory.PAGE_SIZE_ROWS)
+        // The `[iustitia]` tag prefix would shift the top divider right of the chat rows below it,
+        // so emit the tag on its own line first, then the un-prefixed divider one row lower — it
+        // left-aligns with the rows and the bottom divider.
+        src.sendFeedback(Text.literal(tag))
         // top divider: ...---[IUS ChatHistory]---...
-        src.sendFeedback(Text.literal("$tag §8...§7---§f[§bIUS ChatHistory§f]§7---§8..."))
+        src.sendFeedback(Text.literal("§8...§7---§f[§bIUS ChatHistory§f]§7---§8..."))
         for (r in pageRows) {
             val ts = try { chatTimeFmt.format(java.util.Date(r.wallClockMs)) } catch (_: Throwable) { "??:??:??" }
             src.sendFeedback(Text.literal("§8[$ts] §7[§f${r.name}§7]§r ${r.text}"))
