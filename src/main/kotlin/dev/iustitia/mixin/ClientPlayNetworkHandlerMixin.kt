@@ -13,7 +13,6 @@ import net.minecraft.client.MinecraftClient
 import net.minecraft.client.network.ClientPlayNetworkHandler
 import net.minecraft.entity.Entity
 import net.minecraft.entity.effect.StatusEffects
-import net.minecraft.network.DisconnectionInfo
 import net.minecraft.network.packet.s2c.play.ChatMessageS2CPacket
 import net.minecraft.network.packet.s2c.play.DamageTiltS2CPacket
 import net.minecraft.network.packet.s2c.play.EntityAnimationS2CPacket
@@ -162,15 +161,6 @@ class ClientPlayNetworkHandlerMixin {
                 ?: tracked.username().ifEmpty { sender.toString().take(8) }
             dev.iustitia.chathist.ChatHistory.record(Iustitia.tickCounter, System.currentTimeMillis(), sender, name, text)
         } catch (_: Throwable) {}
-    }
-
-    /** First disconnect hook in the mod: flush (persist ON) or drop (persist OFF) the current server's
-     *  chat-history bucket on leave. `onDisconnected` is declared on the superclass
-     *  `ClientCommonNetworkHandler`; the quoted method name resolves through the mixin target's
-     *  super chain. Fail-open. */
-    @Inject(method = ["onDisconnected"], at = [At("HEAD")])
-    private fun iustitia_onDisconnected(info: DisconnectionInfo, ci: CallbackInfo) {
-        try { dev.iustitia.chathist.ChatHistory.onLeave() } catch (_: Throwable) {}
     }
 
     @Inject(method = ["onDamageTilt"], at = [At("HEAD")])

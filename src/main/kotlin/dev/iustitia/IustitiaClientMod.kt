@@ -43,6 +43,7 @@ import dev.iustitia.ui.SetupWizardScreen
 import net.fabricmc.api.ClientModInitializer
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents
 
 /**
  * Client entrypoint. Wires the check registry to the [Iustitia] facade, drives the
@@ -162,5 +163,15 @@ class IustitiaClientMod : ClientModInitializer {
         ClientCommandRegistrationCallback.EVENT.register { dispatcher, _ ->
             IustitiaCommand.register(dispatcher)
         }
+
+        // Chat-history leave hook: flush (persist ON) or drop (persist OFF) the current server's
+        // chat-history bucket on disconnect. Uses Fabric's stable ClientPlayConnectionEvents.DISCONNECT
+        // (not a mixin on the inherited ClientCommonNetworkHandler.onDisconnected — that fails to
+        // resolve through the ClientPlayNetworkHandler mixin target with no refMap). Fail-open.
+        try {
+            ClientPlayConnectionEvents.DISCONNECT.register { _, _ ->
+                try { dev.iustitia.chathist.ChatHistory.onLeave() } catch (_: Throwable) {}
+            }
+        } catch (_: Throwable) {}
     }
 }
