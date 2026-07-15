@@ -25,6 +25,7 @@ import dev.iustitia.ui.PlayerHistoryScreen
 import dev.iustitia.ui.PlayerSearchScreen
 import dev.iustitia.ui.SessionScreen
 import dev.iustitia.ui.SetupWizardScreen
+import dev.iustitia.ui.ChatHistPanelScreen
 import dev.iustitia.ui.TranscriptPanelScreen
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource
@@ -305,7 +306,29 @@ object IustitiaCommand {
                             .executes { chathistTarget(it, StringArgumentType.getString(it, "username"), StringArgumentType.getString(it, "phrase"), 1) }
                             .then(ClientCommandManager.argument("page", IntegerArgumentType.integer(1))
                                 .executes { chathistTarget(it, StringArgumentType.getString(it, "username"), StringArgumentType.getString(it, "phrase"), IntegerArgumentType.getInteger(it, "page")) }))))
-                .then(ClientCommandManager.argument("username", SafeStringArgument.stringExcluding("phrase", "target"))
+                // `/ius chathist panel <action> [username] [word] [pageamount]` — same queries as the
+                // chat-print chathist, rendered in a live side panel that mirrors TranscriptPanelScreen.
+                .then(ClientCommandManager.literal("panel")
+                    .executes { chathistPanelUsage(it) }
+                    .then(ClientCommandManager.literal("user")
+                        .then(ClientCommandManager.argument("username", StringArgumentType.string())
+                            .suggests { _, b -> suggestNames(b); b.buildFuture() }
+                            .executes { chathistPanelUser(it, StringArgumentType.getString(it, "username"), 15) }
+                            .then(ClientCommandManager.argument("pageamount", IntegerArgumentType.integer(1, 200))
+                                .executes { chathistPanelUser(it, StringArgumentType.getString(it, "username"), IntegerArgumentType.getInteger(it, "pageamount")) })))
+                    .then(ClientCommandManager.literal("phrase")
+                        .then(ClientCommandManager.argument("word", StringArgumentType.string())
+                            .executes { chathistPanelPhrase(it, StringArgumentType.getString(it, "word"), 15) }
+                            .then(ClientCommandManager.argument("pageamount", IntegerArgumentType.integer(1, 200))
+                                .executes { chathistPanelPhrase(it, StringArgumentType.getString(it, "word"), IntegerArgumentType.getInteger(it, "pageamount")) })))
+                    .then(ClientCommandManager.literal("target")
+                        .then(ClientCommandManager.argument("username", StringArgumentType.string())
+                            .suggests { _, b -> suggestNames(b); b.buildFuture() }
+                            .then(ClientCommandManager.argument("word", StringArgumentType.string())
+                                .executes { chathistPanelTarget(it, StringArgumentType.getString(it, "username"), StringArgumentType.getString(it, "word"), 15) }
+                                .then(ClientCommandManager.argument("pageamount", IntegerArgumentType.integer(1, 200))
+                                    .executes { chathistPanelTarget(it, StringArgumentType.getString(it, "username"), StringArgumentType.getString(it, "word"), IntegerArgumentType.getInteger(it, "pageamount")) })))))
+                .then(ClientCommandManager.argument("username", SafeStringArgument.stringExcluding("phrase", "target", "panel"))
                     .suggests { _, b -> suggestNames(b); b.buildFuture() }
                     .executes { chathistUser(it, StringArgumentType.getString(it, "username"), 1) }
                     .then(ClientCommandManager.argument("page", IntegerArgumentType.integer(1))
@@ -537,6 +560,9 @@ object IustitiaCommand {
         send(ctx, " §f/ius chathist <username> [page]§7 — a player's messages (newest first).")
         send(ctx, " §f/ius chathist phrase <phrase> [page]§7 — everyone who said <phrase>, in order.")
         send(ctx, " §f/ius chathist target <username> <phrase> [page]§7 — <username>'s messages with <phrase>.")
+        send(ctx, " §f/ius chathist panel user <username> [n]§7 — side panel of <username>'s last [n] msgs (default 15).")
+        send(ctx, " §f/ius chathist panel phrase <word> [n]§7 — side panel of everyone who said <word>.")
+        send(ctx, " §f/ius chathist panel target <username> <word> [n]§7 — side panel of <username>'s msgs with <word>.")
         send(ctx, " §7captures tracked OTHER players only; per-server (persists with the persistence toggle).")
         return 1
     }
@@ -560,6 +586,43 @@ object IustitiaCommand {
         val rows = dev.iustitia.chathist.ChatHistory.rowsForUserPhrase(username, phrase)
         renderChatPage(ctx, rows, page, "chathist target $username $phrase")
         return 1
+    }
+
+    // ---- chathist panel — live side panel mirroring TranscriptPanelScreen ----
+
+    /** Bare `/ius chathist panel` usage hint. */
+    private fun chathistPanelUsage(ctx: CommandContext<FabricClientCommandSource>): Int {
+        send(ctx, "$tag §7usage:")
+        send(ctx, " §f/ius chathist panel user <username> [n]§7 — side panel of <username>'s last [n] msgs (default 15).")
+        send(ctx, " §f/ius chathist panel phrase <word> [n]§7 — side panel of everyone who said <word>.")
+        send(ctx, " §f/ius chathist panel target <username> <word> [n]§7 — side panel of <username>'s msgs with <word>.")
+        send(ctx, " §7[n] = max messages to show; panel refreshes live while open.")
+        return 1
+    }
+
+    /** `/ius chathist panel user <username> [pageamount]` — live side panel of a player's newest messages. */
+    private fun chathistPanelUser(ctx: CommandContext<FabricClientCommandSource>, username: String, limit: Int): Int {
+        openChatPanel(ctx, username, { dev.iustitia.chathist.ChatHistory.rowsForUser(username) }, limit)
+        return 1
+    }
+
+    /** `/ius chathist panel phrase <word> [pageamount]` — live side panel of every message containing [word]. */
+    private fun chathistPanelPhrase(ctx: CommandContext<FabricClientCommandSource>, word: String, limit: Int): Int {
+        openChatPanel(ctx, "phrase: $word", { dev.iustitia.chathist.ChatHistory.rowsForPhrase(word) }, limit)
+        return 1
+    }
+
+    /** `/ius chathist panel target <username> <word> [pageamount]` — live side panel of [username]'s msgs with [word]. */
+    private fun chathistPanelTarget(ctx: CommandContext<FabricClientCommandSource>, username: String, word: String, limit: Int): Int {
+        openChatPanel(ctx, "$username · $word", { dev.iustitia.chathist.ChatHistory.rowsForUserPhrase(username, word) }, limit)
+        return 1
+    }
+
+    /** Open the chathist side panel for a query (mirrors `transcriptPanelNamed`'s mc.execute pattern). */
+    private fun openChatPanel(ctx: CommandContext<FabricClientCommandSource>, subtitle: String, rowsProvider: () -> List<dev.iustitia.chathist.ChatHistory.Row>, limit: Int) {
+        val mc = MinecraftClient.getInstance()
+        mc.execute { try { mc.setScreen(ChatHistPanelScreen(subtitle, rowsProvider, limit, null)) } catch (_: Throwable) {} }
+        send(ctx, "$tag §7chathist panel: §f$subtitle §8($limit)")
     }
 
     /**
@@ -849,6 +912,13 @@ object IustitiaCommand {
         send(ctx, text)
         try { if (ConfigManager.config.persistenceEnabled) PersistenceManager.saveExport("transcript", name, text) } catch (_: Throwable) {}
         send(ctx, "$tag §7transcript for §f$name§7 printed §8(paste into a report; same as §f/ius report $name text§7)")
+        // If the transcript side panel is enabled in config, also pop it open for this player —
+        // same surface the keybind / `/ius transcript panel` use, so the chat print + the live panel
+        // aren't mutually exclusive. Fail-open (a screen-open error never blocks the chat print).
+        if (ConfigManager.config.transcriptPanel) {
+            val mc = MinecraftClient.getInstance()
+            mc.execute { try { mc.setScreen(TranscriptPanelScreen(uuid, name, null)) } catch (_: Throwable) {} }
+        }
         return 1
     }
 
