@@ -236,6 +236,15 @@ data class IustitiaConfig(
      *  EntityStatusS2C status-35 broadcast). Natively OFF; turn on in `/ius config`. Additive — no
      *  CONFIG_VERSION bump. */
     var clipTotemPopCounter: Boolean = false,
+    /** Render each playclip/replay ghost's **held items + armor** (main hand, off hand, head, chest,
+     *  legs, feet) — recorded per tick as registry-id strings and reconstructed into `ItemStack`s so a
+     *  ghost holds what the player held and wears the armor they wore at the recorded tick. Lossy (no
+     *  enchant-glint / custom-model-data components). Natively ON (the default playclip shows what the
+     *  recorded players were holding/wearing); turn off in `/ius config` to revert to skin-only ghosts.
+     *  Additive — no CONFIG_VERSION bump; a pre-field config keeps the default (on). Requires a live
+     *  `OrderedRenderCommandQueue` from the world render context — if unavailable, degrades fail-open to
+     *  the skin-only ghost (features silently skip). */
+    var clipGhostEquipment: Boolean = true,
 
     // --- combat ---
     var reach: CheckConfig = CheckConfig(true, 10.0, 0.25, 3.0),

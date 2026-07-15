@@ -16,7 +16,8 @@ import java.util.UUID
  *
  * ```
  * magic   : 4 bytes  "IUSC"
- * version : int      (7 — v7 adds per-snap hurtTime/health/maxHealth + the optional totems section;
+ * version : int      (8 — v8 adds per-snap held-item + armor registry-id strings;
+ *                     v7 adds per-snap hurtTime/health/maxHealth + the optional totems section;
  *                     v6 adds the optional chunks section [full-chunk world capture];
  *                     v5 adds the optional terrain section; v4 had no terrain;
  *                     v3 had no per-snap swingTicks; v2 had no per-snap pitch; v1 no per-snap name)
@@ -28,6 +29,7 @@ import java.util.UUID
  *                  swingTicks:int  (v4+ ONLY — v3 stops here),
  *                  pose:byte,
  *                  hurtTime:byte, health:float, maxHealth:float  (v7+ ONLY — v6 stops at pose),
+ *                  mainHand:UTF, offHand:UTF, head:UTF, chest:UTF, legs:UTF, feet:UTF  (v8+ ONLY),
  *                  name:UTF
  * alerts  : int count, then per alert:
  *              tick:int, uuidMost:long, uuidLeast:long,
@@ -48,15 +50,17 @@ import java.util.UUID
  *
  * ## Backward compatibility
  *
- * [read] accepts **v2 through v7**. v2 clips have no per-snap pitch → pitch defaults to 0 (the
+ * [read] accepts **v2 through v8**. v2 clips have no per-snap pitch → pitch defaults to 0 (the
  * ghost still faces its yaw, just won't tilt its head). v3 clips have no per-snap swingTicks →
  * swingTicks defaults to 0 (arms hang still, but the ghost still walks / faces / tilts). v4 and
  * earlier clips have no terrain → terrain defaults to null. v5 and earlier clips have no chunks →
  * chunks defaults to null (playclip then renders the v5 wireframe terrain / ghosts only — exactly the
  * path for an old clip recorded before full-chunk capture). v6 and earlier clips have no per-snap
  * hurtTime/health/maxHealth → they default to 0/20/20 (no red flash, full-health bar) and no totems
- * section → the totem list is empty (no `⚡` badge). v1 (no per-snap name) is not accepted.
- * **Old v2–v6 clips keep loading** so a user's saved library isn't invalidated.
+ * section → the totem list is empty (no `⚡` badge). v7 and earlier clips have no per-snap equipment
+ * → all six slots default to `""` (the skin-only ghost holds nothing and wears no armor). v1 (no
+ * per-snap name) is not accepted. **Old v2–v7 clips keep loading** so a user's saved library isn't
+ * invalidated.
  * [readHeader] reads only up through the counts (no per-snap data, no terrain runs, no chunk
  * section bodies) — cheap for the clip manager's list view.
  *
@@ -67,7 +71,7 @@ import java.util.UUID
 object ClipCodec {
 
     private const val MAGIC = "IUSC"
-    const val VERSION = 7
+    const val VERSION = 8
     /** Lowest version [read] will accept (v2 = no per-snap pitch; loaded with pitch defaulting to 0). */
     const val MIN_VERSION = 2
 
@@ -111,6 +115,14 @@ object ClipCodec {
                     d.writeByte(s.hurtTime.toInt())
                     d.writeFloat(s.health)
                     d.writeFloat(s.maxHealth)
+                    // v8+ per-snap equipment: registry-id string per held/armor slot (empty "" = empty
+                    // slot). Written before `name` (which stays last, length-prefixed UTF).
+                    d.writeUTF(s.mainHand)
+                    d.writeUTF(s.offHand)
+                    d.writeUTF(s.head)
+                    d.writeUTF(s.chest)
+                    d.writeUTF(s.legs)
+                    d.writeUTF(s.feet)
                     d.writeUTF(s.name)
                 }
             }
@@ -228,6 +240,7 @@ object ClipCodec {
                 if (version >= 4) d.readInt()   // swingTicks (v4+ only)
                 d.readByte() // pose
                 if (version >= 7) { d.readByte(); d.readFloat(); d.readFloat() } // hurtTime/health/maxHealth (v7+)
+                if (version >= 8) { repeat(6) { d.readUTF() } } // mainHand/offHand/head/chest/legs/feet (v8+)
                 d.readUTF() // name
             }
         }
@@ -357,8 +370,16 @@ object ClipCodec {
                 val hurtTime = if (version >= 7) d.readByte() else 0
                 val health = if (version >= 7) d.readFloat() else 20f
                 val maxHealth = if (version >= 7) d.readFloat() else 20f
+                // v8+ per-snap equipment (held items + armor). Pre-v8 clips default to all-empty
+                // ("" = empty slot) → the skin-only ghost holds nothing / wears no armor.
+                val mainHand = if (version >= 8) d.readUTF() else ""
+                val offHand = if (version >= 8) d.readUTF() else ""
+                val head = if (version >= 8) d.readUTF() else ""
+                val chest = if (version >= 8) d.readUTF() else ""
+                val legs = if (version >= 8) d.readUTF() else ""
+                val feet = if (version >= 8) d.readUTF() else ""
                 val name = d.readUTF()
-                snaps.add(ReplayBuffer.PlayerSnap(most, least, x, y, z, yaw, pitch, swingTicks, pose, name, hurtTime, health, maxHealth))
+                snaps.add(ReplayBuffer.PlayerSnap(most, least, x, y, z, yaw, pitch, swingTicks, pose, name, hurtTime, health, maxHealth, mainHand, offHand, head, chest, legs, feet))
             }
             frames.add(ReplayBuffer.Frame(tick, snaps))
         }

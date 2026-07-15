@@ -9,6 +9,7 @@
     "ArmorStandEntityRendererMixin",
     "EntityRenderStateAccessor",
     "EntityRendererMixin",
+    "LivingEntityRendererAccessor",
     "CameraMixin",
     "PlayerListHudMixin",
     "SectionRenderStateMixin",
@@ -16,7 +17,8 @@
     "ClientConnectionMixin",
     "FreecamEntityMixin",
     "WorldRendererMixin",
-    "GameRendererMixin"
+    "GameRendererMixin",
+    "GameRendererBobViewMixin"
   ],
   "injectors": {
     "defaultRequire": 1

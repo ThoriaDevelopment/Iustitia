@@ -106,7 +106,10 @@ object YaclScreenBuilder {
                         val totemInd = boolAvail("Totem pop counter on clips",
                             "Show a totem-pop count badge on each ghost's nametag during /ius playclip (Totem of Undying pops within the clip). Natively off. Modern-only.",
                             { cfg.clipTotemPopCounter }, { cfg.clipTotemPopCounter = it }, ::modern)
-                        val subs = listOf(relocate, terrain, chunkWorld, chunkRadius, chunkRenderDist, healthInd, totemInd)
+                        val ghostEquip = boolAvail("Ghost equipment on clips",
+                            "Render each ghost's held items + armor (main hand, off hand, head, chest, legs, feet) during /ius playclip & /ius replay — what the player actually held/wore at the recorded tick. Lossy (no enchant glint). Natively on. Modern-only.",
+                            { cfg.clipGhostEquipment }, { cfg.clipGhostEquipment = it }, ::modern)
+                        val subs = listOf(relocate, terrain, chunkWorld, chunkRadius, chunkRenderDist, healthInd, totemInd, ghostEquip)
                         option(Option.createBuilder<IustitiaConfig.PlayclipMode>()
                             .name(Text.literal("Playclip mode"))
                             .description(OptionDescription.of(Text.literal("LEGACY = the v1.1.0 playclip: ghosts render over the LIVE world at their recorded coords, the player walks and acts normally, no world is downloaded. MODERN = the current feature set: solid captured chunk world (free-spectate anywhere, incl. underground), relocated scene, auto-freecam, and spectator-like input/packet suppression while the clip plays. Default MODERN (since v1.2.0 — the C2 FPS fix made Modern match the 120 cap); existing configs keep their saved choice.")))
@@ -124,6 +127,7 @@ object YaclScreenBuilder {
                         option(chunkRenderDist)
                         option(healthInd)
                         option(totemInd)
+                        option(ghostEquip)
                     }
                     .build()
             )

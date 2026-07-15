@@ -394,7 +394,12 @@ object ReplayState {
     } catch (_: Throwable) { ReplayBuffer.Window(emptyList(), emptyList(), null, null) }
 
     /** Lerp the spatial fields of two snaps of the same player; UUID from [a] (floor frame),
-     *  swingTicks/pose/name from [b] (the ceil/"current" frame). Yaw uses angle-aware lerp. */
+     *  swingTicks/pose/name/hurtTime/health/maxHealth + the v8 equipment strings from [b] (the
+     *  ceil/"current" frame — these are discrete/per-tick values, not spatial, so they snap to the
+     *  current frame rather than lerp). Yaw uses angle-aware lerp. The v7 combat fields + v8 equipment
+     *  MUST be carried here (not dropped) — the render path uses [currentFrameLerped], so dropping
+     *  them would default every ghost to 20/20 health + no hurt flash + empty hands/armor (the
+     *  "health indicator always shows 20/20" / "ghost holds nothing mid-lerp" bug). */
     private fun lerpSnap(a: ReplayBuffer.PlayerSnap, b: ReplayBuffer.PlayerSnap, frac: Float): ReplayBuffer.PlayerSnap {
         val f = frac.coerceIn(0f, 1f)
         return ReplayBuffer.PlayerSnap(
@@ -405,6 +410,8 @@ object ReplayState {
             MathHelper.lerpAngleDegrees(f, a.yaw, b.yaw),
             MathHelper.lerp(f, a.pitch, b.pitch),
             b.swingTicks, b.pose, b.name,
+            b.hurtTime, b.health, b.maxHealth,
+            b.mainHand, b.offHand, b.head, b.chest, b.legs, b.feet,
         )
     }
 

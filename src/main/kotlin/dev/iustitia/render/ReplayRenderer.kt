@@ -2,6 +2,7 @@ package dev.iustitia.render
 
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
+import dev.iustitia.mixin.LivingEntityRendererAccessor
 import dev.iustitia.replay.ReplayBuffer
 import dev.iustitia.replay.ReplayState
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback
@@ -14,17 +15,27 @@ import net.minecraft.client.render.RenderLayers
 import net.minecraft.client.render.OverlayTexture
 import net.minecraft.client.render.VertexConsumerProvider
 import net.minecraft.client.render.VertexRendering
+import net.minecraft.client.render.command.OrderedRenderCommandQueue
 import net.minecraft.client.render.entity.LivingEntityRenderer
 import net.minecraft.client.render.entity.PlayerEntityRenderer
+import net.minecraft.client.render.entity.feature.ArmorFeatureRenderer
+import net.minecraft.client.render.entity.feature.FeatureRenderer
+import net.minecraft.client.render.entity.feature.HeldItemFeatureRenderer
 import net.minecraft.client.render.entity.model.BipedEntityModel
 import net.minecraft.client.render.entity.state.PlayerEntityRenderState
 import net.minecraft.client.util.BufferAllocator
 import net.minecraft.client.util.math.MatrixStack
 import net.minecraft.entity.EntityPose
+import net.minecraft.item.ItemDisplayContext
+import net.minecraft.item.ItemStack
+import net.minecraft.item.Items
+import net.minecraft.registry.Registries
 import net.minecraft.text.Text
 import net.minecraft.util.Arm
+import net.minecraft.util.Identifier
 import net.minecraft.util.math.Box
 import net.minecraft.util.math.RotationAxis
+import net.minecraft.util.math.Vec3d
 import net.minecraft.util.shape.VoxelShapes
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.PI
@@ -110,6 +121,15 @@ object ReplayRenderer {
     // Fullbright light coord for see-through text (LightmapTextureManager.MAX_LIGHT_COORDINATE).
     private const val FULL_LIGHT = 0xF000F0
 
+    // Health-indicator smoothing: the displayed number lerps toward the raw synced target by this
+    // fraction per PLAYHEAD tick (geometric — 0.3/tick converges to ~94% in ~8 ticks). The server's
+    // other-player HEALTH tracked-data is coarse/batched and decoupled from the hurt flash (a +15
+    // heal batch, a -16 crit, delivered out of order — the health-sync investigation traced the wild
+    // 3→18→7→17 swings are genuine server values, not a pipeline bug), so snapping the indicator to
+    // the raw value flickers the number across consecutive ticks. Smoothing ramps a batched jump
+    // visibly instead. Matches the WalkState limb-amp lerp rate at :632. Seek/scrub/rewind snaps.
+    private const val HEALTH_SMOOTH_RATE = 0.3f
+
     fun register() {
         try {
             WorldRenderEvents.AFTER_ENTITIES.register(WorldRenderEvents.AfterEntities { ctx ->
@@ -158,6 +178,12 @@ object ReplayRenderer {
         val camRot = try { camera.getRotation() } catch (_: Throwable) { null }
         val matrices = ctx.matrices()
         val vcp: VertexConsumerProvider = ctx.consumers()
+        // v8 ghost equipment: the live entity-pass queue — the feature renderers (armor / held items)
+        // submit through it, and we submit the ghost skin through it too for proper z-order. Non-null on
+        // the normal AFTER_ENTITIES pass (the world overlay context supplies it); null in a hypothetical
+        // pass where Fabric doesn't → the skin falls back to the Immediate path + features silently skip
+        // (fail-open to the skin-only ghost). Captured once per frame, threaded through drawHumanoid.
+        val queue: OrderedRenderCommandQueue? = try { ctx.commandQueue() } catch (_: Throwable) { null }
         val lines = vcp.getBuffer(RenderLayers.lines())
         val tr = mc.textRenderer
         val focusUuid = ReplayState.focusUuid
@@ -213,7 +239,7 @@ object ReplayRenderer {
             for (s in frame.snaps) {
                 try {
                     if (skipFocus && s.uuid() == focusUuid) continue
-                    drawHumanoid(matrices, lines, vcp, textVcp, tr, s, focusUuid, camPos, o, camRot, alertLabelFor[s.uuid()], nowTick)
+                    drawHumanoid(matrices, lines, vcp, queue, textVcp, tr, s, focusUuid, camPos, o, camRot, alertLabelFor[s.uuid()], nowTick)
                 } catch (_: Throwable) {
                     // skip one bad ghost, keep the rest
                 }
@@ -236,6 +262,7 @@ object ReplayRenderer {
         matrices: MatrixStack,
         lines: net.minecraft.client.render.VertexConsumer,
         vcp: VertexConsumerProvider,
+        queue: OrderedRenderCommandQueue?,
         textVcp: VertexConsumerProvider,
         tr: TextRenderer,
         s: ReplayBuffer.PlayerSnap,
@@ -273,7 +300,7 @@ object ReplayRenderer {
         //     model with a fabricated render state + the default Steve skin (no skin fetch / no
         //     network). If it draws, skip the box outline. If it returns false (toggle off, renderer
         //     unavailable, or any throw) the box outline below is the fail-open fallback. ---
-        val drewModel = drawModel(matrices, vcp, s, tick)
+        val drewModel = drawModel(matrices, vcp, queue, s, tick)
         if (!drewModel) {
             // --- body (feet at the world point; pose applied to the local frame) ---
             matrices.push()
@@ -371,14 +398,36 @@ object ReplayRenderer {
         if (healthOn) {
             try {
                 val hs = healthState.computeIfAbsent(uuid) { HealthState() }
+                // Drop detection runs on the RAW target (s.health), not the smoothed display — a real
+                // damage event pops -dmg immediately even while the displayed number is still ramping
+                // down. The server's batched health sync is decoupled from the hurt flash, so a single
+                // recorded -16 is a real hit worth flagging regardless of when the smoothed number
+                // reaches it.
                 val prev = hs.lastHealth
                 if (!prev.isNaN() && s.health < prev - 0.5f) {
                     hs.dmgAmount = (prev - s.health).coerceIn(0.5f, 40f)
                     hs.dmgTick = tick
                 }
                 hs.lastHealth = s.health
+                // Smoothed display: lerp the shown number toward the raw target once per PLAYHEAD TICK
+                // (tickJump == 1), mirroring the WalkState limb-amp lerp at :622/:632 — FPS-independent
+                // (the playhead holds for ~3 render frames between ticks). A 0.3/tick geometric lerp
+                // converges in ~8 ticks, so the server's coarse/batched HEALTH sync (a +15 heal batch,
+                // a -16 crit, delivered decoupled from the hurt flash — the "nonsensical swing" the
+                // health-sync investigation traced to coarse server sync, not a pipeline bug) ramps visibly
+                // instead of snapping the number 3→18→7 across three consecutive ticks. Seek / scrub /
+                // rewind / first sighting (tickJump != 1) snaps to target so a timeline jump doesn't
+                // ramp; tickJump == 0 (same frame redrawn) holds the smoothed value (no per-frame step).
+                val tickJump = tick - hs.displayTick
+                when {
+                    hs.displayHealth.isNaN() -> hs.displayHealth = s.health
+                    tickJump == 1 -> hs.displayHealth += (s.health - hs.displayHealth) * HEALTH_SMOOTH_RATE
+                    tickJump == 0 -> { }  // same playhead frame redrawn → hold
+                    else -> hs.displayHealth = s.health   // seek / scrub / rewind
+                }
+                hs.displayTick = tick
                 val maxH = if (s.maxHealth > 0f) s.maxHealth else 20f
-                val hp = s.health.coerceIn(0f, maxH)
+                val hp = hs.displayHealth.coerceIn(0f, maxH)
                 val baseY = if (laid) 0.95 else if (s.pose == ReplayBuffer.POSE_SNEAK) 2.15 else 2.5
                 val hy = baseY + 0.35f
                 matrices.push()
@@ -528,16 +577,42 @@ object ReplayRenderer {
     }
     private val walkState = ConcurrentHashMap<java.util.UUID, WalkState>()
 
-    /** Per-ghost rolling health for the [IustitiaConfig.clipHealthIndicator] damage popup: the last
-     *  snap's health (to detect a drop → popup) + the last detected damage amount + the tick it
-     *  happened (the `-dmg` popup shows for ~40 ticks). Survives across the replay session; bounded in
-     *  practice by player count. Render-thread only (drawHumanoid is single-threaded). */
+    /** Per-ghost rolling health for the [IustitiaConfig.clipHealthIndicator] damage popup + the
+     *  smoothed displayed number: the last snap's RAW health (to detect a drop → popup), the smoothed
+     *  [displayHealth] that lerps toward the raw target once per playhead tick (so the server's
+     *  coarse/batched health sync ramps instead of snapping 3→18→7), + the last detected damage
+     *  amount + the tick it happened (the `-dmg` popup shows for ~40 ticks). Survives across the
+     *  replay session; bounded in practice by player count. Render-thread only (drawHumanoid is
+     *  single-threaded). */
     private class HealthState {
+        /** Last RAW target health (drop detection → -dmg popup). */
         var lastHealth: Float = Float.NaN
+        /** Smoothed displayed health — lerps toward [lastHealth]'s target once per playhead tick.
+         *  NaN until the first sighting (then snaps to the raw value). */
+        var displayHealth: Float = Float.NaN
+        /** Last playhead tick the smoothing was stepped on (gates the per-tick lerp, mirroring
+         *  WalkState.lastTick at :630 — FPS-independent). */
+        var displayTick: Int = Int.MIN_VALUE
         var dmgAmount: Float = 0f
         var dmgTick: Int = Int.MIN_VALUE
     }
     private val healthState = ConcurrentHashMap<java.util.UUID, HealthState>()
+
+    // v8 ghost-equipment: registry-id-string → ItemStack cache. The same few items repeat across
+    // ticks + players, so memoizing avoids re-resolving `Registries.ITEM.get` every ghost every
+    // frame. Render-thread only (drawModel is single-threaded); bounded by the (small) set of
+    // distinct item ids ever observed in a clip. ItemStack.EMPTY for blank / unknown / AIR ids.
+    private val stackCache = HashMap<String, ItemStack>()
+    private fun stackFor(id: String): ItemStack {
+        if (id.isBlank()) return ItemStack.EMPTY
+        stackCache[id]?.let { return it }
+        val stack = try {
+            val item = Registries.ITEM.get(Identifier.of(id))
+            if (item === Items.AIR) ItemStack.EMPTY else ItemStack(item)
+        } catch (_: Throwable) { ItemStack.EMPTY }
+        stackCache[id] = stack
+        return stack
+    }
 
     // Per-tick alert-label cache (B3): the active-alert map only changes when the playhead frame
     // (frame.tick) changes — i.e. once per replay tick, not per render frame. Caching it avoids
@@ -549,10 +624,14 @@ object ReplayRenderer {
     private fun drawModel(
         matrices: MatrixStack,
         vcp: VertexConsumerProvider,
+        queue: OrderedRenderCommandQueue?,
         s: ReplayBuffer.PlayerSnap,
         tick: Int,
     ): Boolean {
         if (!try { ConfigManager.config.replayPlayerModels } catch (_: Throwable) { false }) return false
+        // v8 ghost equipment toggle (held items + armor). Additive, default on. When off (or the live
+        // entity-pass queue is unavailable) the ghost renders skin-only — today's behavior.
+        val equipOn = try { ConfigManager.config.clipGhostEquipment } catch (_: Throwable) { false }
         val mc = MinecraftClient.getInstance()
         val player = mc.player ?: return false
         // resolve + cache the player renderer (stable per entity type; doesn't change with world)
@@ -662,6 +741,38 @@ object ReplayRenderer {
         // pose the model limbs from the state (head pitch, body/limb walk, arm swing, sneak/glide).
         try { model.setAngles(state) } catch (_: Throwable) { return false }
 
+        // v8 ghost equipment: reconstruct the 6 recorded stacks (registry-id strings → ItemStack) and
+        // populate the render state so the armor + held-item feature renderers draw them. Gated on the
+        // config toggle + a live OrderedRenderCommandQueue (features submit through the queue). Each
+        // step fail-open — a bad id / a special-item NPE degrades to an empty slot, never breaks the
+        // frame. `clearAndUpdate` populates the FINAL rightHandItemState/leftHandItemState in place
+        // (they're `final ItemRenderState`, not reassignable) with a no-entity HeldItemContext.
+        if (equipOn && queue != null) {
+            try {
+                state.equippedHeadStack = stackFor(s.head)
+                state.equippedChestStack = stackFor(s.chest)
+                state.equippedLegsStack = stackFor(s.legs)
+                state.equippedFeetStack = stackFor(s.feet)
+                state.rightHandItem = stackFor(s.mainHand)
+                state.leftHandItem = stackFor(s.offHand)
+                val imm = (renderer as? LivingEntityRendererAccessor)?.iustitia_getItemModelManager()
+                val world = mc.world
+                if (imm != null && world != null) {
+                    // A no-entity HeldItemContext: the ghost has no live LivingEntity, so the static
+                    // ArmedEntityRenderState.updateRenderState path (which requires one) is bypassed.
+                    // Most item models don't touch getEntity(); a few special ones (trident/spyglass/
+                    // custom) might NPE → contained by the per-feature try/catch at the render call.
+                    val itemCtx = GhostHeldItemContext(world, Vec3d(s.x.toDouble(), s.y.toDouble(), s.z.toDouble()), s.yaw)
+                    try {
+                        imm.clearAndUpdate(state.rightHandItemState, state.rightHandItem, ItemDisplayContext.THIRD_PERSON_RIGHT_HAND, world, itemCtx, FULL_LIGHT)
+                    } catch (_: Throwable) {}
+                    try {
+                        imm.clearAndUpdate(state.leftHandItemState, state.leftHandItem, ItemDisplayContext.THIRD_PERSON_LEFT_HAND, world, itemCtx, FULL_LIGHT)
+                    } catch (_: Throwable) {}
+                }
+            } catch (_: Throwable) {}
+        }
+
         val texture = try { skin.body().texturePath() } catch (_: Throwable) { return false }
         val layer = try { model.getLayer(texture) ?: return false } catch (_: Throwable) { return false }
         val vc = try { vcp.getBuffer(layer) } catch (_: Throwable) { return false }
@@ -693,7 +804,38 @@ object ReplayRenderer {
             val overlay = if (s.hurtTime > 0)
                 try { LivingEntityRenderer.getOverlay(state, 0f) } catch (_: Throwable) { OverlayTexture.DEFAULT_UV }
             else OverlayTexture.DEFAULT_UV
-            model.render(matrices, vc, FULL_LIGHT, overlay)
+            if (queue != null) {
+                // Submit the ghost skin through the live entity-pass queue (proper z-order with the
+                // captured world + the feature-submitted armor). The trailing no-op defaults
+                // (mixColor=-1, sprite=null, outlineColor=0, crumbling=null) are vanilla's own values
+                // for a non-spectator / non-mix entity (verified from LivingEntityRenderer.render).
+                try {
+                    queue.submitModel(model, state, matrices, layer, state.light, overlay, -1, null, 0, null)
+                } catch (_: Throwable) {
+                    model.render(matrices, vc, FULL_LIGHT, overlay)
+                }
+                // v8 equipment features: armor + held items. Filter to the two equipment features the
+                // user asked for (PlayerHeldItemFeatureRenderer extends HeldItemFeatureRenderer, so the
+                // base `is`-check covers it). Per-feature try/catch contains any NPE from a special
+                // item model (trident/spyglass/custom) or an unset state field — one bad feature skips,
+                // the rest + the skin survive.
+                if (equipOn) {
+                    val feats = (renderer as? LivingEntityRendererAccessor)?.iustitia_getFeatures()
+                    if (feats != null) {
+                        for (f in feats) {
+                            if (f !is ArmorFeatureRenderer<*, *, *> && f !is HeldItemFeatureRenderer<*, *>) continue
+                            try {
+                                @Suppress("UNCHECKED_CAST")
+                                (f as FeatureRenderer<PlayerEntityRenderState, *>).render(
+                                    matrices, queue, state.light, state, state.relativeHeadYaw, state.pitch)
+                            } catch (_: Throwable) {}
+                        }
+                    }
+                }
+            } else {
+                // No live queue (Fabric didn't supply one this pass) → the proven Immediate skin path.
+                model.render(matrices, vc, FULL_LIGHT, overlay)
+            }
         } catch (_: Throwable) {
             return false
         } finally {

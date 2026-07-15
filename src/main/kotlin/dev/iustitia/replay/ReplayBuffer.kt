@@ -2,6 +2,9 @@ package dev.iustitia.replay
 
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.tracking.TrackedPlayer
+import net.minecraft.entity.EquipmentSlot
+import net.minecraft.item.ItemStack
+import net.minecraft.registry.Registries
 import java.util.ArrayDeque
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -62,7 +65,14 @@ object ReplayBuffer {
      *  hit → drives the red hurt flash), [health] + [maxHealth] (server-authoritative, synced to all
      *  clients via TrackedData / attribute sync → the health indicator). All three default to
      *  no-flash / full-health on pre-v7 clips (hurtTime=0, health=maxHealth=20), so an old ghost just
-     *  renders without the new overlays. Attack SOURCE is not capturable client-side for other players. */
+     *  renders without the new overlays. Attack SOURCE is not capturable client-side for other players.
+     *
+     *  v8 adds the per-snap equipment fields: [mainHand], [offHand] (held items) + [head], [chest],
+     *  [legs], [feet] (armor) — each a registry id string (`"minecraft:diamond_sword"`, empty `""` =
+     *  empty slot). Reconstructed into `ItemStack`s by the ghost renderer so a playclip/replay ghost
+     *  holds what the player actually held and wears the armor they wore, at the recorded tick. Lossy
+     *  (no enchant-glint / custom-model-data components) but simple + fail-open; pre-v8 clips default
+     *  to all-empty → the skin-only ghost (today's behavior). */
     data class PlayerSnap(
         val uuidMost: Long, val uuidLeast: Long,
         val x: Float, val y: Float, val z: Float, val yaw: Float, val pitch: Float,
@@ -71,6 +81,12 @@ object ReplayBuffer {
         val hurtTime: Byte = 0,
         val health: Float = 20f,
         val maxHealth: Float = 20f,
+        val mainHand: String = "",
+        val offHand: String = "",
+        val head: String = "",
+        val chest: String = "",
+        val legs: String = "",
+        val feet: String = "",
     ) {
         fun uuid(): UUID = UUID(uuidMost, uuidLeast)
     }
@@ -129,12 +145,21 @@ object ReplayBuffer {
                     val hurtTime = try { (e?.hurtTime ?: 0).toByte() } catch (_: Throwable) { 0 }
                     val health = try { e?.getHealth() ?: 20f } catch (_: Throwable) { 20f }
                     val maxHealth = try { e?.getMaxHealth() ?: 20f } catch (_: Throwable) { 20f }
+                    // v8 per-snap equipment: registry-id string per slot (empty "" = empty slot).
+                    // Read straight off the live other-player entity, fail-open to "" (skin-only ghost).
+                    val mainHand = idOf(e?.mainHandStack)
+                    val offHand = idOf(e?.offHandStack)
+                    val head = idOf(e?.getEquippedStack(EquipmentSlot.HEAD))
+                    val chest = idOf(e?.getEquippedStack(EquipmentSlot.CHEST))
+                    val legs = idOf(e?.getEquippedStack(EquipmentSlot.LEGS))
+                    val feet = idOf(e?.getEquippedStack(EquipmentSlot.FEET))
                     snaps.add(
                         PlayerSnap(
                             u.mostSignificantBits, u.leastSignificantBits,
                             tp.pos.x.toFloat(), tp.pos.y.toFloat(), tp.pos.z.toFloat(),
                             tp.yaw, tp.pitch, tp.handSwingTicks, poseOf(tp), nm,
                             hurtTime, health, maxHealth,
+                            mainHand, offHand, head, chest, legs, feet,
                         )
                     )
                 } catch (_: Throwable) {
@@ -222,4 +247,11 @@ object ReplayBuffer {
         tp.sneaking -> POSE_SNEAK
         else -> POSE_STAND
     }
+
+    /** Map a live [ItemStack] to its registry-id string (`"minecraft:diamond_sword"`), or `""` for an
+     *  empty/null stack. Fail-open: any read error → `""` (the ghost just shows no item in that slot). */
+    private fun idOf(stack: ItemStack?): String = try {
+        if (stack == null || stack.isEmpty) ""
+        else Registries.ITEM.getId(stack.item).toString()
+    } catch (_: Throwable) { "" }
 }
