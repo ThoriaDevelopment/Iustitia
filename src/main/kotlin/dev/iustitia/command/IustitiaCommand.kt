@@ -140,7 +140,7 @@ object IustitiaCommand {
                     .then(ClientCommandManager.argument("name", StringArgumentType.word())
                         .suggests { _, b -> suggestNames(b); b.buildFuture() }
                         .executes { transcriptPanelNamed(it) }))
-                .then(ClientCommandManager.argument("name", StringArgumentType.word())
+                .then(ClientCommandManager.argument("name", SafeStringArgument.wordExcluding("panel"))
                     .suggests { _, b -> suggestNames(b); b.buildFuture() }
                     .executes { transcriptPrint(it) }))
             .then(ClientCommandManager.literal("evidence")
@@ -194,7 +194,7 @@ object IustitiaCommand {
                 // <target> is overloaded: a NUMBER = the seconds to replay (no focus, 1×), e.g.
                 // `/ius replay 60`; a NAME = the focus player, optionally followed by <seconds> [speed],
                 // e.g. `/ius replay thoria 60 0.5`. A bare `/ius replay` replays the default window.
-                .then(ClientCommandManager.argument("target", StringArgumentType.word())
+                .then(ClientCommandManager.argument("target", SafeStringArgument.wordExcluding("off", "pause", "resume", "seek", "step", "speed", "cam", "save"))
                     .suggests { _, b -> suggestNames(b); b.buildFuture() }
                     .executes { replay(it, StringArgumentType.getString(it, "target"), null) }
                     .then(ClientCommandManager.argument("seconds", DoubleArgumentType.doubleArg(1.0, 60.0))
@@ -211,7 +211,7 @@ object IustitiaCommand {
             .then(ClientCommandManager.literal("playclip")
                 .executes { playclip(it, null, null) }
                 .then(ClientCommandManager.literal("off").executes { replayStop(it) })
-                .then(ClientCommandManager.argument("name", StringArgumentType.word())
+                .then(ClientCommandManager.argument("name", SafeStringArgument.wordExcluding("off"))
                     .suggests { _, b -> suggestFiltered(b, dev.iustitia.replay.ClipStore.list()); b.buildFuture() }
                     .executes { playclip(it, StringArgumentType.getString(it, "name"), null) }
                     .then(ClientCommandManager.argument("speed", StringArgumentType.word())
@@ -268,7 +268,7 @@ object IustitiaCommand {
             .then(ClientCommandManager.literal("clear")
                 .executes { clearUsage(it) }
                 .then(ClientCommandManager.literal("all").executes { clearAll(it) })
-                .then(ClientCommandManager.argument("name", StringArgumentType.word())
+                .then(ClientCommandManager.argument("name", SafeStringArgument.wordExcluding("all"))
                     .suggests { _, b -> suggestNames(b); b.buildFuture() }
                     .executes { clearPlayer(it) }))
             .then(ClientCommandManager.literal("exempt")
@@ -305,7 +305,7 @@ object IustitiaCommand {
                             .executes { chathistTarget(it, StringArgumentType.getString(it, "username"), StringArgumentType.getString(it, "phrase"), 1) }
                             .then(ClientCommandManager.argument("page", IntegerArgumentType.integer(1))
                                 .executes { chathistTarget(it, StringArgumentType.getString(it, "username"), StringArgumentType.getString(it, "phrase"), IntegerArgumentType.getInteger(it, "page")) }))))
-                .then(ClientCommandManager.argument("username", StringArgumentType.string())
+                .then(ClientCommandManager.argument("username", SafeStringArgument.stringExcluding("phrase", "target"))
                     .suggests { _, b -> suggestNames(b); b.buildFuture() }
                     .executes { chathistUser(it, StringArgumentType.getString(it, "username"), 1) }
                     .then(ClientCommandManager.argument("page", IntegerArgumentType.integer(1))
