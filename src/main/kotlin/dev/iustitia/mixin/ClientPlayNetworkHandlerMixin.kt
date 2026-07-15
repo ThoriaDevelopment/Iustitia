@@ -13,6 +13,8 @@ import net.minecraft.client.MinecraftClient
 import net.minecraft.client.network.ClientPlayNetworkHandler
 import net.minecraft.entity.Entity
 import net.minecraft.entity.effect.StatusEffects
+import net.minecraft.network.DisconnectionInfo
+import net.minecraft.network.packet.s2c.play.ChatMessageS2CPacket
 import net.minecraft.network.packet.s2c.play.DamageTiltS2CPacket
 import net.minecraft.network.packet.s2c.play.EntityAnimationS2CPacket
 import net.minecraft.network.packet.s2c.play.EntityDamageS2CPacket
@@ -63,6 +65,8 @@ class ClientPlayNetworkHandlerMixin {
             // (different world). See iustitia_onPlayerRespawn.
             SpawnState.seed = packet.commonPlayerSpawnInfo().seed()
             Iustitia.bus.publish(GameJoinSignal(Iustitia.tickCounter))
+            // Per-server chat history: (re)load the current server's persisted bucket on join. Fail-open.
+            try { dev.iustitia.chathist.ChatHistory.onJoin() } catch (_: Throwable) {}
         } catch (_: Throwable) {}
     }
 
@@ -125,6 +129,8 @@ class ClientPlayNetworkHandlerMixin {
             if (packet.status == 35.toByte()) {
                 val who = otherPlayer(packet.getEntity(w)) ?: return
                 dev.iustitia.replay.ReplayBuffer.recordTotemPop(Iustitia.tickCounter, who)
+                // Mirror into the manual long-recording buffer (no-op unless `/ius record` is active).
+                try { dev.iustitia.replay.RecordManager.recordTotemPop(Iustitia.tickCounter, who) } catch (_: Throwable) {}
             }
         } catch (_: Throwable) {}
     }
@@ -137,6 +143,34 @@ class ClientPlayNetworkHandlerMixin {
                 HurtSignal(victim, Iustitia.tickCounter, packet.sourceCauseId, HurtSource.ENTITY_DAMAGE)
             )
         } catch (_: Throwable) {}
+    }
+
+    /** `onChatMessage` is the only player-chat hook that exposes a raw sender UUID (`packet.sender()`)
+     *  + the signed plaintext (`packet.body().content()`) before decoration — `onGameMessage` carries
+     *  only a pre-rendered `Text` with no UUID, and `ChatHud.addMessage` bakes the UUID into a
+     *  decorated `Text`. Capture OTHER players' messages only (sender is a tracked player AND not the
+     *  local player); system/game messages never reach this handler. Fail-open. */
+    @Inject(method = ["onChatMessage"], at = [At("HEAD")])
+    private fun iustitia_onChatMessage(packet: ChatMessageS2CPacket, ci: CallbackInfo) {
+        try {
+            val sender = packet.sender() ?: return
+            if (sender == MinecraftClient.getInstance().player?.uuid) return
+            val tracked = EntityTrackerManager.all().firstOrNull { it.uuid == sender } ?: return
+            val text = packet.body()?.content()?.takeIf { it.isNotBlank() }
+                ?: packet.unsignedContent()?.string ?: return
+            val name = packet.serializedParameters()?.name()?.string
+                ?: tracked.username().ifEmpty { sender.toString().take(8) }
+            dev.iustitia.chathist.ChatHistory.record(Iustitia.tickCounter, System.currentTimeMillis(), sender, name, text)
+        } catch (_: Throwable) {}
+    }
+
+    /** First disconnect hook in the mod: flush (persist ON) or drop (persist OFF) the current server's
+     *  chat-history bucket on leave. `onDisconnected` is declared on the superclass
+     *  `ClientCommonNetworkHandler`; the quoted method name resolves through the mixin target's
+     *  super chain. Fail-open. */
+    @Inject(method = ["onDisconnected"], at = [At("HEAD")])
+    private fun iustitia_onDisconnected(info: DisconnectionInfo, ci: CallbackInfo) {
+        try { dev.iustitia.chathist.ChatHistory.onLeave() } catch (_: Throwable) {}
     }
 
     @Inject(method = ["onDamageTilt"], at = [At("HEAD")])

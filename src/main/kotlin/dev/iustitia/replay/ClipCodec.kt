@@ -226,7 +226,7 @@ object ClipCodec {
         if (version < MIN_VERSION || version > VERSION) return null
         val focus = readFocus(d)
         val frameCount = d.readInt()
-        if (frameCount < 0 || frameCount > 2000) return null
+        if (frameCount < 0 || frameCount > 12000) return null
         // The frame bodies sit between here and the alert count; skip them whole.
         for (i in 0 until frameCount) {
             d.readInt() // tick
@@ -351,7 +351,7 @@ object ClipCodec {
 
     private fun readFrames(d: DataInputStream, version: Int): List<ReplayBuffer.Frame>? {
         val frameCount = d.readInt()
-        if (frameCount < 0 || frameCount > 2000) return null
+        if (frameCount < 0 || frameCount > 12000) return null
         val frames = ArrayList<ReplayBuffer.Frame>(frameCount)
         for (i in 0 until frameCount) {
             val tick = d.readInt()

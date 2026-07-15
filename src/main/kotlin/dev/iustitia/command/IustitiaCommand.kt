@@ -2,6 +2,7 @@ package dev.iustitia.command
 
 import com.mojang.brigadier.CommandDispatcher
 import com.mojang.brigadier.arguments.DoubleArgumentType
+import com.mojang.brigadier.arguments.IntegerArgumentType
 import com.mojang.brigadier.arguments.StringArgumentType
 import com.mojang.brigadier.builder.LiteralArgumentBuilder
 import com.mojang.brigadier.context.CommandContext
@@ -28,8 +29,13 @@ import dev.iustitia.ui.TranscriptPanelScreen
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource
 import net.minecraft.client.MinecraftClient
+import net.minecraft.text.ClickEvent
+import net.minecraft.text.HoverEvent
+import net.minecraft.text.MutableText
 import net.minecraft.text.Text
+import java.text.SimpleDateFormat
 import java.util.UUID
+import kotlin.math.ceil
 
 /**
  * `/iustitia` and `/ius` — client-only control surface. Both aliases expose the same subcommands:
@@ -277,6 +283,33 @@ object IustitiaCommand {
                 .executes { profileStart(it) }
                 .then(ClientCommandManager.literal("start").executes { profileStart(it) })
                 .then(ClientCommandManager.literal("stop").executes { profileStop(it) }))
+            .then(ClientCommandManager.literal("record")
+                .executes { recordStart(it) }
+                .then(ClientCommandManager.literal("start").executes { recordStart(it) })
+                .then(ClientCommandManager.literal("stop")
+                    .executes { recordStop(it, null) }
+                    .then(ClientCommandManager.argument("name", StringArgumentType.string())
+                        .executes { recordStop(it, StringArgumentType.getString(it, "name")) })))
+            .then(ClientCommandManager.literal("chathist")
+                .executes { chathistUsage(it) }
+                .then(ClientCommandManager.literal("phrase")
+                    .executes { chathistUsage(it) }
+                    .then(ClientCommandManager.argument("phrase", StringArgumentType.string())
+                        .executes { chathistPhrase(it, StringArgumentType.getString(it, "phrase"), 1) }
+                        .then(ClientCommandManager.argument("page", IntegerArgumentType.integer(1))
+                            .executes { chathistPhrase(it, StringArgumentType.getString(it, "phrase"), IntegerArgumentType.getInteger(it, "page")) })))
+                .then(ClientCommandManager.literal("target")
+                    .then(ClientCommandManager.argument("username", StringArgumentType.string())
+                        .suggests { _, b -> suggestNames(b); b.buildFuture() }
+                        .then(ClientCommandManager.argument("phrase", StringArgumentType.string())
+                            .executes { chathistTarget(it, StringArgumentType.getString(it, "username"), StringArgumentType.getString(it, "phrase"), 1) }
+                            .then(ClientCommandManager.argument("page", IntegerArgumentType.integer(1))
+                                .executes { chathistTarget(it, StringArgumentType.getString(it, "username"), StringArgumentType.getString(it, "phrase"), IntegerArgumentType.getInteger(it, "page")) }))))
+                .then(ClientCommandManager.argument("username", StringArgumentType.string())
+                    .suggests { _, b -> suggestNames(b); b.buildFuture() }
+                    .executes { chathistUser(it, StringArgumentType.getString(it, "username"), 1) }
+                    .then(ClientCommandManager.argument("page", IntegerArgumentType.integer(1))
+                        .executes { chathistUser(it, StringArgumentType.getString(it, "username"), IntegerArgumentType.getInteger(it, "page")) })))
 
     // ---- feedback helper ----
     private fun send(ctx: CommandContext<FabricClientCommandSource>, line: String) {
@@ -475,7 +508,101 @@ object IustitiaCommand {
         return 1
     }
 
+    /** `/ius record start` — begin a manual long recording (capped at 10 min per segment; auto-saves
+     *  a segment on world change + at the cap and keeps recording). Captures the loaded world map
+     *  once (synchronous one-shot hitch, same as `/ius clip`). Feedback via [RecordManager.start]. */
+    private fun recordStart(ctx: CommandContext<FabricClientCommandSource>): Int {
+        if (!ConfigManager.config.replayCapture) {
+            send(ctx, "$tag §7replay capture is §cdisabled§7 in config — recording needs it on.")
+            return 0
+        }
+        send(ctx, dev.iustitia.replay.RecordManager.start())
+        return 1
+    }
+
+    /** `/ius record stop [name]` — save the active recording as `<name>.iusclip` (default
+     *  `record_<tick>_<idx>`) → plays back with `/ius playclip <name>`. Feedback via [RecordManager.stop]. */
+    private fun recordStop(ctx: CommandContext<FabricClientCommandSource>, name: String?): Int {
+        send(ctx, dev.iustitia.replay.RecordManager.stop(name))
+        return 1
+    }
+
+    // ---- /ius chathist (per-player chat history, paginated + clickable) ----
+
+    private val chatTimeFmt = SimpleDateFormat("HH:mm:ss")
+
+    /** Bare `/ius chathist` / `/ius chathist phrase` usage hint. */
+    private fun chathistUsage(ctx: CommandContext<FabricClientCommandSource>): Int {
+        send(ctx, "$tag §7usage:")
+        send(ctx, " §f/ius chathist <username> [page]§7 — a player's messages (newest first).")
+        send(ctx, " §f/ius chathist phrase <phrase> [page]§7 — everyone who said <phrase>, in order.")
+        send(ctx, " §f/ius chathist target <username> <phrase> [page]§7 — <username>'s messages with <phrase>.")
+        send(ctx, " §7captures tracked OTHER players only; per-server (persists with the persistence toggle).")
+        return 1
+    }
+
+    /** `/ius chathist <username> [page]` — that player's messages, newest-first, 8/page. */
+    private fun chathistUser(ctx: CommandContext<FabricClientCommandSource>, username: String, page: Int): Int {
+        val rows = dev.iustitia.chathist.ChatHistory.rowsForUser(username)
+        renderChatPage(ctx, rows, page, "chathist $username")
+        return 1
+    }
+
+    /** `/ius chathist phrase <phrase> [page]` — every player who said [phrase], in order, 8/page. */
+    private fun chathistPhrase(ctx: CommandContext<FabricClientCommandSource>, phrase: String, page: Int): Int {
+        val rows = dev.iustitia.chathist.ChatHistory.rowsForPhrase(phrase)
+        renderChatPage(ctx, rows, page, "chathist phrase $phrase")
+        return 1
+    }
+
+    /** `/ius chathist target <username> <phrase> [page]` — [username]'s messages containing [phrase]. */
+    private fun chathistTarget(ctx: CommandContext<FabricClientCommandSource>, username: String, phrase: String, page: Int): Int {
+        val rows = dev.iustitia.chathist.ChatHistory.rowsForUserPhrase(username, phrase)
+        renderChatPage(ctx, rows, page, "chathist target $username $phrase")
+        return 1
+    }
+
+    /**
+     * Render one page of chat history to chat with `[HH:mm:ss] [name] text` rows + top/bottom
+     * dividers. The bottom divider's `[<]` / `[>]` are clickable ([ClickEvent.RunCommand] re-runs the
+     * same command variant with page-1 / page+1); they render inert on the first / last page. Lazy:
+     * only the requested page's rows are read (`drop((page-1)*8).take(8)`). Empty set → a single "no
+     * messages" line, no dividers. Output via `sendFeedback(Text)` (not [send]) since rows carry
+     * click/hover events. Fail-open.
+     */
+    private fun renderChatPage(ctx: CommandContext<FabricClientCommandSource>, rows: List<dev.iustitia.chathist.ChatHistory.Row>, page: Int, cmdPrefix: String) {
+        val src = ctx.source
+        if (rows.isEmpty()) { send(ctx, "$tag §7no chat history to show."); return }
+        val total = rows.size
+        val totalPages = ceil(total.toDouble() / dev.iustitia.chathist.ChatHistory.PAGE_SIZE_ROWS).toInt().coerceAtLeast(1)
+        val p = page.coerceIn(1, totalPages)
+        val pageRows = rows.drop((p - 1) * dev.iustitia.chathist.ChatHistory.PAGE_SIZE_ROWS).take(dev.iustitia.chathist.ChatHistory.PAGE_SIZE_ROWS)
+        // top divider: ...---[IUS ChatHistory]---...
+        src.sendFeedback(Text.literal("$tag §8...§7---§f[§bIUS ChatHistory§f]§7---§8..."))
+        for (r in pageRows) {
+            val ts = try { chatTimeFmt.format(java.util.Date(r.wallClockMs)) } catch (_: Throwable) { "??:??:??" }
+            src.sendFeedback(Text.literal("§8[$ts] §7[§f${r.name}§7]§r ${r.text}"))
+        }
+        // bottom divider: [<]...---[Page N/M]---...[>], clickable where valid.
+        val bottom: MutableText = Text.literal("")
+        val prevCmd = "/ius $cmdPrefix ${p - 1}"
+        val nextCmd = "/ius $cmdPrefix ${p + 1}"
+        bottom.append(clickButton("§3<§r", if (p > 1) prevCmd else null, "Previous page"))
+        bottom.append(Text.literal("§8...§7---§f[§7Page §f$p§7/$totalPages§f]§7---§8...§r"))
+        bottom.append(clickButton("§3>§r", if (p < totalPages) nextCmd else null, "Next page"))
+        src.sendFeedback(bottom)
+    }
+
+    /** A `[<]`/`[>]` button: clickable (run-command) + hover-text when [cmd] is non-null, plain when null. */
+    private fun clickButton(label: String, cmd: String?, hover: String): Text = try {
+        if (cmd == null) Text.literal("§8$label")
+        else Text.literal(label).styled { s ->
+            s.withClickEvent(ClickEvent.RunCommand(cmd)).withHoverEvent(HoverEvent.ShowText(Text.literal(hover)))
+        }
+    } catch (_: Throwable) { Text.literal(label) }
+
     // ---- history ----
+
     /** Bare `/ius hist` — opens the searchable player list (#1). Mirrors the [openConfig]
      *  `MinecraftClient.execute{}` + fail-open pattern; falls back to the chat top-offenders
      *  dump if the screen can't be opened (e.g. opened from a non-foreground context). */

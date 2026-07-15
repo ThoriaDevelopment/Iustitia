@@ -126,6 +126,9 @@ object Iustitia {
             // (gated by config.replayCapture inside). Runs before the replay playhead advance so a
             // live recordTick and a playback tick never overlap on the same frame confusingly.
             try { dev.iustitia.replay.ReplayBuffer.recordTick(tick, tracked) } catch (_: Throwable) {}
+            // Manual long-recording (`/ius record`): same per-tick snap work, into a growable 10-min
+            // buffer. No-op unless a recording is active (gated inside). Fail-open.
+            try { dev.iustitia.replay.RecordManager.recordTick(tick, tracked) } catch (_: Throwable) {}
 
             // Phase 2 instant-replay playback: advance the playhead one tick; if the replay just
             // finished, chat the reason + restore rendering (hide-live snaps back automatically).
@@ -367,6 +370,10 @@ object Iustitia {
             // back to live rendering the instant active flips false).
             try { dev.iustitia.replay.ReplayState.stop("world changed") } catch (_: Throwable) {}
             try { dev.iustitia.replay.ReplayBuffer.reset() } catch (_: Throwable) {}
+            // Manual long-recording auto-split: if `/ius record` is active, silently save the current
+            // segment + capture a fresh map for the new world + keep recording (one segment per world).
+            // No-op when not recording. Fail-open.
+            try { dev.iustitia.replay.RecordManager.onWorldChange() } catch (_: Throwable) {}
             // Drop the per-UUID skin cache — skins are per-server (tab list changes), so a world
             // change shouldn't keep the previous server's resolved skins around.
             try { dev.iustitia.render.ReplaySkins.reset() } catch (_: Throwable) {}

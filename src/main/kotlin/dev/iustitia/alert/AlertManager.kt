@@ -74,6 +74,8 @@ object AlertManager {
             // not strip it from the replay timeline — a replay shows every real flag regardless of
             // the current chat filter. Gated by config.replayCapture inside. Fail-open.
             try { dev.iustitia.replay.ReplayBuffer.recordAlert(tick, player, name, checkId, check, vl) } catch (_: Throwable) {}
+            // Mirror into the manual long-recording buffer too (no-op unless `/ius record` is active).
+            try { dev.iustitia.replay.RecordManager.recordAlert(tick, player, name, checkId, check, vl) } catch (_: Throwable) {}
 
             // Phase B burst-spark: on a fresh tier-relevant alert (the ones that move the tier),
             // spawn a tier-colored particle burst at the offender's eye. Tier-neutral alerts

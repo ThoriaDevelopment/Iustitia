@@ -136,35 +136,8 @@ object ReplayBuffer {
             val snaps = ArrayList<PlayerSnap>(minOf(tracked.size, MAX_PLAYERS_PER_FRAME))
             for (tp in tracked) {
                 if (snaps.size >= MAX_PLAYERS_PER_FRAME) break
-                try {
-                    val u = tp.uuid
-                    val nm = tp.username().ifEmpty { u.toString().take(8) }
-                    // v7 combat-sync: hurt time + health, read straight off the live other-player
-                    // entity (TrackedPlayer.entity holds it). Fail-open to no-flash / full-health.
-                    val e = tp.entity
-                    val hurtTime = try { (e?.hurtTime ?: 0).toByte() } catch (_: Throwable) { 0 }
-                    val health = try { e?.getHealth() ?: 20f } catch (_: Throwable) { 20f }
-                    val maxHealth = try { e?.getMaxHealth() ?: 20f } catch (_: Throwable) { 20f }
-                    // v8 per-snap equipment: registry-id string per slot (empty "" = empty slot).
-                    // Read straight off the live other-player entity, fail-open to "" (skin-only ghost).
-                    val mainHand = idOf(e?.mainHandStack)
-                    val offHand = idOf(e?.offHandStack)
-                    val head = idOf(e?.getEquippedStack(EquipmentSlot.HEAD))
-                    val chest = idOf(e?.getEquippedStack(EquipmentSlot.CHEST))
-                    val legs = idOf(e?.getEquippedStack(EquipmentSlot.LEGS))
-                    val feet = idOf(e?.getEquippedStack(EquipmentSlot.FEET))
-                    snaps.add(
-                        PlayerSnap(
-                            u.mostSignificantBits, u.leastSignificantBits,
-                            tp.pos.x.toFloat(), tp.pos.y.toFloat(), tp.pos.z.toFloat(),
-                            tp.yaw, tp.pitch, tp.handSwingTicks, poseOf(tp), nm,
-                            hurtTime, health, maxHealth,
-                            mainHand, offHand, head, chest, legs, feet,
-                        )
-                    )
-                } catch (_: Throwable) {
-                    // skip one bad player, keep going
-                }
+                val snap = buildSnap(tp) ?: continue   // skip one bad player, keep going
+                snaps.add(snap)
             }
             synchronized(frames) {
                 frames.addLast(Frame(tick, snaps))
@@ -254,4 +227,33 @@ object ReplayBuffer {
         if (stack == null || stack.isEmpty) ""
         else Registries.ITEM.getId(stack.item).toString()
     } catch (_: Throwable) { "" }
+
+    /**
+     * Build one [PlayerSnap] from a tracked OTHER player, reading position/yaw/pose/combat-sync + the
+     * 6 v8 equipment slots straight off the live entity. The single shared snap-builder so
+     * [recordTick] (the rolling 60s buffer) and [RecordManager.recordTick] (the manual long
+     * recording) can't drift in what they capture. Fail-open: any per-player read error → null
+     * (the caller skips that player, keeps the rest of the frame).
+     */
+    internal fun buildSnap(tp: TrackedPlayer): PlayerSnap? = try {
+        val u = tp.uuid
+        val nm = tp.username().ifEmpty { u.toString().take(8) }
+        val e = tp.entity
+        val hurtTime = try { (e?.hurtTime ?: 0).toByte() } catch (_: Throwable) { 0 }
+        val health = try { e?.getHealth() ?: 20f } catch (_: Throwable) { 20f }
+        val maxHealth = try { e?.getMaxHealth() ?: 20f } catch (_: Throwable) { 20f }
+        val mainHand = idOf(e?.mainHandStack)
+        val offHand = idOf(e?.offHandStack)
+        val head = idOf(e?.getEquippedStack(EquipmentSlot.HEAD))
+        val chest = idOf(e?.getEquippedStack(EquipmentSlot.CHEST))
+        val legs = idOf(e?.getEquippedStack(EquipmentSlot.LEGS))
+        val feet = idOf(e?.getEquippedStack(EquipmentSlot.FEET))
+        PlayerSnap(
+            u.mostSignificantBits, u.leastSignificantBits,
+            tp.pos.x.toFloat(), tp.pos.y.toFloat(), tp.pos.z.toFloat(),
+            tp.yaw, tp.pitch, tp.handSwingTicks, poseOf(tp), nm,
+            hurtTime, health, maxHealth,
+            mainHand, offHand, head, chest, legs, feet,
+        )
+    } catch (_: Throwable) { null }
 }

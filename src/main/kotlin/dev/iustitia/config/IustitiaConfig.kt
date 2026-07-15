@@ -246,6 +246,13 @@ data class IustitiaConfig(
      *  the skin-only ghost (features silently skip). */
     var clipGhostEquipment: Boolean = true,
 
+    /** `/ius chathist` capture master toggle (on by default). When on, messages from tracked OTHER
+     *  players (not the local player, not system messages) are captured at the packet level and
+     *  queryable per-player / per-phrase. Per-server persistence follows [persistenceEnabled] (on →
+     *  survives reconnects under `.iustitia/chathist/<server>/`; off → in-memory, cleared on leave).
+     *  Additive — no CONFIG_VERSION bump; a pre-field config keeps the default (on). */
+    var chathistEnabled: Boolean = true,
+
     // --- combat ---
     var reach: CheckConfig = CheckConfig(true, 10.0, 0.25, 3.0),
     var multiTarget: CheckConfig = CheckConfig(true, 2.0, 1.0, 2.0),

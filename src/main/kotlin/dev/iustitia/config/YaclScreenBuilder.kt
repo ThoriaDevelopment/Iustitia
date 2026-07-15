@@ -73,6 +73,7 @@ object YaclScreenBuilder {
                     .option(int("Replay keybind seconds", "Seconds of buffered scene replayed when the replay-toggle keybind (numpad * by default) is pressed. 1..60 (capped to the 60s replay buffer).", { cfg.replayKeybindSeconds }, 1, 60) { cfg.replayKeybindSeconds = it })
                     .option(bool("Sonar alerts", "On a flushed alert, play a DIRECTIONAL note at the offender's last position (pan = direction, pitch = distance) so you can keep fighting and listen for cheats. Additive to chat; gated by the same mute/preset rules.", { cfg.sonarAlerts }) { cfg.sonarAlerts = it })
                     .option(double("Sonar volume", "Sonar cue volume (0..1). Quieter than chat cues by design — positional pings are frequent.", { cfg.sonarVolume }, 0.0, 1.0) { cfg.sonarVolume = it })
+                    .option(bool("Chat history capture", "Capture messages from tracked OTHER players (not you, not system messages) for /ius chathist <user> / phrase / target. Per-server: persists across reconnects when 'Persist across sessions' is on, else in-memory only. Additive.", { cfg.chathistEnabled }) { cfg.chathistEnabled = it })
                     .build()
             )
             // PlayClip: Legacy (v1.1.0 experience) vs Modern (current chunk-world + freecam feature

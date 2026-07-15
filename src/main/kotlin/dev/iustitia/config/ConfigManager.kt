@@ -234,6 +234,7 @@ object ConfigManager {
         addProperty("clipHealthIndicator", c.clipHealthIndicator)
         addProperty("clipTotemPopCounter", c.clipTotemPopCounter)
         addProperty("clipGhostEquipment", c.clipGhostEquipment)
+        addProperty("chathistEnabled", c.chathistEnabled)
         for ((key, cc) in c.checks()) add(key, checkToJson(cc))
     }
 
@@ -313,6 +314,8 @@ object ConfigManager {
             if (o.has("clipHealthIndicator")) c.clipHealthIndicator = o.get("clipHealthIndicator").asBoolean
             if (o.has("clipTotemPopCounter")) c.clipTotemPopCounter = o.get("clipTotemPopCounter").asBoolean
             if (o.has("clipGhostEquipment")) c.clipGhostEquipment = o.get("clipGhostEquipment").asBoolean
+            // chathistEnabled: additive — a pre-field config keeps the default (on). No CONFIG_VERSION bump.
+            if (o.has("chathistEnabled")) c.chathistEnabled = o.get("chathistEnabled").asBoolean
             for ((key, cc) in c.checks()) {
                 if (o.has(key)) readCheck(o.getAsJsonObject(key), cc, resetCalibration)
             }
