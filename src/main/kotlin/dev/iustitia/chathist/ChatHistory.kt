@@ -11,10 +11,25 @@ import net.minecraft.text.Text
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
+import kotlin.math.abs
 
 private const val DEBOUNCE_MS = 500L
 private const val MAX_ROWS = 50000
 private const val PAGE_SIZE = 8
+
+/**
+ * Cross-path dedup window. A single physical chat message can arrive on two of the three armed
+ * packet hooks within the same tick — most often a signed [ChatMessageS2CPacket] (captured by
+ * `onChatMessage`) AND a decorated [GameMessageS2CPacket] / [ProfilelessChatMessageS2CPacket]
+ * (captured by `captureDecorated` / `captureProfileless`) when a Paper/Spigot chat-formatter plugin
+ * sends the signed packet for compliance and re-broadcasts the rank-formatted text as a system
+ * message. Both `record` calls land in the same tick, so [ChatHistory.record] drops an exact
+ * (name, text) repeat within [DEDUP_WINDOW_TICKS] of an existing row. A legitimate same-player
+ * repeat is many ticks apart (human typing), so this never drops real chat.
+ */
+private const val DEDUP_WINDOW_TICKS = 1
+/** Only the most recent rows can be within the tick window, so the dedup scan checks the list tail. */
+private const val DEDUP_SCAN_TAIL = 16
 
 /**
  * Per-player chat history for `/ius chathist`. Captures messages sent by tracked OTHER players (not
@@ -88,12 +103,33 @@ object ChatHistory {
 
     private fun fileFor(key: String): Path = chathistDir.resolve(sanitize(key)).resolve("history.jsonl")
 
-    /** Capture one chat row from a tracked other player. Called from the `onChatMessage` mixin. Fail-open. */
+    /** Capture one chat row from a tracked other player. Called from the `onChatMessage` mixin and the
+     *  decorated/profileless capture paths. Drops an exact (name, text) repeat within
+     *  [DEDUP_WINDOW_TICKS] of an existing row so a message double-broadcast on two packet hooks
+     *  isn't stored twice. Fail-open. */
     fun record(tick: Int, wallClockMs: Long, uuid: UUID, name: String, text: String) {
         if (!enabled) return
         try {
             val list = synchronized(byServer) { byServer.getOrPut(currentKey) { ArrayList() } }
             synchronized(list) {
+                // Cross-path dedup: scan the tail (same-tick rows are the most recent) and drop this
+                // row if an identical (name, text) was just recorded within the tick window. Text is
+                // trimmed for the comparison so a stray leading space (decorated path trimStart vs
+                // signed raw content) doesn't defeat it. Fail-open: any throw → fall through to add.
+                val n = list.size
+                var i = n - 1
+                val from = (n - DEDUP_SCAN_TAIL).coerceAtLeast(0)
+                val keyText = text.trim()
+                while (i >= from) {
+                    val prev = list[i]
+                    if (abs(tick - prev.tick) <= DEDUP_WINDOW_TICKS &&
+                        keyText == prev.text.trim() &&
+                        name.equals(prev.name, ignoreCase = true)
+                    ) {
+                        return // already captured this same message this tick — skip the duplicate
+                    }
+                    i--
+                }
                 list.add(Row(tick, wallClockMs, uuid, name, text))
                 while (list.size > MAX_ROWS) list.removeAt(0)
             }
