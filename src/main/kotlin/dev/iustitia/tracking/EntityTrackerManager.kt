@@ -307,11 +307,33 @@ object EntityTrackerManager {
         tp.inVehicle = e.hasVehicle()
         tp.velocity = e.velocity
 
+        // Per-tick entity-interaction-range sample (the Spear's extended reach lives here as an
+        // attribute modifier on generic.entity_interaction_range). ReachCheck reads the max over the
+        // recent window so a spear→sword swap between the swing and the (later) hurt tick keeps the
+        // spear ceiling. Fail-open to 3.0 (vanilla default) on any read error.
+        try { tp.pushReach(tick, e.getEntityInteractionRange()) } catch (_: Throwable) { tp.pushReach(tick, 3.0) }
+
         // teleport heuristic: a single-tick jump > 8 blocks is a server teleport.
         // Also clears fallAccum (see markTeleport) so void-fall + respawn doesn't fire NoFall.
         if (rawDelta.lengthSquared() > 64.0) {
             tp.lastTeleportTick = tick
             tp.fallAccum = 0.0
+        }
+
+        // No-damage knockback burst detection (wind charge / TNT-cannon-style): a sudden impulse
+        // with no recent hurt (so not attack-knockback — hurtTick covers that), no recent teleport,
+        // and not a vanilla jump. Wind charges deal no damage (AdvancedExplosionBehavior
+        // damageEntities=false) so hurtTick never fires, and on servers that don't broadcast
+        // other-player EntityVelocityUpdate packets velocityTick never fires either — without this,
+        // an upward wind-charge launch (Δy ≥ ~1.0) false-flags Fly(Ascend) and a horizontal burst
+        // while eating false-flags NoSlow. The vertical threshold (0.8) sits above a vanilla jump
+        // (0.42, ~0.62 with Jump Boost II) so a normal jump never arms it; the horizontal threshold
+        // (0.5 b/t = 10 bps) sits above sprint so normal movement never arms it. prevDeltaY<0.15
+        // fires it once at the impulse onset, not on the gravity-decaying tail.
+        if (tick - tp.hurtTick > 2 && tick - tp.lastTeleportTick >= 10 &&
+            ((tp.deltaY > 0.8 && tp.prevDeltaY < 0.15) || kotlin.math.hypot(tp.delta.x, tp.delta.z) > 0.5)
+        ) {
+            tp.burstTick = tick
         }
 
         // onGround proxy: small vertical movement + solid block just below feet.

@@ -41,11 +41,12 @@ class NoSlowCheck : Check() {
                 ctx.streak = 0
                 return
             }
-            // Hurt exemption: knockback injects a horizontal impulse that can push a legit
-            // shield-blocker/eater over the bps cap for a couple ticks. Reset and skip the
-            // peak (the velocity-trend/ice-coast case is a separate, deferred problem — a flat
-            // cap raise isn't enough there, so this only covers the hurt spike).
-            if (tick - tp.hurtTick < 3) {
+            // Hurt / burst exemption: attack-knockback (hurtTick) OR a no-damage knockback burst
+            // (wind charge / TNT-cannon — burstTick) injects a horizontal impulse that can push a
+            // legit shield-blocker/eater over the bps cap for a few ticks. Reset and skip the peak
+            // (the velocity-trend/ice-coast case is a separate, deferred problem — a flat cap raise
+            // isn't enough there, so this only covers the hurt/burst spike).
+            if (tick - tp.hurtTick < 3 || tick - tp.burstTick < 6) {
                 ctx.streak = 0
                 return
             }

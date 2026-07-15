@@ -76,12 +76,15 @@ import net.minecraft.util.math.random.Random
  *
  * Block **properties** — since v7 the palette key carries the full state string for stateful blocks
  * and [stateFor] parses the EXACT recorded state, so a stairs renders in its recorded facing (not the
- * default), and non-full/transparent blocks feed [shouldDrawSide]/[isOpaqueAt] their real shape
- * (neighbours behind glass/stairs/slabs now render). Pre-v7 clips have only bare-id palette entries
- * → default state (today's behaviour). Block **entities** (chest contents, sign text, banners) and
- * **fluids** (`INVISIBLE` render type, skipped here) are still not rendered. Lighting stays fullbright
- * (no AO/skylight). A full GPU static-mesh bake (`GpuBuffer` + `VertexBufferManager`, one upload / one
- * draw call per chunk per frame) is the perf follow-up if this win is insufficient.
+ * default), and non-full/transparent blocks feed [shouldDrawSide] their real shape (neighbours behind
+ * glass/stairs/slabs render). The block-level surface-shell skip uses [BlockState.isOpaqueFullCube]
+ * (NOT [BlockState.isOpaque], which is true for opaque-material slabs/stairs and would wrongly skip a
+ * block fully surrounded by them → the "missing texture behind slabs/stairs" bug). Pre-v7 clips have
+ * only bare-id palette entries → default state (today's behaviour). Block **entities** (chest contents,
+ * sign text, banners) and **fluids** (`INVISIBLE` render type, skipped here) are still not rendered.
+ * Lighting stays fullbright (no AO/skylight). A full GPU static-mesh bake (`GpuBuffer` +
+ * `VertexBufferManager`, one upload / one draw call per chunk per frame) is the perf follow-up if this
+ * win is insufficient.
  */
 object ChunkMesher {
 
@@ -421,14 +424,25 @@ object ChunkMesher {
         }
     } catch (_: Throwable) { null }
 
-    /** True when the block at (x,y,z) is opaque (used for the block-level surface-shell skip only —
-     *  the per-face cull uses [shouldDrawSide]/Block.shouldDrawSide). `null` (outside the captured
-     *  region) and air count as NOT opaque. Reads the raw snapshot; fail-open to not-opaque. */
+    /** True when the block at (x,y,z) is a **full opaque cube** (used for the block-level surface-shell
+     *  skip only — the per-face cull uses [shouldDrawSide]/Block.shouldDrawSide, which is shape-aware).
+     *  `null` (outside the captured region) and air count as NOT opaque. Reads the raw snapshot;
+     *  fail-open to not-opaque.
+     *
+     *  NB: this MUST use [BlockState.isOpaqueFullCube], NOT [BlockState.isOpaque]. `isOpaque` is the
+     *  raw material flag — TRUE for stone/oak **slabs and stairs** (opaque material) even though they
+     *  are not full cubes. Using `isOpaque` here would wrongly skip a block whose 6 neighbours are all
+     *  slabs/stairs (each `isOpaque==true`) even though parts of its faces are visible through the
+     *  non-full neighbours' open halves → the intermittent "missing texture behind slabs/stairs" bug.
+     *  `isOpaqueFullCube` is true only when the neighbour both occludes AND is a full 1×1×1 cube, so a
+     *  block is skipped only when it is genuinely fully buried (the per-face cull would draw nothing
+     *  anyway). Slabs/stairs/glass/leaves all return false → never trigger the skip → the block bakes
+     *  and the shape-aware per-face cull handles it correctly. */
     private fun isOpaqueAt(snap: ChunkSnapshot, x: Int, y: Int, z: Int): Boolean = try {
         val n = snap.nameAt(x, y, z) ?: return false
         if (n == "minecraft:air") return false
         val st = stateFor(n) ?: return false
-        st.isOpaque
+        st.isOpaqueFullCube
     } catch (_: Throwable) { false }
 
     /** Drop the cache (called from [dev.iustitia.replay.ReplayState.stop]). Idempotent + fail-open.

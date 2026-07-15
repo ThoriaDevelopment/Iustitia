@@ -26,9 +26,13 @@ import kotlin.math.max
  * On each inferred [AttackEvent] (attacker A → victim V), measures the minimum
  * attacker-eye → victim-hitbox ray intercept over candidate looks (current + last
  * yaw/pitch, Grim's idle-packet trick) × candidate victim positions (current +
- * last ~3 ticks from V's ring buffer, Nemesis lag comp). The held-item attack
- * range is never broadcast, so we assume vanilla 3.0 and flag past 3.8 (3.0 + 0.1 hitbox margin
- * = 3.1 legit ceiling, +0.7 headroom for client-side interpolation lag on fast/dash combat).
+ * last ~3 ticks from V's ring buffer, Nemesis lag comp). The attack range is the
+ * `generic.entity_interaction_range` attribute (vanilla 3.0; the 1.21 Spear extends it to ~4.5 via
+ * an attribute modifier — `data/minecraft/tags/item/spears.json`, NOT an item class), read live off
+ * the attacker's entity with a per-tick ring max over the swing→hurt window so a spear→sword swap
+ * keeps the spear ceiling for the legitimate swing-tick hit. We flag past `maxReach + 0.8` (3.0 +
+ * 0.1 hitbox margin = 3.1 legit ceiling, +0.7 headroom for client-side interpolation lag on
+ * fast/dash combat; a spear's 4.5 → 5.3 blatant-only ceiling).
  * A client-side check can't match Polar's server-side 3.3+ reach detection, so this is a
  * blatant-only detector — see the in-box/fallback headroom notes below.
  *
@@ -77,7 +81,17 @@ class ReachCheck : Check() {
             // (miscalibrated — flags wrong players). 0.1 baseline on all versions + the existing
             // +0.1 on 1.8 (whose hitbox is also wider) restores the documented reach geometry.
             val margin = 0.1 + if (ProtocolDetector.is1_8OrLess) 0.1 else 0.0
-            val maxReach = cfg.threshold
+            // 1.21 reach is the `generic.entity_interaction_range` attribute (the Spear extends it to
+            // ~4.5 via an attribute modifier, not an item class) — read the attacker's live range,
+            // falling open to the configured vanilla default on any failure. The hurt tick (ev.tick)
+            // can lag the swing tick by `hurtLookback` (2), so a spear→sword swap between swing and
+            // hurt would already read the swapped (3.0) value at ev.tick — take the max sampled range
+            // over the last REACH_LAG_WINDOW ticks (lag-comp, mirroring the victim ring at :96) so
+            // the spear's 4.5 ceiling covers the legitimate swing-tick hit.
+            val liveReach = try {
+                attacker.entity?.getEntityInteractionRange() ?: cfg.threshold
+            } catch (_: Throwable) { cfg.threshold }
+            val maxReach = maxOf(liveReach, attacker.reachMaxSince(ev.tick - REACH_LAG_WINDOW))
 
             val looks = listOf(
                 Vectors.lookVector(attacker.yaw.toDouble(), attacker.pitch.toDouble()),
@@ -227,6 +241,10 @@ class ReachCheck : Check() {
         // -- hitboxMiss sub-flag (HITBOX-vs-REACH split, plan §3/§8 step 4) --
         /** Flag level for the hitbox-miss sub-flag — "stronger than a distance flag" (§3); the
          *  distance flag's level is `max(1.0, ceil((d-maxReach)*2))` (scales 1.0+). Tuned in step 14. */
+        /** Lag-comp window (ticks) for the attacker's interaction-range ring — covers the
+         *  swing→hurt gap (`ProtocolDetector.hurtLookback` = 2 on 1.21) so a spear→sword swap
+         *  between the swing and the (later) hurt tick keeps the spear's reach ceiling. */
+        const val REACH_LAG_WINDOW = 3
         const val VL_HITBOX_MISS = 2.0
         /** Min angle (deg) between the closest candidate look and the hitbox center for a clear
          *  hitbox miss. At within-reach distance the hitbox spans ≤~17° (head/feet aim), so 30°

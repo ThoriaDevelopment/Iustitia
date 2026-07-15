@@ -82,6 +82,17 @@ class TrackedPlayer(val uuid: UUID, var entityId: Int, val joinTick: Int) {
      *  that were the FPS regression. Default -10000 so a player who never attacks is never fed. */
     var lastAttackTick: Int = -10000
 
+    /** Tick of the last detected no-damage knockback burst (wind charge / TNT-cannon-style): a sudden
+     *  unexplained upward or horizontal impulse with no recent hurt (so not attack-knockback, which
+     *  [hurtTick] covers), no recent teleport, and not a vanilla jump. Wind charges deal no damage
+     *  (`AdvancedExplosionBehavior` damageEntities=false) so [hurtTick] never fires, and on servers
+     *  that don't broadcast other-player EntityVelocityUpdate packets [velocityTick] never fires
+     *  either — without this, an upward wind-charge launch false-flags `Fly(Ascend)` and a horizontal
+     *  burst while eating false-flags `NoSlow`. Detected in
+     *  [EntityTrackerManager.updateSnapshot]; drives the Fly + NoSlow burst-exemption windows.
+     *  Default -10000 so a player never bursted is never exempt. */
+    var burstTick: Int = -10000
+
     /** Last client-ticked hand-swing phase for this player (vanilla `LivingEntity.handSwingTicks`,
      *  0 when not mid-swing; advanced client-side in `OtherClientPlayerEntity.tickMovement`). Captured
      *  into the replay/clip buffer so a replay ghost's arm swings when the player attacked/mined. */
@@ -169,6 +180,46 @@ class TrackedPlayer(val uuid: UUID, var entityId: Int, val joinTick: Int) {
             solidBelowTick = tick
         }
         return solidBelow
+    }
+
+    // --- entity-interaction-range ring (Spear reach lag-comp) ---
+    // 1.21 reach is the `generic.entity_interaction_range` attribute (the Spear extends it to ~4.5
+    // via an attribute modifier, NOT an item class — `data/minecraft/tags/item/spears.json`). It is
+    // sampled each tick in [EntityTrackerManager.updateSnapshot]; ReachCheck reads the max over the
+    // last few samples so a spear→sword hotbar swap between the swing tick and the (later) hurt tick
+    // keeps the spear's 4.5 ceiling for the legitimate swing-tick hit (the server validates reach at
+    // the swing tick, but `AttackEvent` fires on the hurt tick — up to `hurtLookback` (2) ticks
+    // later — so the hurt-tick snapshot can already read the swapped 3.0). Small fixed ring (one
+    // push/tick) — single-threaded client tick, no synchronization. Fail-open to 3.0 (vanilla
+    // default). Scratch / detection-input only — not check state.
+    private val reachRingTick = IntArray(8) { Int.MIN_VALUE }
+    private val reachRingVal = DoubleArray(8) { 3.0 }
+    private var reachRingHead = 0
+
+    /** Record one per-tick entity-interaction-range sample ([reach] blocks). Called from
+     *  [EntityTrackerManager.updateSnapshot]; the fail-open caller passes 3.0 on any read error. */
+    fun pushReach(tick: Int, reach: Double) {
+        try {
+            reachRingTick[reachRingHead] = tick
+            reachRingVal[reachRingHead] = reach
+            reachRingHead = (reachRingHead + 1) % reachRingTick.size
+        } catch (_: Throwable) {
+            // fail-open: leave the slot stale; reachMaxSince falls open to 3.0
+        }
+    }
+
+    /** Max sampled interaction-range over samples with tick >= [minTick] (lag-comp for the
+     *  swing→hurt window). Falls open to 3.0 (vanilla default) if no recent sample qualifies. */
+    fun reachMaxSince(minTick: Int): Double {
+        var best = 3.0
+        try {
+            for (i in reachRingVal.indices) {
+                if (reachRingTick[i] >= minTick && reachRingVal[i] > best) best = reachRingVal[i]
+            }
+        } catch (_: Throwable) {
+            return 3.0
+        }
+        return best
     }
 
     var lastUpdateTick: Int = joinTick

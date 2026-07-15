@@ -56,7 +56,12 @@ class FlyEnvelopeCheck : Check() {
     override fun process(tp: TrackedPlayer, tick: Int) {
         try {
             if (tp.inVehicle || tp.gliding || tp.riptide || tp.swimming) return
-            if (tick - tp.velocityTick < 30) return
+            // velocity-exemption window; + the no-damage knockback burst window (wind charge /
+            // TNT-cannon), which produces neither a velocity nor a hurt signal on the target
+            // server — an upward wind-charge launch (Δy ≥ ~1.0) would otherwise false-flag
+            // Fly(Ascend). 20 ticks ≈ the ~1s decay of a single impulse (matches the 30-tick
+            // velocity reasoning).
+            if (tick - tp.velocityTick < 30 || tick - tp.burstTick < 20) return
             // Teleport exemption: a server teleport injects a huge Δy that would trip the
             // physics-breach and ascend flags. Skip and clear the descend window so the
             // post-teleport ticks start clean.

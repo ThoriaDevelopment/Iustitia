@@ -32,8 +32,21 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
  *
  * `ClientPlayerEntity` IS-A `OtherClientPlayerEntity`, so the `as? OtherClientPlayerEntity` check
  * would also hide YOU in third-person during a replay. We exclude the local player by uuid (same
- * pattern as [PlayerEntityRendererMixin]). Non-player entities are passed through untouched — only
- * OTHER players are hidden (a rewind of the players' positions, not the whole world).
+ * pattern as [PlayerEntityRendererMixin]).
+ *
+ * ## MODERN chunk-bearing playclip — hide ALL live entities
+ *
+ * While a chunk-bearing `/ius playclip` runs (`chunks != null && !legacyPlayclip`), the recorded
+ * chunk world is relocated by `relocOffset` and rendered by [dev.iustitia.render.ChunkWorldRenderer],
+ * but the LIVE world's non-player entities (boats, item frames, minecarts, armor stands, paintings,
+ * ...) were never recorded and keep rendering at their LIVE positions via vanilla's dispatcher —
+ * so they detached/jittered against the relocated recorded world (the reported signs/boats bug).
+ * Under that gate we now cancel `shouldRender` for every entity that is NOT the local player (self
+ * keeps the FREECAM hide below), so only the recorded chunk world + buffered ghosts show — the same
+ * rewind-the-world suppression already applied to other players, extended to all live entities.
+ * Recorded block *models* still render in the chunk world; recorded entity/block-entity NBT is a
+ * documented v1 follow-up (`ChunkCapture.kt:22-23`). The legacy `/ius playclip` + `/ius replay` paths
+ * (no chunks) skip this branch entirely and keep the original "only other players hide" behavior.
  *
  * ## Cost when no replay is running
  *
@@ -58,9 +71,22 @@ abstract class EntityRendererMixin {
     ) {
         try {
             if (!ReplayState.active) return
-            val other = entity as? OtherClientPlayerEntity ?: return
             val mc = MinecraftClient.getInstance()
-            val isSelf = other.uuid == mc.player?.uuid
+            val isSelf = entity.uuid == mc.player?.uuid
+            // MODERN chunk-bearing playclip: hide EVERY live entity that isn't the local player —
+            // boats/item-frames/minecarts/armor-stands/paintings/etc. previously fell through here
+            // and rendered at LIVE positions, detached from the relocated recorded chunk world.
+            // Self keeps the FREECAM hide; everything else cancels. (See class doc.)
+            if (ReplayState.chunks != null && !ReplayState.legacyPlayclip) {
+                if (isSelf) {
+                    if (ReplayState.cameraMode == ReplayState.CameraMode.FREECAM) cir.setReturnValue(false)
+                } else {
+                    cir.setReturnValue(false)
+                }
+                return
+            }
+            // Non-MODERN (legacy replay / wireframe clip): original behavior — only OTHER players hide.
+            val other = entity as? OtherClientPlayerEntity ?: return
             if (isSelf) {
                 // FREECAM: the detached camera flies away from the local player, so the player's own
                 // body would float at its real (now-irrelevant) spot in the clip world. Hide it for
