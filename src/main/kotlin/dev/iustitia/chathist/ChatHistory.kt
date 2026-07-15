@@ -7,6 +7,7 @@ import dev.iustitia.Iustitia
 import dev.iustitia.config.ConfigManager
 import net.fabricmc.loader.api.FabricLoader
 import net.minecraft.client.MinecraftClient
+import net.minecraft.text.Text
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
@@ -65,6 +66,8 @@ object ChatHistory {
 
     private val enabled: Boolean get() = try { ConfigManager.config.chathistEnabled } catch (_: Throwable) { false }
     private val persist: Boolean get() = try { ConfigManager.config.persistenceEnabled } catch (_: Throwable) { false }
+    /** Permissive / cross-server capture: also capture senders NOT in the tab list (Bungee/Velocity network chat). Defaults OFF. */
+    private val captureUnknown: Boolean get() = try { ConfigManager.config.chathistCaptureUnknown } catch (_: Throwable) { false }
 
     // --- debounced writer ---
     private val queueLock = Object()
@@ -95,6 +98,34 @@ object ChatHistory {
                 while (list.size > MAX_ROWS) list.removeAt(0)
             }
             if (persist) schedule()
+        } catch (_: Throwable) {}
+    }
+
+    /**
+     * Capture a decorated system/game message (`onGameMessage` path) — the chat route used by
+     * Hypixel/ArchMC/Minemen/Cavern/Evox/Stray/mcpvp/PvpHQ/Mineplex, which send `[rank] username:
+     * message` as a `GameMessageS2CPacket` with no sender UUID. [DecoratedChatParser] recovers the
+     * `(username, message)` structurally and resolves the UUID from the tab list. Fail-open.
+     */
+    fun captureDecorated(text: Text) {
+        if (!enabled) return
+        try {
+            val p = DecoratedChatParser.parseGameMessage(text, captureUnknown) ?: return
+            record(Iustitia.tickCounter, System.currentTimeMillis(), p.uuid, p.name, p.text)
+        } catch (_: Throwable) {}
+    }
+
+    /**
+     * Capture a profileless chat message (`onProfilelessChatMessage` path) — the packet already
+     * splits the sender display name from the message body, so this is the cleanest decorated path
+     * when a server uses it. [DecoratedChatParser] resolves the display name → clean username +
+     * UUID. Fail-open.
+     */
+    fun captureProfileless(nameText: Text, messageText: Text) {
+        if (!enabled) return
+        try {
+            val p = DecoratedChatParser.parseProfileless(nameText, messageText, captureUnknown) ?: return
+            record(Iustitia.tickCounter, System.currentTimeMillis(), p.uuid, p.name, p.text)
         } catch (_: Throwable) {}
     }
 

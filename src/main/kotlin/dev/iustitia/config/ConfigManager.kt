@@ -235,6 +235,7 @@ object ConfigManager {
         addProperty("clipTotemPopCounter", c.clipTotemPopCounter)
         addProperty("clipGhostEquipment", c.clipGhostEquipment)
         addProperty("chathistEnabled", c.chathistEnabled)
+        addProperty("chathistCaptureUnknown", c.chathistCaptureUnknown)
         for ((key, cc) in c.checks()) add(key, checkToJson(cc))
     }
 
@@ -316,6 +317,8 @@ object ConfigManager {
             if (o.has("clipGhostEquipment")) c.clipGhostEquipment = o.get("clipGhostEquipment").asBoolean
             // chathistEnabled: additive — a pre-field config keeps the default (on). No CONFIG_VERSION bump.
             if (o.has("chathistEnabled")) c.chathistEnabled = o.get("chathistEnabled").asBoolean
+            // chathistCaptureUnknown: additive — a pre-field config keeps the default (off). No CONFIG_VERSION bump.
+            if (o.has("chathistCaptureUnknown")) c.chathistCaptureUnknown = o.get("chathistCaptureUnknown").asBoolean
             for ((key, cc) in c.checks()) {
                 if (o.has(key)) readCheck(o.getAsJsonObject(key), cc, resetCalibration)
             }

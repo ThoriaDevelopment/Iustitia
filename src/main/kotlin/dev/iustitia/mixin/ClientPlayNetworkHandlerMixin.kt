@@ -21,7 +21,9 @@ import net.minecraft.network.packet.s2c.play.EntityStatusEffectS2CPacket
 import net.minecraft.network.packet.s2c.play.EntityStatusS2CPacket
 import net.minecraft.network.packet.s2c.play.EntityVelocityUpdateS2CPacket
 import net.minecraft.network.packet.s2c.play.GameJoinS2CPacket
+import net.minecraft.network.packet.s2c.play.GameMessageS2CPacket
 import net.minecraft.network.packet.s2c.play.PlayerRespawnS2CPacket
+import net.minecraft.network.packet.s2c.play.ProfilelessChatMessageS2CPacket
 import net.minecraft.network.packet.s2c.play.RemoveEntityStatusEffectS2CPacket
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.injection.At
@@ -157,9 +159,36 @@ class ClientPlayNetworkHandlerMixin {
             val tracked = EntityTrackerManager.all().firstOrNull { it.uuid == sender } ?: return
             val text = packet.body()?.content()?.takeIf { it.isNotBlank() }
                 ?: packet.unsignedContent()?.string ?: return
-            val name = packet.serializedParameters()?.name()?.string
+            // Resolve a clean username (tab-list profile name for this sender) so the stored `name`
+            // field is consistent with the decorated paths — the packet's serialized name can be a
+            // decorated display name that would break `/ius chathist <name>`'s name-match filter.
+            val packetName = packet.serializedParameters()?.name()?.string
                 ?: tracked.username().ifEmpty { sender.toString().take(8) }
+            val name = dev.iustitia.chathist.DecoratedChatParser.resolveCleanName(sender, packetName)
             dev.iustitia.chathist.ChatHistory.record(Iustitia.tickCounter, System.currentTimeMillis(), sender, name, text)
+        } catch (_: Throwable) {}
+    }
+
+    /** Decorated system/game chat (Hypixel/ArchMC/Minemen/Cavern/Evox/Stray/mcpvp/PvpHQ/Mineplex): the
+     *  server broadcasts `[rank] username: message` as a `GameMessageS2CPacket` with no sender UUID.
+     *  `ChatHistory.captureDecorated` recovers `(username, message)` structurally and resolves the
+     *  UUID from the tab list. System noise (join/leave/death) is dropped — it has no separator. Fail-open. */
+    @Inject(method = ["onGameMessage"], at = [At("HEAD")])
+    private fun iustitia_onGameMessage(packet: GameMessageS2CPacket, ci: CallbackInfo) {
+        try {
+            dev.iustitia.chathist.ChatHistory.captureDecorated(packet.content())
+        } catch (_: Throwable) {}
+    }
+
+    /** Profileless chat: the packet already splits the sender display name (`chatType().name()`)
+     *  from the message body (`message()`), so this is the cleanest decorated path when a server
+     *  uses it. `ChatHistory.captureProfileless` resolves the display name → clean username + UUID.
+     *  Fail-open. */
+    @Inject(method = ["onProfilelessChatMessage"], at = [At("HEAD")])
+    private fun iustitia_onProfilelessChatMessage(packet: ProfilelessChatMessageS2CPacket, ci: CallbackInfo) {
+        try {
+            val params = packet.chatType() ?: return
+            dev.iustitia.chathist.ChatHistory.captureProfileless(params.name(), packet.message())
         } catch (_: Throwable) {}
     }
 

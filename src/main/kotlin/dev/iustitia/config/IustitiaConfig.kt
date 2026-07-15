@@ -253,6 +253,16 @@ data class IustitiaConfig(
      *  Additive — no CONFIG_VERSION bump; a pre-field config keeps the default (on). */
     var chathistEnabled: Boolean = true,
 
+    /** `/ius chathist` permissive / cross-server capture (OFF by default). Decorated chat
+     *  (`onGameMessage` / `onProfilelessChatMessage`) normally anchors the sender to the tab list —
+     *  when the sender isn't in the tab list the row is dropped. With this on, the parser instead
+     *  falls back to the last word-token before the separator and still captures the row, so
+     *  Bungee/Velocity cross-sub-server chat (sender not in this client's tab list) is recorded.
+     *  Less accurate — a suffix with word tokens (Minemen `•꙳⋆ Snow ⋆꙳•`) can mis-attribute the
+     *  sender — hence the OFF default. Additive — no CONFIG_VERSION bump; pre-field configs keep
+     *  the default (off). */
+    var chathistCaptureUnknown: Boolean = false,
+
     // --- combat ---
     var reach: CheckConfig = CheckConfig(true, 10.0, 0.25, 3.0),
     var multiTarget: CheckConfig = CheckConfig(true, 2.0, 1.0, 2.0),
