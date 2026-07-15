@@ -9,10 +9,12 @@ import java.util.Date
 
 /**
  * `/ius chathist panel ...` — a narrow side-panel overlay that reuses the same chrome + render
- * layout as [TranscriptPanelScreen] (right-edge ~150px panel, same `0xCC101010` background, same
+ * layout as [TranscriptPanelScreen] (right-edge panel, same `0xCC101010` background, same
  * `§8[§diustitia§8]` header, `drawTextWithShadow` rows, `shouldPause = false` so the game keeps
- * running) but draws captured chat rows instead of flag events. Refreshed every render via
- * [rowsProvider], so new messages appear live while the panel is open.
+ * running) but draws captured chat rows instead of flag events. The panel is a bit wider than the
+ * transcript panel (~220px vs ~150px) and wraps long rows to the panel width, so a long message or
+ * a long username continues on the next line instead of clipping off the right edge. Refreshed
+ * every render via [rowsProvider], so new messages appear live while the panel is open.
  *
  * The row set is supplied as a `() -> List<ChatHistory.Row>` so the panel stays live without the
  * command having to re-open it: each render re-runs the query (a filtered copy of the in-memory
@@ -34,8 +36,10 @@ class ChatHistPanelScreen(
     override fun render(context: DrawContext, mouseX: Int, mouseY: Int, delta: Float) {
         try {
             val w = this.width
-            // Same right-edge narrow panel geometry as TranscriptPanelScreen (~150px or 1/5 width).
-            val panelW = minOf(150, w / 5)
+            // A bit wider than the transcript panel (which is ~150px) so usernames + wrapped
+            // messages read comfortably; still a narrow right-edge overlay. Wrapping (below)
+            // handles anything longer, so this is about comfort, not fitting one line.
+            val panelW = minOf(220, w / 4)
             val x0 = w - panelW
             context.fill(x0, 0, w, this.height, BG)
             super.render(context, mouseX, mouseY, delta)
@@ -52,14 +56,17 @@ class ChatHistPanelScreen(
             } else {
                 for (r in rows) {
                     val ts = try { FMT.format(Date(r.wallClockMs)) } catch (_: Throwable) { "??:??:??" }
-                    // Forward-trim keeps the start (timestamp + name + start of message) when the
-                    // full row won't fit the ~150px panel — same fit-or-clip approach as the
-                    // transcript panel's event rows.
                     val full = "§8[$ts] §7${r.name}§r ${r.text}"
-                    val line = if (tr.getWidth(full) > maxW) tr.trimToWidth(full, maxW) else full
-                    context.drawTextWithShadow(tr, Text.literal(line), x0 + 4, y, WHITE)
-                    y += 11
-                    if (y > this.height - 12) break
+                    // Wrap to the panel width so a long message (or a long username) continues on
+                    // the next line instead of clipping off the right edge. The timestamp + name
+                    // stay on the first wrapped line; continuation lines sit flush-left under them.
+                    val wrapped = tr.wrapLines(Text.literal(full), maxW)
+                    for (ln in wrapped) {
+                        if (y > this.height - 12) return
+                        context.drawTextWithShadow(tr, ln, x0 + 4, y, WHITE)
+                        y += 11
+                    }
+                    y += 1 // small gap between messages for readability
                 }
             }
         } catch (_: Throwable) {
