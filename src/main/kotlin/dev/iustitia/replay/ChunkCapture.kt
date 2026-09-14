@@ -88,12 +88,24 @@ object ChunkCapture {
     } catch (_: Throwable) { null }
 
     /**
+     * Capture one chunk at ([chunkX], [chunkZ]) straight from [world] (loaded chunks only — an
+     * unloaded chunk returns null, never a false positive). Used by [ChunkRollingCapture] to snapshot
+     * chunks **incrementally** across a recording instead of in one synchronous export-time sweep.
+     * Fail-open: any throw / unloaded chunk → null.
+     */
+    internal fun captureChunkAt(world: net.minecraft.client.world.ClientWorld, chunkX: Int, chunkZ: Int):
+            List<ChunkSnapshot.SectionRec>? = try {
+        val chunk = world.chunkManager.getChunk(chunkX, chunkZ, ChunkStatus.FULL, false) ?: return null
+        captureChunk(chunk, chunkX, chunkZ)
+    } catch (_: Throwable) { null }
+
+    /**
      * Capture one chunk's non-empty sections. Returns null/empty on any throw (fail-open). `sectionY`
      * is the world-section coord = `(chunk.bottomY shr 4) + sectionIndex`, so it can be negative
      * (e.g. overworld bottom section is -4). Iteration order within a section is y-major → z → x:
      * `index = (localY * 16 + localZ) * 16 + localX` — the inverse of [ChunkSnapshot.nameAt].
      */
-    private fun captureChunk(chunk: net.minecraft.world.chunk.Chunk, chunkX: Int, chunkZ: Int):
+    internal fun captureChunk(chunk: net.minecraft.world.chunk.Chunk, chunkX: Int, chunkZ: Int):
             List<ChunkSnapshot.SectionRec>? = try {
         val sectionArray = chunk.getSectionArray()
         if (sectionArray.isEmpty()) return emptyList()
@@ -159,7 +171,7 @@ object ChunkCapture {
      * is NOT parser-compatible). Fail-open: on any throw, fall back to the bare registry id (the
      * pre-v7 default-state behaviour — recognizable block, default orientation).
      */
-    private fun stateKey(st: BlockState): String = try {
+    internal fun stateKey(st: BlockState): String = try {
         val id = Registries.BLOCK.getId(st.block).toString()
         val entries = st.entries
         if (entries.isEmpty()) id

@@ -19,7 +19,13 @@ import kotlin.math.abs
  * that attack. A sustained macro (SuperKnockback) W-taps on nearly every hit; a legit player
  * W-taps only sometimes. We flag only when the pattern is *sustained* — ≥3 of the last 4
  * attacks each had ≥threshold near-transitions (and ≥4 attacks observed) — so a single or
- * occasional legit W-tap can't trip it. setbackVL 5, decay 0.5/tick.
+ * occasional legit W-tap can't trip it.
+ *
+ * The alert is a **one-shot per sustained episode** (see [Check.flagEpisode]): a macro's flag
+ * cadence is at most one per attack — about one per 12 ticks at vanilla cooldown — which loses to
+ * the 0.5/tick decay, so per-event accumulation could never reach setbackVL (measured live: the
+ * drive logged a flag per hit and peaked at 1.0 of the 5.0 required). A confirmed episode now
+ * clears setbackVL in a single flag and re-arms once the pattern breaks.
  */
 class WTapCheck : Check() {
 
@@ -51,11 +57,8 @@ class WTapCheck : Check() {
             // record whether this attack carried the W-tap transition signature, then judge the
             // rolling window: a sustained macro hits the signature on most attacks, a legit
             // W-tapper only sometimes. Flag at ≥3 of the last 4 (with ≥4 observed).
-            ctx.recent.addFirst(near >= need)
-            while (ctx.recent.size > WINDOW) ctx.recent.removeLast()
-            if (ctx.recent.size >= MIN_SAMPLES && ctx.recent.count { it } >= SUSTAINED_HITS) {
-                flag(attacker, ctx, 1.0, "WTap", ev.tick)
-            }
+            val sustainedNow = sustained(ctx, near >= need, WINDOW, SUSTAINED_HITS)
+            if (sustainedNow) flagEpisode(attacker, ctx, "WTap", ev.tick) else rearmEpisode(ctx, sustainedNow)
         } catch (_: Throwable) {}
     }
 
@@ -66,16 +69,11 @@ class WTapCheck : Check() {
         // A plain ArrayDeque under concurrent modify+iterate can throw CME / corrupt; use a
         // concurrent deque (weakly-consistent iterator, fail-open already covers the rest).
         val transitions = java.util.concurrent.ConcurrentLinkedDeque<Int>()
-        /** Per-attack "did this hit carry ≥threshold sprint transitions within ±1 tick".
-         *  Mutated only in onAttack (network thread) — single-threaded, ArrayDeque is fine. */
-        val recent = java.util.ArrayDeque<Boolean>()
     }
 
     private companion object {
         /** Rolling window of recent attacks judged for the sustained-macro gate. */
         const val WINDOW = 4
-        /** Min attacks observed before flagging (small-sample guard). */
-        const val MIN_SAMPLES = 4
         /** Tappy attacks required in the window to call it a sustained macro (3 of 4). */
         const val SUSTAINED_HITS = 3
     }

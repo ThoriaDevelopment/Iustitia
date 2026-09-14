@@ -118,6 +118,47 @@ object ReplayState {
     @Volatile var chunks: ChunkSnapshot? = null
         private set
 
+    /** Capture segments bundled with this replay/clip (v13+): per-segment world snapshots + block
+     *  deltas, so a clip that spans a teleport/world change replays each place with the world it had
+     *  there. [tick] switches [chunks] to the segment under the playhead. Read cross-thread by the
+     *  segment-aware renderer. */
+    @Volatile var segments: List<ReplayBuffer.Segment> = emptyList()
+        private set
+
+    /** Block changes observed in the **active segment**, applied onto [chunks]'s overlay as the playhead
+     *  advances (so blocks placed/broken during the clip appear/disappear through the replay). Null when
+     *  the active segment has none (or the clip is pre-v13). Read cross-thread by the world renderer. */
+    @Volatile var blockDeltas: List<BlockDeltaBuffer.BlockDelta>? = null
+        private set
+
+    /** Whether the active segment's chunk snapshot was taken at the segment START (so the delta overlay
+     *  can rewind to it). False when the rolling capture began mid-segment. Display-only flag. */
+    @Volatile var snapshotIsStart: Boolean = false
+        private set
+
+    /** Segment index whose world is currently active (`-1` when none / no segments). Client-thread only
+     *  ([tick] writes it; nothing reads it cross-thread). */
+    @Volatile private var activeSegmentIndex: Int = -1
+
+    /** Playhead frame index → segment index (or `-1`), built once at [start] from the segments'
+     *  [ReplayBuffer.Segment.firstFrameIndex]. Empty when the clip has no segments. */
+    private var frameSegIndex: IntArray = IntArray(0)
+
+    /** Whether this playback relocates segments to the user (true for `/ius playclip`). Re-derived per
+     *  segment on [switchToSegment]. Client-thread only. */
+    private var relocate: Boolean = false
+
+    /** The user's position at [start] — the point a segment's [relocOffset] maps the focus start onto.
+     *  Client-thread only. */
+    private var userPos: Vec3d? = null
+
+    /** Block-delta overlay cursor: the playhead tick the overlay is currently built to, the next delta
+     *  index to apply, and the chunk keys the deltas touched (to invalidate their bakes). Client-thread
+     *  only ([tick]); the overlay map itself is read cross-thread by the mesher. */
+    private var deltaCursorTick: Int = -1
+    private var nextDeltaIdx: Int = 0
+    private var deltaChunkKeys: Set<Long> = emptySet()
+
     /**
      * Totem-of-Undying pop events captured within this replay/clip window (v7+). Each [ReplayBuffer.TotemRec]
      * is `(tick, uuid)` — the tick the pop happened + the player who popped. Set from [start] (copied from
@@ -226,6 +267,11 @@ object ReplayState {
      * Returns false if there are no frames. Idempotent: starting while active first stops the prior one.
      */
     fun start(window: ReplayBuffer.Window, focus: UUID?, speed: Float, hideLive: Boolean, relocate: Boolean, legacy: Boolean): Boolean {
+        // Yield playback to SnapClip when it's installed: it owns replay/clip, so Iustitia must not
+        // run a second camera/ghost pipeline or a second input-suppression path. Capture is already
+        // off (ReplayBuffer.enabled), so no window would exist anyway; this closes the direct-start
+        // paths (command, keybind, ClipPlayback) too.
+        if (dev.iustitia.compat.CompanionMods.snapClip) return false
         try {
             if (window.frames.isEmpty()) return false
             // Idempotent: stop any prior replay first (restores perspective if it was in POV).
@@ -244,9 +290,30 @@ object ReplayState {
             // Legacy drops any terrain/chunks embedded in a v5/v6 clip so the render path + the
             // live-terrain suppression no-op (v1.1.0 was ghosts-over-live-world only). Modern keeps them.
             terrain = if (legacy) null else window.terrain
-            chunks = if (legacy) null else window.chunks
+            segments = if (legacy) emptyList() else window.segments
             totems = if (legacy) emptyList() else window.totems
-            relocOffset = if (relocate) computeRelocOffset(window, focus) else null
+            this.relocate = relocate
+            userPos = try {
+                val p = net.minecraft.client.MinecraftClient.getInstance().player
+                if (p != null) Vec3d(p.x, p.y, p.z) else null
+            } catch (_: Throwable) { null }
+            frameSegIndex = buildFrameSegIndex(window)
+            activeSegmentIndex = -1
+            deltaCursorTick = -1
+            nextDeltaIdx = 0
+            deltaChunkKeys = emptySet()
+            if (!legacy && segments.isNotEmpty()) {
+                // Segment-based clip (v13 record / rolling capture): the world lives per segment, so
+                // start on the segment under frame 0. Falls back to a top-level snapshot if the first
+                // segment carries none (a chunks-less segment shouldn't blank the world).
+                switchToSegment(0)
+                if (chunks == null) chunks = window.chunks
+            } else {
+                chunks = if (legacy) null else window.chunks
+                blockDeltas = null
+                snapshotIsStart = false
+                relocOffset = if (relocate) computeRelocOffset(window, focus) else null
+            }
             legacyPlayclip = legacy
             active = true
             return true
@@ -280,6 +347,169 @@ object ReplayState {
         Vec3d(s.x.toDouble(), s.y.toDouble(), s.z.toDouble())
     } catch (_: Throwable) { null }
 
+    // ---- capture segments + block-delta overlay (SnapClip port) --------------------------------------
+
+    /**
+     * Build the playhead-frame → segment-index map from the segments' [ReplayBuffer.Segment.firstFrameIndex]
+     * starts. A frame before the first segment start (shouldn't happen, but a malformed clip could)
+     * maps to -1. Empty when the clip has no segments. Fail-open to an all--1 map.
+     */
+    private fun buildFrameSegIndex(window: ReplayBuffer.Window): IntArray {
+        val segs = window.segments
+        if (segs.isEmpty()) return IntArray(window.frames.size) { -1 }
+        return try {
+            val starts = IntArray(segs.size) { segs[it].firstFrameIndex }
+            val out = IntArray(window.frames.size)
+            var si = 0
+            for (i in out.indices) {
+                while (si + 1 < segs.size && starts[si + 1] <= i) si++
+                out[i] = if (si < segs.size && starts[si] <= i) si else -1
+            }
+            out
+        } catch (_: Throwable) {
+            IntArray(window.frames.size) { -1 }
+        }
+    }
+
+    /** The focus player's position in [seg]'s first frame (or the first snap's when no focus). Null when
+     *  the frame/snap list is missing. Fail-open. */
+    private fun segmentFirstFocusPos(seg: ReplayBuffer.Segment, focus: UUID?): Vec3d? = try {
+        val idx = seg.firstFrameIndex
+        if (idx < 0 || idx >= frames.size) return null
+        val snaps = frames[idx].snaps
+        if (snaps.isEmpty()) return null
+        val s = (focus?.let { u -> snaps.firstOrNull { it.uuid() == u } } ?: snaps.first())
+        Vec3d(s.x.toDouble(), s.y.toDouble(), s.z.toDouble())
+    } catch (_: Throwable) { null }
+
+    /** Per-segment relocation offset (`userPos - segmentFocusStart`), gated by the same
+     *  [dev.iustitia.config.IustitiaConfig.replayRelocate] toggle as [computeRelocOffset]. Null when
+     *  relocation is off / the segment or user pos is unavailable. */
+    private fun computeSegmentOffset(seg: ReplayBuffer.Segment, focus: UUID?): Vec3d? = try {
+        if (!try { dev.iustitia.config.ConfigManager.config.replayRelocate } catch (_: Throwable) { true }) return null
+        val origin = segmentFirstFocusPos(seg, focus) ?: return null
+        val up = userPos ?: return null
+        Vec3d(up.x - origin.x, up.y - origin.y, up.z - origin.z)
+    } catch (_: Throwable) { null }
+
+    /**
+     * Switch the active world to segment [index]: drop the outgoing segment's overlay, adopt its
+     * snapshot + deltas, rewind the delta overlay to the segment start, and re-derive the relocation
+     * offset for the new segment. Invalidates any chunks the previous segment's deltas had re-meshed so
+     * the new snapshot bakes fresh. Fail-open. Client-thread only.
+     */
+    private fun switchToSegment(index: Int) {
+        try {
+            chunks?.dropOverlay()
+            val seg = segments.getOrNull(index) ?: return
+            activeSegmentIndex = index
+            chunks = seg.chunks
+            blockDeltas = seg.blockDeltas
+            snapshotIsStart = seg.snapshotIsStart
+            val segStartTick = try { frames.getOrNull(seg.firstFrameIndex)?.tick ?: 0 } catch (_: Throwable) { 0 }
+            initBlockDeltaOverlay(segStartTick)
+            relocOffset = if (relocate) computeSegmentOffset(seg, focusUuid) else null
+            if (deltaChunkKeys.isNotEmpty()) {
+                try { dev.iustitia.render.ChunkMesher.invalidateChunks(deltaChunkKeys) } catch (_: Throwable) {}
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
+    /** Keep the segment world + block-delta overlay aligned with the current playhead. Called each
+     *  [tick] (advancing, paused, or held). Fail-open. */
+    private fun syncSegmentAndDeltas() {
+        try {
+            if (frames.isEmpty()) return
+            if (segments.isNotEmpty()) {
+                val idx = playhead.toInt().coerceIn(0, frames.size - 1)
+                val newSeg = frameSegIndex.getOrNull(idx) ?: -1
+                if (newSeg >= 0 && newSeg != activeSegmentIndex) switchToSegment(newSeg)
+            }
+            applyBlockDeltasForPlayhead()
+        } catch (_: Throwable) {
+        }
+    }
+
+    /**
+     * Build the delta overlay for a segment start: every delta's **before** state (first-writer-wins) so
+     * the world looks like the moment the segment began, then leave the cursor just before its start tick
+     * so [applyBlockDeltasForPlayhead] replays the segment's own deltas forward. Collects the touched
+     * chunk keys for later invalidation. Fail-open (no overlay on error).
+     */
+    private fun initBlockDeltaOverlay(segStartTick: Int) {
+        val snap = chunks
+        val list = blockDeltas
+        if (snap == null || list.isNullOrEmpty()) {
+            deltaCursorTick = -1
+            nextDeltaIdx = 0
+            deltaChunkKeys = emptySet()
+            return
+        }
+        try {
+            val keys = HashSet<Long>(list.size * 2)
+            for (d in list) keys.addAll(dev.iustitia.render.ChunkMesher.invalidateAround(d.x, d.y, d.z))
+            deltaChunkKeys = keys
+            snap.initOverlay()
+            for (d in list) snap.putOverlayIfAbsent(d.x, d.y, d.z, d.before)
+            deltaCursorTick = segStartTick - 1
+            nextDeltaIdx = 0
+        } catch (_: Throwable) {
+            deltaCursorTick = -1
+            nextDeltaIdx = 0
+            deltaChunkKeys = emptySet()
+        }
+    }
+
+    /**
+     * Advance the block-delta overlay to the playhead frame's tick: apply every delta at/before that
+     * tick, invalidating each touched chunk. A backward seek (the playhead jumped before the cursor)
+     * rebuilds from the segment start instead. No-op when the segment has no deltas/overlay. Fail-open.
+     */
+    private fun applyBlockDeltasForPlayhead() {
+        val snap = chunks ?: return
+        val list = blockDeltas ?: return
+        if (list.isEmpty()) return
+        if (snap.overlay == null) return
+        try {
+            val idx = playhead.toInt()
+            val targetTick = frames.getOrNull(idx)?.tick ?: return
+            if (targetTick < deltaCursorTick) {
+                recomputeBlockDeltaOverlay(snap, list, targetTick)
+                return
+            }
+            if (targetTick == deltaCursorTick) return
+            val dirty = HashSet<Long>()
+            while (nextDeltaIdx < list.size && list[nextDeltaIdx].tick <= targetTick) {
+                val d = list[nextDeltaIdx]
+                snap.putOverlay(d.x, d.y, d.z, d.after)
+                dirty.addAll(dev.iustitia.render.ChunkMesher.invalidateAround(d.x, d.y, d.z))
+                nextDeltaIdx++
+            }
+            deltaCursorTick = targetTick
+            if (dirty.isNotEmpty()) dev.iustitia.render.ChunkMesher.invalidateChunks(dirty)
+        } catch (_: Throwable) {
+        }
+    }
+
+    /** Rewind the overlay to the segment start and re-play deltas up to [targetTick] (a backward seek).
+     *  Invalidates every chunk any delta touched. Fail-open. */
+    private fun recomputeBlockDeltaOverlay(snap: ChunkSnapshot, list: List<BlockDeltaBuffer.BlockDelta>, targetTick: Int) {
+        try {
+            snap.clearOverlay()
+            for (d in list) snap.putOverlayIfAbsent(d.x, d.y, d.z, d.before)
+            nextDeltaIdx = 0
+            while (nextDeltaIdx < list.size && list[nextDeltaIdx].tick <= targetTick) {
+                val d = list[nextDeltaIdx]
+                snap.putOverlay(d.x, d.y, d.z, d.after)
+                nextDeltaIdx++
+            }
+            deltaCursorTick = targetTick
+            if (deltaChunkKeys.isNotEmpty()) dev.iustitia.render.ChunkMesher.invalidateChunks(deltaChunkKeys)
+        } catch (_: Throwable) {
+        }
+    }
+
     /** Stop now and return the reason (for the caller to chat). Idempotent. */
     fun stop(reason: String): String {
         try {
@@ -295,13 +525,27 @@ object ReplayState {
             cameraMode = CameraMode.FREE
             relocOffset = null
             terrain = null
+            // Drop the active segment's block overlay before clearing (the snapshot outlives the
+            // replay in an export, so don't leave a delta overlay welded onto it).
+            chunks?.dropOverlay()
             chunks = null
+            segments = emptyList()
+            blockDeltas = null
+            snapshotIsStart = false
+            activeSegmentIndex = -1
+            frameSegIndex = IntArray(0)
+            deltaCursorTick = -1
+            nextDeltaIdx = 0
+            deltaChunkKeys = emptySet()
+            relocate = false
+            userPos = null
             totems = emptyList()
             legacyPlayclip = false
             // Drop the FREECAM pose (pure camera-override — no camera entity to restore; flipping the
             // flag is enough; the next frame's camera mixin FREECAM branch returns false → vanilla view).
             try { exitFreecam() } catch (_: Throwable) {}
             try { dev.iustitia.render.ChunkWorldRenderer.free() } catch (_: Throwable) {}
+            try { dev.iustitia.render.ReplayRenderer.clearGhostCaches() } catch (_: Throwable) {}
             restorePerspective()
         } catch (_: Throwable) {
             active = false
@@ -322,9 +566,14 @@ object ReplayState {
                                   // held/paused guards would leave prev stale and cause a one-frame
                                   // oscillation at the held end / while paused.
         if (!active) return null
-        if (paused) return null
         try {
-            if (held) return null  // held at end — do not advance until the user seeks back / stops
+            if (paused || held) {
+                // Playhead frozen (paused, or held at the end). Still sync the visible world to the
+                // current playhead so a seek/step while paused scrubs the segment world + block-delta
+                // overlay. Returns null (unchanged contract: paused/held never auto-stop).
+                syncSegmentAndDeltas()
+                return null
+            }
             playhead += speed
             if (playhead >= frames.size) {
                 // Hold on the last frame instead of exiting — the replay/clip stays active (freecam,
@@ -333,6 +582,7 @@ object ReplayState {
                 playhead = (frames.size - 1).toFloat()
                 held = true
             }
+            syncSegmentAndDeltas()
             return null
         } catch (_: Throwable) {
             return stop("replay error")
@@ -355,6 +605,9 @@ object ReplayState {
     private val lerpByUuid = HashMap<java.util.UUID, ReplayBuffer.PlayerSnap>()
     private val lerpAUuids = HashSet<java.util.UUID>()
     private val lerpOut = ArrayList<ReplayBuffer.PlayerSnap>()
+    private val lerpEntityByUuid = HashMap<java.util.UUID, ReplayBuffer.EntitySnap>()
+    private val lerpEntityAUuids = HashSet<java.util.UUID>()
+    private val lerpEntityOut = ArrayList<ReplayBuffer.EntitySnap>()
 
     /** An interpolated frame at the playhead, lerped between [frames] floor and ceil by the
      *  tickDelta-interpolated playhead fraction — so ghosts move smoothly between recorded ticks
@@ -370,6 +623,9 @@ object ReplayState {
         val a = frames[idx]
         if (idx + 1 >= frames.size || frac <= 0f) return a
         val b = frames[idx + 1]
+        // Never interpolate across a segment boundary: the two frames' coords are in different
+        // (teleported) world spaces, so lerping would streak a ghost across the map. Snap to [a].
+        if (a.segmentId != b.segmentId) return a
         // Reuse scratch containers (B2): clear() keeps the backing arrays, so no per-frame HashMap/
         // HashSet/ArrayList allocation after warmup. `out` is returned in the Frame and consumed
         // synchronously by drawGhosts before the next frame reuses it.
@@ -383,14 +639,31 @@ object ReplayState {
             out.add(if (t != null) lerpSnap(s, t, frac) else s)
         }
         for (s in b.snaps) if (s.uuid() !in aUuids) out.add(s)  // entered between ticks
-        ReplayBuffer.Frame(a.tick, out)
+        // v13 entity lerp: same merge, so a mob ghost moves smoothly instead of stepping per tick.
+        val entOut = lerpEntityOut.apply { clear() }
+        if (a.entities.isNotEmpty() || b.entities.isNotEmpty()) {
+            val entByUuid = lerpEntityByUuid.apply { clear() }
+            for (e in b.entities) entByUuid[e.uuid()] = e
+            val entAUuids = lerpEntityAUuids.apply { clear() }
+            for (e in a.entities) {
+                entAUuids.add(e.uuid())
+                val t = entByUuid[e.uuid()]
+                entOut.add(if (t != null) lerpEntitySnap(e, t, frac) else e)
+            }
+            for (e in b.entities) if (e.uuid() !in entAUuids) entOut.add(e)
+        }
+        ReplayBuffer.Frame(a.tick, out, entOut, a.segmentId)
     } catch (_: Throwable) { null }
 
     /** The active replay's full window (frames + alerts + any bundled terrain/chunks), for
-     *  `/ius replay save`. Empty when inactive. Client-thread only (command handler). */
+     *  `/ius replay save`. Empty when inactive. Client-thread only (command handler).
+     *
+     *  A segment-based window carries its world in [segments], so the top-level [chunks] is dropped in
+     *  that case — otherwise the export would write the same snapshot twice (top-level + inside the
+     *  segment) and double the clip size. Mirrors [dev.iustitia.replay.RecordManager.saveSegment]. */
     fun exportWindow(): ReplayBuffer.Window = try {
         if (!active) ReplayBuffer.Window(emptyList(), emptyList(), null, null)
-        else ReplayBuffer.Window(frames, alerts, terrain, chunks, totems)
+        else ReplayBuffer.Window(frames, alerts, terrain, if (segments.isEmpty()) chunks else null, totems, segments)
     } catch (_: Throwable) { ReplayBuffer.Window(emptyList(), emptyList(), null, null) }
 
     /** Lerp the spatial fields of two snaps of the same player; UUID from [a] (floor frame),
@@ -403,15 +676,35 @@ object ReplayState {
     private fun lerpSnap(a: ReplayBuffer.PlayerSnap, b: ReplayBuffer.PlayerSnap, frac: Float): ReplayBuffer.PlayerSnap {
         val f = frac.coerceIn(0f, 1f)
         return ReplayBuffer.PlayerSnap(
-            a.uuidMost, a.uuidLeast,
-            MathHelper.lerp(f, a.x, b.x),
-            MathHelper.lerp(f, a.y, b.y),
-            MathHelper.lerp(f, a.z, b.z),
-            MathHelper.lerpAngleDegrees(f, a.yaw, b.yaw),
-            MathHelper.lerp(f, a.pitch, b.pitch),
-            b.swingTicks, b.pose, b.name,
-            b.hurtTime, b.health, b.maxHealth,
-            b.mainHand, b.offHand, b.head, b.chest, b.legs, b.feet,
+            uuidMost = a.uuidMost, uuidLeast = a.uuidLeast,
+            x = MathHelper.lerp(f, a.x, b.x),
+            y = MathHelper.lerp(f, a.y, b.y),
+            z = MathHelper.lerp(f, a.z, b.z),
+            yaw = MathHelper.lerpAngleDegrees(f, a.yaw, b.yaw),
+            pitch = MathHelper.lerp(f, a.pitch, b.pitch),
+            // v13 body/head yaw lerp; older snaps default both to the look yaw so it's a no-op there.
+            bodyYaw = MathHelper.lerpAngleDegrees(f, a.bodyYaw, b.bodyYaw),
+            headYaw = MathHelper.lerpAngleDegrees(f, a.headYaw, b.headYaw),
+            swingTicks = b.swingTicks, pose = b.pose, name = b.name,
+            hurtTime = b.hurtTime, health = b.health, maxHealth = b.maxHealth,
+            mainHand = b.mainHand, offHand = b.offHand, head = b.head, chest = b.chest, legs = b.legs, feet = b.feet,
+        )
+    }
+
+    /** Lerp the spatial fields of two entity snaps of the same entity; type/pose/name-ish fields from
+     *  [b] (discrete per-tick values snap to the current frame). Yaws use angle-aware lerp. */
+    private fun lerpEntitySnap(a: ReplayBuffer.EntitySnap, b: ReplayBuffer.EntitySnap, frac: Float): ReplayBuffer.EntitySnap {
+        val f = frac.coerceIn(0f, 1f)
+        return ReplayBuffer.EntitySnap(
+            typeId = b.typeId,
+            uuidMost = a.uuidMost, uuidLeast = a.uuidLeast,
+            x = MathHelper.lerp(f, a.x, b.x),
+            y = MathHelper.lerp(f, a.y, b.y),
+            z = MathHelper.lerp(f, a.z, b.z),
+            bodyYaw = MathHelper.lerpAngleDegrees(f, a.bodyYaw, b.bodyYaw),
+            headYaw = MathHelper.lerpAngleDegrees(f, a.headYaw, b.headYaw),
+            pitch = MathHelper.lerp(f, a.pitch, b.pitch),
+            pose = b.pose, hurtTime = b.hurtTime, health = b.health, maxHealth = b.maxHealth,
         )
     }
 

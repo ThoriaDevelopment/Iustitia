@@ -47,12 +47,17 @@ class RotationSnapBackCheck : Check() {
             val dz = victim.pos.z - eye.z
             if (dx * dx + dz * dz < 0.09) return
             val expYaw = Math.toDegrees(atan2(-dx, dz))
+            val ctx = contextOf(ev.attacker) as SnapContext
             if (abs(Vectors.angleDiff(attacker.yaw.toDouble(), expYaw)) < 15.0) {
-                val ctx = contextOf(ev.attacker) as SnapContext
                 ctx.prime = true
                 ctx.snapTick = ev.tick
                 ctx.attackYaw = attacker.yaw.toDouble()      // facing the victim
                 ctx.preAttackYaw = attacker.lastYaw.toDouble() // travel bearing before the snap
+            } else {
+                // A hit that was not even facing the victim is the window's counter-example: the
+                // episode gate must see the normal hits, or a 1v1 cheater's every hit would look
+                // like a snap-back and the "2 of the last 6" pattern would mean nothing.
+                judge(ctx, attacker, ev.tick, false)
             }
         } catch (_: Throwable) {}
     }
@@ -70,15 +75,31 @@ class RotationSnapBackCheck : Check() {
                     // another opponent? Only flag if the yaw returned near the pre-attack
                     // travel bearing (the KillAura reset signature).
                     val fromTravel = abs(Vectors.angleDiff(yaw, ctx.preAttackYaw))
-                    if (fromTravel <= SNAP_BACK_TOL) {
-                        flag(tp, ctx, 1.0, "SnapBack", tick)
-                        ctx.prime = false
-                    }
+                    ctx.prime = false
+                    judge(ctx, tp, tick, fromTravel <= SNAP_BACK_TOL)
                 }
             } else if (since > 3) {
+                // The watch expired without the yaw ever leaving the attack bearing: this hit is
+                // not a snap-back, so it is a counter-example in the episode window.
                 ctx.prime = false
+                judge(ctx, tp, tick, false)
             }
         } catch (_: Throwable) {}
+    }
+
+    /**
+     * Record one hit's snap-back verdict and alert once when the pattern is sustained.
+     *
+     * The old form flagged a flat `1.0` per snap-back, and the snap-back signature needs two
+     * ticks (attack tick + return tick), so its maximum rate is exactly `0.5`/tick -- equal to the
+     * `0.5` decay, so the VL oscillated around 1.0 and **never** alerted no matter how many
+     * snap-backs a KillAura produced. Requiring the pattern to repeat and then flagging the episode
+     * at a level that clears setbackVL is what makes the signal actionable while still ignoring a
+     * one-off flick or a single legit target-switch.
+     */
+    private fun judge(ctx: SnapContext, tp: TrackedPlayer, tick: Int, snapped: Boolean) {
+        val sustainedNow = sustained(ctx, snapped, WINDOW, MIN_VIOLATIONS)
+        if (sustainedNow) flagEpisode(tp, ctx, "SnapBack", tick) else rearmEpisode(ctx, sustainedNow)
     }
 
     private class SnapContext : CheckContext() {
@@ -92,5 +113,11 @@ class RotationSnapBackCheck : Check() {
         /** Max yaw deviation from the pre-attack travel bearing that still counts as a
          *  snap-back-to-travel (vs. a target-switch to another opponent). */
         const val SNAP_BACK_TOL = 20.0
+        /** Rolling window of hits the snap-back verdict is judged over. */
+        const val WINDOW = 8
+        /** Snap-backs required in the window. 3 of 8 rather than 2 of 6: the per-event flag is
+         *  already superhuman, but a legit player in a multi-opponent fight can produce a single
+         *  apparent target-switch, and the gate must not turn two unrelated hits into an alert. */
+        const val MIN_VIOLATIONS = 3
     }
 }

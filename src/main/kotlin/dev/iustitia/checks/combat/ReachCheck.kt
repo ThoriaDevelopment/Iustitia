@@ -19,6 +19,7 @@ import java.util.UUID
 import kotlin.math.acos
 import kotlin.math.ceil
 import kotlin.math.max
+import kotlin.math.sqrt
 
 /**
  * Lag-compensated reach, ported from Nemesis `RangeA` + Grim `Reach`/`ReachUtils`.
@@ -109,6 +110,49 @@ class ReachCheck : Check() {
             positions.add(victim.pos)
             for (p in victim.ring.getPositions(3, ev.tick)) positions.add(p)
 
+            val ctx = contextOf(attacker.uuid)
+
+            // ---------------------------------------------------------------
+            // Exact-geometry path (motionless pair) -- ghost-tier reach.
+            // ---------------------------------------------------------------
+            // The 0.8 headroom on the ray paths below exists for exactly one reason: client-side
+            // interpolation lags the server's position while a player MOVES, so a measured distance
+            // can read up to ~0.7 long during fast / dash combat. That error is identically zero
+            // when neither fighter has moved -- the client's positions ARE the server's -- so this
+            // path drops the ray entirely and compares the **vanilla reach metric itself** (eye to
+            // the closest point of the victim's hitbox, unexpanded, exactly what the server
+            // measures) against the interaction range with only the hitbox-margin headroom. That is
+            // the only way a client-side check can see a ghost-tier 3.6-block bite: through the ray
+            // it measures 3.2 and never clears the 0.8-headroom 3.8 bar, which is why that whole
+            // tier used to be invisible. A motionless pair cannot be a dash-lag false positive by
+            // construction, so this does not re-open the FPs the headroom was introduced to close.
+            if (motionlessPair(attacker, victim, ev.tick)) {
+                var closest = Double.MAX_VALUE
+                for (vp in positions) {
+                    val box = AABB.around(vp.x, vp.y, vp.z, vh.width, vh.height)
+                    val d = sqrt(box.closestPointSqDistance(eye.x, eye.y, eye.z))
+                    if (d < closest) closest = d
+                }
+                // Sustained-episode gate, for the same economy reason as the per-hit combat checks: a
+                // sub-blatant reach hit is `ceil((3.3-3.0)*2) = 1.0` of level against a `0.5`/tick
+                // decay, and hits land about one per 6 ticks, so the VL can never climb toward the
+                // 10.0 setback however many times the cheater does it. Requiring the pattern and
+                // alerting once for the episode is what makes the tier actionable; the measurement
+                // itself is exact here, so no legitimate hit can feed the pattern.
+                val over = closest > maxReach + STATIC_HEADROOM
+                val sustainedNow = sustained(ctx, over, STILL_WINDOW, STILL_MIN)
+                if (sustainedNow) {
+                    flagEpisode(attacker, ctx, "Reach", ev.tick, Evidence(
+                        subLabel = "motionless", measurement = closest, threshold = maxReach + STATIC_HEADROOM,
+                        pos = eye, victim = victim.uuid,
+                        extra = "hit from ${"%.2f".format(closest)} blocks while neither fighter had moved (vanilla max ${"%.1f".format(maxReach)})"))
+                    lagRangeAmplify(attacker, victim, ctx, eye, ev)
+                } else {
+                    rearmEpisode(ctx, sustainedNow)
+                }
+                return
+            }
+
             var minDist = Double.MAX_VALUE
             var anyHit = false
             for (vp in positions) {
@@ -122,7 +166,6 @@ class ReachCheck : Check() {
                 }
             }
 
-            val ctx = contextOf(attacker.uuid)
             if (!anyHit) {
                 // None of the 3 candidate looks × ring positions caught the hitbox. A miss splits
                 // by distance (HITBOX-vs-REACH, Grim, plan §3/§8 step 4): beyond reach the miss is
@@ -235,6 +278,38 @@ class ReachCheck : Check() {
         }
     }
 
+    /**
+     * True when **both** fighters have been positionally motionless across the recent ring
+     * window, horizontal and vertical.
+     *
+     * This is the precondition for trusting a distance measurement at a near-vanilla ceiling: the
+     * only systematic error in a client-side reach measurement is interpolation of a moving
+     * player's server position, and a player who has not moved has nothing to interpolate. Both
+     * sides are required because the attacker's own interpolated eye position biases the measured
+     * distance just as the victim's does. Deliberately conservative thresholds (2 cm horizontal,
+     * 2 cm vertical over up to four samples): anything that moved even slightly keeps the full
+     * 0.8 headroom. Fail-closed (returns false) on a short/absent ring.
+     */
+    private fun motionlessPair(attacker: TrackedPlayer, victim: TrackedPlayer, tick: Int): Boolean =
+        isMotionless(attacker, tick) && isMotionless(victim, tick)
+
+    private fun isMotionless(tp: TrackedPlayer, tick: Int): Boolean {
+        val samples = tp.ring.getPositions(3, tick)
+        if (samples.size < 3) return false
+        var minX = Double.MAX_VALUE; var maxX = -Double.MAX_VALUE
+        var minZ = Double.MAX_VALUE; var maxZ = -Double.MAX_VALUE
+        var minY = Double.MAX_VALUE; var maxY = -Double.MAX_VALUE
+        for (p in samples) {
+            if (p.x < minX) minX = p.x
+            if (p.x > maxX) maxX = p.x
+            if (p.z < minZ) minZ = p.z
+            if (p.z > maxZ) maxZ = p.z
+            if (p.y < minY) minY = p.y
+            if (p.y > maxY) maxY = p.y
+        }
+        return (maxX - minX) < STILL_EPS && (maxZ - minZ) < STILL_EPS && (maxY - minY) < STILL_EPS
+    }
+
     private class ReachContext : CheckContext()
 
     private companion object {
@@ -246,6 +321,20 @@ class ReachCheck : Check() {
          *  between the swing and the (later) hurt tick keeps the spear's reach ceiling. */
         const val REACH_LAG_WINDOW = 3
         const val VL_HITBOX_MISS = 2.0
+        /** Headroom (blocks) over the vanilla interaction range on the **motionless-pair** path,
+         *  where interpolation error is provably absent. The vanilla reach check allows
+         *  `range + hitboxMargin` = 3.1 for a player target, so 3.2 leaves 0.1 of headroom above the
+         *  legitimate ceiling while clearing a ghost-tier 3.6-block bite (whose true closest-point
+         *  distance is 3.3) by the same 0.1. */
+        const val STATIC_HEADROOM = 0.2
+        /** Rolling window of motionless-pair hits the ghost-tier episode is judged over. */
+        const val STILL_WINDOW = 6
+        /** Over-range motionless-pair hits required in the window. The metric is exact and the
+         *  threshold carries 0.1 of headroom on both sides, so 2 of the last 6 is a safety net
+         *  against a one-off geometry edge, not a statistical filter. */
+        const val STILL_MIN = 2
+        /** Max per-axis travel (blocks) across the ring window that still counts as motionless. */
+        const val STILL_EPS = 0.02
         /** Min angle (deg) between the closest candidate look and the hitbox center for a clear
          *  hitbox miss. At within-reach distance the hitbox spans ≤~17° (head/feet aim), so 30°
          *  off-center is unambiguously "looking away", not between-samples interpolation. */

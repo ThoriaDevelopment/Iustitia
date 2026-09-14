@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Usage questions and design discussion
+    url: https://github.com/ThoriaDevelopment/Iustitia/discussions
+    about: Ask questions or explore an idea before turning it into an actionable issue.
+  - name: Security and privacy reports
+    url: https://github.com/ThoriaDevelopment/Iustitia/security/advisories/new
+    about: Report unexpected network behavior, data exposure, unsafe parsing, or other vulnerabilities privately.

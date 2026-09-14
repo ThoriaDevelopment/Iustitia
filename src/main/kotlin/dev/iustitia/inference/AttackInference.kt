@@ -103,10 +103,17 @@ object AttackInference {
         }
 
         val a = best ?: return
-        // dedup: at most one AttackEvent per (attacker, victim) per 2 ticks
+        // dedup: at most one AttackEvent per (attacker, victim) per 2 ticks. The watermark is
+        // advanced ONLY when an event is actually emitted: the three hurt channels
+        // (status/damage/tilt) all fire for one real hit at the SAME tick, and that is what this
+        // collapses. Advancing the watermark on the suppressed repeat instead makes a hurt stream
+        // that arrives every tick suppress itself forever (tick N skips and stamps N, tick N+1
+        // then measures 1 against N, ...), which silently starves every combat check of attacks
+        // for a fast hitter — the exact case a cheat (or the harness's own per-tick drive)
+        // produces.
         val inner = lastEmit.getOrPut(a) { java.util.Collections.synchronizedMap(mutableMapOf()) }
         val last = inner[h.victim] ?: -100000
-        if (h.tick - last < 2) { inner[h.victim] = h.tick; return }
+        if (h.tick - last < 2) return
         inner[h.victim] = h.tick
 
         try {

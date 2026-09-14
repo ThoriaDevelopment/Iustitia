@@ -65,6 +65,10 @@ object WatchState {
 
     /** Begin watching [uuid]. Client thread only (called from the keybind). */
     fun enable(uuid: UUID) {
+        // Yield the follow-cam to FollowCam when it's installed: the standalone mod owns the
+        // camera override, so Iustitia must not also repoint Camera.update (two sustained TAIL
+        // overrides fighting each frame). Callers should have checked too; this is the backstop.
+        if (dev.iustitia.compat.CompanionMods.followCam) return
         try {
             val mc = MinecraftClient.getInstance()
             val p = mc.player

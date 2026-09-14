@@ -69,6 +69,43 @@ data class ChunkSnapshot(val chunks: List<ChunkRec>) {
         return m
     }
 
+    // ---- block-change overlay (SnapClip port) ----
+    // A sparse map of absolute block coord -> block name applied ON TOP of the captured palette, so
+    // a replay/playclip can show the world as it changes through the timeline (temporary blocks,
+    // broken walls, …) without rewriting the baked chunk data. [overlay] is null when no replay is
+    // running an overlay; [nameAt] falls back to the captured palette.
+
+    /** Absolute-coord -> block-name overlay, or null when no overlay is active. */
+    @Volatile var overlay: java.util.concurrent.ConcurrentHashMap<Long, String>? = null
+
+    /** Dimension key this snapshot was captured in (diagnostic; set by the segment loader). */
+    @Volatile var dimension: String? = null
+
+    private fun blockKey(x: Int, y: Int, z: Int): Long {
+        val xx = (x.toLong() and 0x03FFFFFFL)
+        val yy = (y.toLong() and 0x0FFFL) shl 26
+        val zz = (z.toLong() and 0x03FFFFFFL) shl 38
+        return xx or yy or zz
+    }
+
+    /** Allocate an empty overlay map (idempotent). */
+    fun initOverlay() { overlay = java.util.concurrent.ConcurrentHashMap() }
+
+    /** Clear every overlay entry, keeping the map allocated. */
+    fun clearOverlay() { overlay?.clear() }
+
+    /** Drop the overlay entirely (back to the captured palette only). */
+    fun dropOverlay() { overlay = null }
+
+    /** Set an overlay entry (no-op when no overlay is active). */
+    fun putOverlay(x: Int, y: Int, z: Int, name: String) { overlay?.put(blockKey(x, y, z), name) }
+
+    /** Set an overlay entry only if absent (first-writer-wins; used when rewinding to the snapshot). */
+    fun putOverlayIfAbsent(x: Int, y: Int, z: Int, name: String) { overlay?.putIfAbsent(blockKey(x, y, z), name) }
+
+    /** The overlay override at a coord, or null when none / no overlay active. */
+    fun overlayAt(x: Int, y: Int, z: Int): String? = overlay?.get(blockKey(x, y, z))
+
     /** Total non-empty section count across all chunks (for [ClipCodec.ClipMeta] + the clip-manager row). */
     fun sectionCount(): Int = chunks.sumOf { it.sections.size }
 
@@ -103,6 +140,8 @@ data class ChunkSnapshot(val chunks: List<ChunkRec>) {
      * region edge) and `"minecraft:air"` to mean "air" (also drawn). O(1) via the chunk-index map.
      */
     fun nameAt(x: Int, y: Int, z: Int): String? {
+        // Overlay first: a live block change outranks the captured palette (no-op when none active).
+        overlay?.get(blockKey(x, y, z))?.let { return it }
         val cx = x shr 4; val cz = z shr 4
         val c = ensureIndex()[key(cx, cz)] ?: return null
         val sy = y shr 4

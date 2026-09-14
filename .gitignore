@@ -8,6 +8,10 @@ gradle-app.setting
 # ---- Kotlin ----
 .kotlin/
 
+# ---- Python tooling ----
+__pycache__/
+*.py[cod]
+
 # ---- Fabric Loom caches ----
 loom-cache/
 *.loom-cache/
@@ -37,10 +41,19 @@ run/logs/
 launcher_log.txt
 
 # ---- Claude Code session data (local only, never committed) ----
-.claude/
+# Keep only the project-specific contributor skill under version control.
+.claude/*
+!.claude/
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/iustitia-contributor/
+!.claude/skills/iustitia-contributor/SKILL.md
 
 # ---- Local research corpus (third-party anticheat/cheat source, kept local) ----
 References/
+
+# ---- Unwired WIP feature drafts (parked outside the build, never committed) ----
+wip/
 
 # ---- Local working/research notes (superseded by README.md, kept local) ----
 Anticheat Documentation.txt

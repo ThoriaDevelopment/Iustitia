@@ -1,0 +1,42 @@
+name: Verify contribution
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Static checks, tests, and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Verify repository invariants
+        run: python scripts/verify_contribution.py --static
+
+      - name: Check formatting whitespace
+        run: git diff --check
+
+      - name: Run Gradle tests
+        run: ./gradlew test --no-daemon
+
+      - name: Build mod
+        run: ./gradlew build --no-daemon

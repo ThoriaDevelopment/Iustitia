@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "iustitia_testmod",
+  "version": "1.0.0",
+  "name": "Iustitia Self-Test Harness",
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-client-gametest": [
+      "dev.iustitia.selftest.SelfTestEntrypoint"
+    ]
+  }
+}

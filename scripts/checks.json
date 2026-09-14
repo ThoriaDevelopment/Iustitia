@@ -5,7 +5,7 @@
     "name": "Reach",
     "group": "Combat",
     "definitive": true,
-    "what": "Lag-compensated reach — catches attackers hitting victims from beyond vanilla melee reach. Ported from Nemesis RangeA + Grim Reach.",
+    "what": "Lag-compensated reach — catches attackers hitting victims from beyond vanilla melee reach. Ported from Nemesis RangeA + Grim Reach. Since v1.4.0 a motionless-pair branch also catches ghost reach: when neither attacker nor victim has moved, interpolation error is zero, so the check drops the ray and compares the vanilla metric (eye to closest point of the unexpanded hitbox) at a 3.2 ceiling — Koid-style 3.6 and LiquidBounce-style 4.2 ghost modules alert instead of passing as jitter.",
     "signature": "On each AttackEvent, measures the minimum attacker-eye to victim-hitbox ray intercept over 3 candidate looks (current yaw/pitch, lastYaw+pitch, lastYaw+lastPitch) x candidate victim positions (current + last ~3 ticks from the ring buffer). Flags when the minimum intercept distance exceeds threshold + 0.5. VL level = ceil((dist - maxReach) * 2.0).",
     "fpGuards": [
       "Attacker-in-vehicle exempt",
@@ -13,7 +13,8 @@
       "Attacker just-teleported-this-tick exempt",
       "Pose-aware victim hitbox (sneak/prone/gliding)",
       "1.8 protocol widens hitbox margin by +0.1",
-      "No-intercept only flagged when the nearest face genuinely exceeds reach (close-range misses dropped as inconclusive)"
+      "No-intercept only flagged when the nearest face genuinely exceeds reach (close-range misses dropped as inconclusive)",
+      "Motionless-pair branch requires both attacker and victim stationary; a moving pair is judged by the ray path only"
     ],
     "defaults": { "enabled": true, "setbackVL": 10.0, "decay": 0.25, "threshold": 3.0 },
     "constants": [
@@ -455,13 +456,15 @@
     "group": "Movement",
     "definitive": false,
     "what": "NoFall detector — accumulates downward distance while airborne, flags when a player lands from a damaging fall (fallAccum > threshold 8.0) without a hurt signal. Also catches ground-spoof-over-air and Verus stair-step. Tier = NEUTRAL (was DEFINITIVE; demoted — KitPvP arena-drop / water / ladder / chunk-load glitches avoid fall damage legitly, so a lone NoFall alert must not mark a player suspect).",
-    "signature": "Landed-no-hurt on airborne->grounded transition: wasAirborne && fallAccum > threshold && !soft && tick - lastHurtTick > 2; level = max(1, ceil((fallAccum-3)*2)). Spoof: onGroundPacket && fallAccum > threshold && !isSolidBelow(0.5). Stair: ~-2.0 then ~0 dy cycles >=3.",
+    "signature": "Landed-no-hurt on airborne->grounded touchdown (groundedProxy or feet reaching a surface): wasAirborne && fallAccum > threshold && !soft && tick - lastHurtTick > 2; level = max(1, ceil((fallAccum-3)*2)). Spoof: onGroundPacket && fallAccum > threshold && !isSolidBelow(0.5). Stair: ~-2.0 then ~0 dy cycles >=3. No-damage burst (wind charge) re-bases fallAccum at the impulse's own start and only descent below that floor accumulates. Mace smash (1.21): a confirmed descending mace attack (AttackEvent, swing + victim hurt) with fallAccum > 1.5 re-bases fallAccum to 0, like vanilla's fall-height reset -- the hurtless smash landing is judged on the ~2-block post-smash descent only.",
     "fpGuards": [
       "Vehicle/gliding exempt",
       "Teleport exempt (tick - lastTeleportTick < 5)",
       "Soft-land exemption (WATER/SLIME_BLOCK/HAY_BLOCK/COBWEB)",
       "Hurt signal resets fallAccum and exempts the next landing",
-      "Chunk not loaded -> skip"
+      "No-damage burst re-base: descent above the wind-charge launch floor never accumulates (a fall accrued below it still counts)",
+      "Chunk not loaded -> skip",
+      "Mace-smash re-base: a confirmed descending mace attack (swing + victim hurt, fallAccum > 1.5) re-bases the accumulator -- a swing with no confirmed hit clears nothing (the evasion twin is covered by cheat-nofall-mace-evade)"
     ],
     "defaults": { "enabled": true, "setbackVL": 4.0, "decay": 1.0, "threshold": 8.0 },
     "constants": [

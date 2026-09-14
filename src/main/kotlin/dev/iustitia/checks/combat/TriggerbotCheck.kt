@@ -135,20 +135,23 @@ class TriggerbotCheck : Check() {
             while (ctx.samples.size > WINDOW) ctx.samples.removeLast()
 
             val total = ctx.samples.size
-            if (total < MIN_SAMPLES) return
             val fastCount = ctx.samples.count { it.fast }
             val minFast = cfg.threshold.toInt().coerceAtLeast(1)
-            if (fastCount < minFast) return
-            val ratio = fastCount.toDouble() / total.toDouble()
-            if (ratio < RATIO) return
-
-            // blatant, consistent sub-reaction auto-attacker: flag once per qualifying fast hit.
-            // The consistency gate (minFast + ratio) means this only fires once the pattern is
-            // established, so each subsequent fast hit climbs VL toward setbackVL (5).
-            val reaction = startTick?.let { ev.tick - it }
-            flag(attacker, ctx, 1.0, "Triggerbot", ev.tick, Evidence(
-                measurement = ratio, threshold = RATIO.toDouble(), pos = attacker.pos,
-                victim = ev.victim, extra = "fast=$fastCount/$total reaction=$reaction"))
+            val ratio = if (total > 0) fastCount.toDouble() / total.toDouble() else 0.0
+            // Blatant, consistent sub-reaction auto-attacker. The consistency gate IS the
+            // sustained gate; the alert is one-shot per episode (see [Check.flagEpisode]) because
+            // the flag cadence is one per attack and the old per-hit level-1.0 form could never
+            // outrun the 0.05/tick decay from a standing start... it did accumulate slowly, but a
+            // confirming pattern now reports immediately, and a non-qualifying hit re-arms.
+            val sustainedNow = total >= MIN_SAMPLES && fastCount >= minFast && ratio >= RATIO
+            if (sustainedNow) {
+                val reaction = startTick?.let { ev.tick - it }
+                flagEpisode(attacker, ctx, "Triggerbot", ev.tick, Evidence(
+                    measurement = ratio, threshold = RATIO.toDouble(), pos = attacker.pos,
+                    victim = ev.victim, extra = "fast=$fastCount/$total reaction=$reaction"))
+            } else {
+                rearmEpisode(ctx, sustainedNow)
+            }
         } catch (_: Throwable) {
             // fail-open
         }

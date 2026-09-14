@@ -107,6 +107,16 @@ object Iustitia {
             }
         } catch (_: Throwable) {}
         // individual checks self-subscribe to the bus in their constructors.
+
+        // Companion-mod coexistence: SnapClip / Scrollback / FollowCam are single-feature extracts
+        // of Iustitia. When installed alongside it, Iustitia yields the overlapping feature to the
+        // standalone mod (see dev.iustitia.compat.CompanionMods) so the two never run the same
+        // machinery twice. One-line notice so the deferral is discoverable in latest.log.
+        try {
+            dev.iustitia.compat.CompanionMods.yieldSummary()?.let {
+                logger.info("[Iustitia] companion mod(s) detected — yielding: $it (core detection unaffected)")
+            }
+        } catch (_: Throwable) {}
     }
 
     /** Called every END_CLIENT_TICK by the entrypoint. */
@@ -229,6 +239,11 @@ object Iustitia {
                     chat(mc, "§8[§diustitia§8] §7compact mode = ${if (ConfigManager.config.compactMode) "§aON" else "§cOFF"}")
                 }
                 "watch" -> {
+                    // Companion ownership: FollowCam owns the follow-cam when installed.
+                    if (dev.iustitia.compat.CompanionMods.followCam) {
+                        chat(mc, "§8[§diustitia§8] §7the follow-cam is handled by §fFollowCam§7 (installed) — use §f/follow§7.")
+                        return
+                    }
                     // Feature disabled → stay silent (don't print a watch chat line when the user
                     // has the follow-cam off — the 1.7 bug: pressing F9 with watchFollowCam=false
                     // still printed "look at a player to watch them"). The camera mixin also no-ops.
@@ -267,6 +282,11 @@ object Iustitia {
                     chat(mc, "§8[§diustitia§8] §7replay §cstopped§7 — live view restored.")
                 }
                 "replayToggle" -> {
+                    // Companion ownership: SnapClip owns replay/clip/record when installed.
+                    if (dev.iustitia.compat.CompanionMods.snapClip) {
+                        chat(mc, "§8[§diustitia§8] §7replay is handled by §fSnapClip§7 (installed) — use its §f/replay§7.")
+                        return
+                    }
                     if (dev.iustitia.replay.ReplayState.active) {
                         dev.iustitia.replay.ReplayState.stop("stopped")
                         chat(mc, "§8[§diustitia§8] §7replay §cstopped§7 — live view restored.")

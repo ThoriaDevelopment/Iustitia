@@ -31,7 +31,12 @@ import java.util.UUID
  * just outside the window). Require ≥ [threshold] (default 3) no-swing hurts from the SAME
  * inferred attacker within [EPISODE] ticks, transition-gated one flag per episode — a cheater
  * suppressing every swing sustains it; an unseen attacker or a one-off doesn't accumulate.
- * VELOCITY hurts are excluded (knockback follow-up, not a melee). setbackVL 5, decay 0.5/tick.
+ * VELOCITY hurts are excluded (knockback follow-up, not a melee).
+ *
+ * That episode flag clears setbackVL in a single flag — it has to, because the gate allows at most
+ * one flag per [EPISODE] (60) ticks, i.e. ~1/60/tick against a 0.5/tick decay, so the old level-1.0
+ * form could never alert at all (measured live: a swing-suppressing drive recorded in `/ius hist`
+ * and stayed at 0.0 of the 5.0 needed). setbackVL 5.
  *
  * This check is event-driven (HurtSignal + SwingSignal); it does not override [process].
  * Per-attacker `lastSwingTick` lives in the attacker's own context (same pattern as
@@ -73,7 +78,7 @@ class HitsWithoutSwingCheck : Check() {
                 val need = cfg.threshold.toInt().coerceAtLeast(1)
                 if (actx.noSwingCount >= need && !actx.active) {
                     actx.active = true
-                    flag(attacker, actx, VL_NO_SWING, "HitsWithoutSwing", tick, Evidence(
+                    flagEpisode(attacker, actx, "HitsWithoutSwing", tick, Evidence(
                         subLabel = "no-swing-attack", measurement = actx.noSwingCount.toDouble(),
                         threshold = need.toDouble(), pos = attacker.pos, victim = sig.victim,
                         extra = "src=${sig.source}"))
@@ -126,7 +131,5 @@ class HitsWithoutSwingCheck : Check() {
         const val MELEE_RANGE_SQ = 16.0
         /** Episode window (ticks) for the no-swing count + the transition-gate re-arm. */
         const val EPISODE = 60
-        /** Per-flag VL level — low (this is a CORROBORATOR-tier signal). */
-        const val VL_NO_SWING = 1.0
     }
 }

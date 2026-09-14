@@ -7,45 +7,52 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * Named configuration presets — five built-ins ([builtInNames]) plus user-created custom presets
- * persisted as JSON under `.iustitia/presets/<name>.json`. `/ius preset <name>` resolves a built-in
- * first, then a custom file, and **applies** it by copying every preset-content field into the live
- * [ConfigManager.config] **in place** (never replacing the reference — other subsystems hold it),
- * then [ConfigManager.save] + [Iustitia.onConfigReloaded]. Custom presets are full config snapshots
- * saved via [ConfigManager.configToJson] (the same serializer the main config uses), so they
- * round-trip the user's exact tuned values.
+ * Named configuration presets — one built-in ([builtInNames]) plus user-created custom presets
+ * persisted as JSON under the presets dir (see [presetsDir]). `/ius preset <name>` resolves a
+ * built-in first, then a custom file, and **applies** it onto the live [ConfigManager.config] IN
+ * PLACE (never replacing the reference — other subsystems hold it), then [ConfigManager.save] +
+ * [Iustitia.onConfigReloaded]. Custom presets are snapshots of the current config's PRESET CONTENT
+ * (saved via [ConfigManager.presetContentJson], the main serializer minus the per-user keys), so
+ * they round-trip the user's exact tuned values and carry no per-user state.
  *
- * ## What is and isn't preset content
+ * ## What is and isn't preset content (schema-derived)
  *
- * A preset captures detection calibration + display/UX + replay/sonar — everything that defines how
- * the mod behaves. It excludes per-user / runtime state: `configVersion` (always the code default —
- * never let a preset downgrade calibration migration), `mutedChecks`, `mutedPlayers`,
- * `wizardCompleted`, `persistenceEnabled` (a moderator's persistence preference is environmental,
- * not part of a detection profile). [copyPresetContent] is the single place this boundary is enforced.
+ * A preset captures detection calibration + display/UX + replay/chathist — everything that
+ * defines how the mod behaves. It excludes per-user / runtime state; the exclusion list is
+ * `ConfigManager.PRESET_EXCLUDED_KEYS` (`mutedChecks`, `mutedPlayers`, `wizardCompleted`,
+ * `persistenceEnabled`, `playclipMode` — `configVersion` is deliberately kept in the file as the
+ * calibration-migration stamp). The apply path is **schema-derived**:
+ * [ConfigManager.presetContentObj] serializes the template's full field set and
+ * [ConfigManager.configFromJsonInto] reads it into the live config, so a NEW config field is
+ * preset content automatically — there is no hand-maintained copy list to drift behind the schema
+ * (the previous one had fallen 13 fields behind, silently excluding the replay/clip/chathist
+ * fields and the detection-affecting `sensitivitySubstrate` from every apply).
  *
- * ## Built-in setbackVL scaling
- *
- * Strict scales setbackVL ×0.5 (alert sooner); Lenient ×2.0 (only sustained blatant alerts). Scaling
- * is from the **default** values (a fresh [IustitiaConfig]), not the user's current tuning, so a
- * preset always means the same thing regardless of prior tweaks. Custom presets capture exact values.
- *
- * Fail-open throughout: a bad custom file / a copy error degrades to "preset not applied" + a false
- * return, never a crash. No packets, no world edits — pure config-field mutation + a JSON write.
+ * Fail-open throughout: a bad custom file / an apply error degrades to "preset not applied" + a
+ * false return, never a crash. No packets, no world edits — pure config-field mutation + a JSON
+ * write.
  */
 object PresetManager {
 
-    val builtInNames: List<String> = listOf("strict", "standard", "lenient", "debug", "moderation")
+    val builtInNames: List<String> = listOf("standard")
 
     fun isBuiltIn(name: String): Boolean = name.lowercase() in builtInNames
 
     /**
-     * Apply the named preset: resolve built-in → custom, copy preset-content fields into the live
-     * config in place, save, reload. Returns false when the name is neither built-in nor a custom
-     * file (or apply threw). Fail-open.
+     * Apply the named preset: resolve built-in → custom, read the template's schema-derived preset
+     * content into the live config in place, save, reload. Returns false when the name is neither
+     * built-in nor a custom file, when the preset file is unreadable, or when its read threw
+     * part-way (a mistyped value in a hand-edited file) — in that case the config is NOT saved, so
+     * no half-applied preset is persisted, and the LIVE config object is untouched too: the read
+     * lands on a throwaway scratch config first, and only a completed read is promoted onto the
+     * live config in place (the promotion re-read cannot throw — the scratch was just serialized
+     * by the same serializer). Fail-open.
      */
     fun apply(name: String): Boolean = try {
         val template = builtIn(name) ?: loadCustom(name) ?: return false
-        copyPresetContent(ConfigManager.config, template)
+        val scratch = IustitiaConfig()
+        ConfigManager.configFromJsonInto(ConfigManager.presetContentObj(template), scratch)
+        ConfigManager.configFromJsonInto(ConfigManager.presetContentObj(scratch), ConfigManager.config)
         ConfigManager.save()
         Iustitia.onConfigReloaded()
         true
@@ -54,42 +61,64 @@ object PresetManager {
     }
 
     /** Save the CURRENT live config as a custom preset `<name>.json`. Refuses built-in names
-     *  (returns false). Fail-open: a disk error returns false, never throws. */
+     *  (returns false — the name is sanitized BEFORE the guard, so `"standard "` with a trailing
+     *  space can't shadow a built-in with a dead file). Writes PRESET CONTENT ONLY
+     *  ([ConfigManager.presetContentJson] — no muted players/checks, no wizard gate, no
+     *  persistence preference, no playclip-mode choice; the `configVersion` stamp is kept).
+     *  Fail-open: a disk error returns false, never throws. */
     fun saveCustom(name: String): Boolean {
-        if (isBuiltIn(name)) return false
+        val safe = safeName(name) ?: return false
+        if (isBuiltIn(safe)) return false
         return try {
-            val p = customPath(name) ?: return false
+            val p = customPath(safe) ?: return false
             Files.createDirectories(p.parent)
-            Files.writeString(p, ConfigManager.configToJson(ConfigManager.config))
+            Files.writeString(p, ConfigManager.presetContentJson(ConfigManager.config))
             true
         } catch (_: Throwable) {
             false
         }
     }
 
-    /** Delete a custom preset. Refuses built-in names (returns false). Returns true only if a file
-     *  was actually removed. Fail-open. */
+    /** Delete a custom preset. Refuses built-in names (returns false — the name is sanitized
+     *  BEFORE the guard). Removes the file from BOTH locations — roaming and the legacy game-dir
+     *  dir — because a same-named preset can exist in each (one save per build generation) and
+     *  [loadCustom] falls through to the legacy copy: deleting only the roaming file would report
+     *  a delete whose preset still loads and still lists. Returns true only if a file was
+     *  actually removed. Fail-open. */
     fun deleteCustom(name: String): Boolean {
-        if (isBuiltIn(name)) return false
+        val safe = safeName(name) ?: return false
+        if (isBuiltIn(safe)) return false
         return try {
-            val p = customPath(name) ?: return false
-            Files.deleteIfExists(p)
+            val removedRoaming = Files.deleteIfExists(presetsDir().resolve("$safe.json"))
+            val removedLegacy = Files.deleteIfExists(legacyGameDirPresets().resolve("$safe.json"))
+            removedRoaming || removedLegacy
         } catch (_: Throwable) {
             false
         }
     }
 
-    /** Custom preset names (filename stems) in the presets dir, sorted. Empty if the dir doesn't
-     *  exist or reads fail. Fail-open. */
+    /** Custom preset names in the presets dir, sorted, de-duplicated. Reads the roaming dir
+     *  first and falls back to (plus merges) the legacy game-dir location so presets saved by
+     *  older builds stay listed and loadable. Empty list only when neither exists / reads fail.
+     *  Fail-open. */
     fun listCustom(): List<String> = try {
         val dir = presetsDir()
-        if (!Files.exists(dir)) emptyList()
-        else Files.list(dir).use { stream ->
+        val legacy = legacyGameDirPresets()
+        val current = if (!Files.isDirectory(dir)) emptyList() else Files.list(dir).use { stream ->
             stream.filter { it.toString().endsWith(".json") }
                 .map { it.fileName.toString().removeSuffix(".json") }
                 .sorted()
                 .toList()
         }
+        val old = if (!Files.isDirectory(legacy) || legacy == dir) emptyList() else Files.list(legacy).use { stream ->
+            stream.filter { it.toString().endsWith(".json") }
+                .map { it.fileName.toString().removeSuffix(".json") }
+                .sorted()
+                .toList()
+        }
+        // A name present in BOTH locations resolves to the roaming file (loadCustom checks it
+        // first), so listing de-dupes toward the live one. Sorted for a stable listing.
+        (current + old.filter { it !in current }).sorted()
     } catch (_: Throwable) {
         emptyList()
     }
@@ -100,34 +129,17 @@ object PresetManager {
     // ---- built-in templates ----
 
     /** A fresh [IustitiaConfig] with the per-preset overrides applied (or null for an unknown name).
-     *  SetbackVL scaling + the Lenient subtle-check disable are applied here so the returned config
-     *  is a fully-realized snapshot that [apply] can copy 1:1. */
+     *  The returned config is a fully-realized snapshot that [apply] can copy 1:1. */
     fun builtIn(name: String): IustitiaConfig? {
         val base = IustitiaConfig()
         return when (name.lowercase()) {
-            "strict" -> base.apply {
-                allVisuals(false); verbose = true; alertLevel = 2; alertBatching = false; compactMode = false
-                sonarAlerts = false; replayCapture = true; nametagPrefixes = true; nametagGreenEnabled = true
-            }.also { scaleSetbackVL(it, 0.5) }
             "standard" -> base.apply {
-                allVisuals(false); alertLevel = 1; alertBatching = true; compactMode = false; verbose = false
-                sonarAlerts = false; replayCapture = true; nametagPrefixes = true; nametagGreenEnabled = true
-            }
-            "lenient" -> base.apply {
-                allVisuals(false); alertLevel = 1; alertBatching = true; compactMode = false; verbose = false
-                sonarAlerts = false; replayCapture = true; nametagPrefixes = true; nametagGreenEnabled = true
-                disableSubtleChecks()
-            }.also { scaleSetbackVL(it, 2.0) }
-            "debug" -> base.apply {
-                allVisuals(true); verbose = true; alertLevel = 2; alertBatching = true; compactMode = false
-                sonarAlerts = true; replayCapture = true; nametagPrefixes = true; nametagGreenEnabled = true
-                audioCues = true; audioNuclear = true; transcriptPanel = true
-            }
-            "moderation" -> base.apply {
-                allVisuals(false); hoverTooltip = true; confidenceHud = false
-                verbose = false; compactMode = true; alertLevel = 1; alertBatching = true
-                sonarAlerts = false; replayCapture = true; nametagPrefixes = true; nametagGreenEnabled = true
-                audioCues = false; audioNuclear = false
+                targetHighlight = false; ghostTrail = false; watchFollowCam = false; burstSparks = false
+                hoverTooltip = false; tabListBadge = false; nametagBurstPulse = false
+                lagHudIcon = true   // the one light visual: explains WHY alerts soften during lag bursts
+                confidenceHud = false; transcriptPanel = false
+                alertLevel = 1; alertBatching = true; compactMode = false; verbose = false
+                replayCapture = true; nametagPrefixes = true; nametagGreenEnabled = true
             }
             else -> null
         }
@@ -135,104 +147,61 @@ object PresetManager {
 
     // ---- internals ----
 
-    /** Copy every preset-content field from [src] into [target] IN PLACE (mutate the live config
-     *  object — never replace it). Excludes `configVersion`/`mutedChecks`/`mutedPlayers`/
-     *  `wizardCompleted`/`persistenceEnabled`. Each check slice's 4 fields copied in place too. */
-    private fun copyPresetContent(target: IustitiaConfig, src: IustitiaConfig) {
-        target.enabled = src.enabled
-        target.verbose = src.verbose
-        target.alertThrottleTicks = src.alertThrottleTicks
-        target.joinGraceTicks = src.joinGraceTicks
-        target.legitScaffoldStrictGates = src.legitScaffoldStrictGates
-        target.alertsEnabled = src.alertsEnabled
-        target.nametagPrefixes = src.nametagPrefixes
-        target.nametagGreenEnabled = src.nametagGreenEnabled
-        target.alertLevel = src.alertLevel
-        target.alertBatching = src.alertBatching
-        target.alertBatchWindowTicks = src.alertBatchWindowTicks
-        target.audioCues = src.audioCues
-        target.audioVolume = src.audioVolume
-        target.audioNuclear = src.audioNuclear
-        target.lagSuppressAlerts = src.lagSuppressAlerts
-        target.nametagBurstPulse = src.nametagBurstPulse
-        target.compactMode = src.compactMode
-        target.evidenceWindowTicks = src.evidenceWindowTicks
-        target.transcriptPanel = src.transcriptPanel
-        target.lagHudIcon = src.lagHudIcon
-        target.confidenceHud = src.confidenceHud
-        target.targetHighlight = src.targetHighlight
-        target.ghostTrail = src.ghostTrail
-        target.watchFollowCam = src.watchFollowCam
-        target.burstSparks = src.burstSparks
-        target.hoverTooltip = src.hoverTooltip
-        target.tabListBadge = src.tabListBadge
-        target.replayCapture = src.replayCapture
-        target.replayHideLive = src.replayHideLive
-        target.replayPlayerModels = src.replayPlayerModels
-        target.replayRelocate = src.replayRelocate
-        target.clipTerrain = src.clipTerrain
-        target.clipChunkWorld = src.clipChunkWorld
-        target.clipChunkRadius = src.clipChunkRadius
-        target.clipChunkRenderDistance = src.clipChunkRenderDistance
-        target.sonarAlerts = src.sonarAlerts
-        target.sonarVolume = src.sonarVolume
-        for ((id, tcc) in target.checks()) {
-            val scc = src.slice(id)
-            tcc.enabled = scc.enabled
-            tcc.setbackVL = scc.setbackVL
-            tcc.decay = scc.decay
-            tcc.threshold = scc.threshold
-        }
-    }
-
-    /** Load a custom preset JSON → [IustitiaConfig], or null if no file / parse fails. Fail-open. */
+    /** Load a custom preset JSON → [IustitiaConfig]. Reads the roaming presets dir first, then
+     *  the legacy game-dir location, so a preset saved by an older build still applies —
+     *  [listCustom] lists both locations, so every listed name must also be loadable.
+     *
+     *  The read goes through the HONEST path ([ConfigManager.configFromJsonInto], which throws on
+     *  a mistyped value instead of swallowing it): a corrupt or hand-mangled preset file surfaces
+     *  as a load failure ("preset not applied") rather than flowing a HALF-READ config into the
+     *  live config as a successful apply — which is what the old fail-open [ConfigManager.fromJson]
+     *  round-trip did. Fail-open: unreadable / corrupt → null, never a crash. */
     private fun loadCustom(name: String): IustitiaConfig? = try {
-        val p = customPath(name) ?: return null
-        if (!Files.exists(p)) return null
-        val obj = JsonParser.parseString(Files.readString(p)).asJsonObject
-        ConfigManager.configFromJson(obj)
+        val safe = safeName(name) ?: return null
+        val roaming = presetsDir().resolve("$safe.json")
+        val file = if (Files.exists(roaming)) roaming else legacyGameDirPresets().resolve("$safe.json")
+        if (!Files.exists(file)) return null
+        val obj = JsonParser.parseString(Files.readString(file)).asJsonObject
+        val scratch = IustitiaConfig()
+        ConfigManager.configFromJsonInto(obj, scratch)
+        scratch
     } catch (_: Throwable) {
         null
     }
 
-    private fun customPath(name: String): Path? {
+    /** Sanitize a preset name to `[A-Za-z0-9_.-]` (no traversal). Null when the sanitized name
+     *  is empty. */
+    private fun safeName(name: String): String? {
         val safe = name.trim().replace(Regex("[^A-Za-z0-9_.-]"), "_")
-        if (safe.isEmpty()) return null
+        return safe.ifEmpty { null }
+    }
+
+    /** Resolve a preset's file path: `<roaming data dir>/presets/<safe>.json`. [safe] is already
+     *  [safeName]-sanitized (re-sanitizing is idempotent). Null when it is empty. */
+    private fun customPath(name: String): Path? {
+        val safe = safeName(name) ?: return null
         return presetsDir().resolve("$safe.json")
     }
 
-    private fun presetsDir(): Path =
+    /** Presets dir, matching the rest of Iustitia's data layout: `%APPDATA%/.iustitia/presets` on
+     *  Windows (roaming, same tree as clips/exemptions/notes), `<gameDir>/.iustitia/presets`
+     *  elsewhere. A legacy game-dir preset directory is still READ when the roaming one has no
+     *  presets, so presets saved by older builds keep loading after the move. */
+    private fun presetsDir(): Path {
+        val base = roamingBaseDir()
+        return base.resolve("presets")
+    }
+
+    /** Legacy write location (pre-rework builds): the game dir. Checked for backwards-compatible
+     *  LOADS only — new saves always go to [presetsDir]. */
+    private fun legacyGameDirPresets(): Path =
         FabricLoader.getInstance().gameDir.resolve(".iustitia/presets")
 
-    /** Scale every check's setbackVL by [scale], reading the DEFAULT values from a fresh
-     *  [IustitiaConfig] so the scale is independent of the user's current tuning. */
-    private fun scaleSetbackVL(c: IustitiaConfig, scale: Double) {
-        val defaults = IustitiaConfig()
-        for ((id, cc) in c.checks()) {
-            cc.setbackVL = defaults.slice(id).setbackVL * scale
-        }
-    }
-
-    /** Disable the subtle / corroboration-tier checks for the Lenient preset. */
-    private fun IustitiaConfig.disableSubtleChecks() {
-        listOf(
-            "hitsWithoutSwing", "hitFlick", "triggerbot", "packetGap", "rotationSnapBack",
-            "wTap", "keepSprint", "jumpOnHurt", "aimWrap", "scaffoldRotation",
-        ).forEach { slice(it).enabled = false }
-    }
-
-    /** Flip all overlay/HUD visual toggles. `on=false` = "no visuals" (strict/standard/lenient/
-     *  moderation baseline); `on=true` = "every visual" (debug). */
-    private fun IustitiaConfig.allVisuals(on: Boolean) {
-        targetHighlight = on
-        ghostTrail = on
-        watchFollowCam = on
-        burstSparks = on
-        hoverTooltip = on
-        tabListBadge = on
-        nametagBurstPulse = on
-        lagHudIcon = on
-        confidenceHud = on
-        transcriptPanel = on
+    /** `%APPDATA%` on Windows (the roaming store clips/exemptions/notes already use), else the
+     *  game dir. Same resolution as [dev.iustitia.persistence.PersistenceManager] / ClipStore. */
+    private fun roamingBaseDir(): Path {
+        val appdata = try { System.getenv("APPDATA") } catch (_: Throwable) { null }
+        return if (!appdata.isNullOrBlank()) java.nio.file.Path.of(appdata).resolve(".iustitia")
+        else FabricLoader.getInstance().gameDir.resolve(".iustitia")
     }
 }

@@ -80,11 +80,10 @@ object IustitiaCommand {
         "clips" to "open the clip manager screen: list saved .iusclip files, play or delete each",
         "deleteclip" to "delete a saved clip by name: /ius deleteclip <name>  (alias /ius delclip <name>)",
         "delclip" to "alias for /ius deleteclip",
-        "preset" to "apply a named config preset: /ius preset <name>  (bare = list; built-ins: strict/standard/lenient/debug/moderation; custom presets via /ius createpreset)",
+        "preset" to "apply a named config preset: /ius preset <name>  (bare = list; built-ins: standard; custom presets via /ius createpreset)",
         "presets" to "list all presets (built-in + custom): /ius presets",
         "createpreset" to "save the current config as a custom preset: /ius createpreset <name>",
         "deletepreset" to "delete a custom preset: /ius deletepreset <name>  (built-ins can't be deleted)",
-        "sonar" to "toggle directional audio alerts: /ius sonar [on|off]  (pan = direction, pitch = distance)",
         "wizard" to "re-run the first-launch setup wizard",
         "keybinds" to "open the keybind hub screen (lists binds, highlights conflicts)",
         "help" to "this help, or /ius help <check|subcommand|feature>",
@@ -240,11 +239,6 @@ object IustitiaCommand {
                 .then(ClientCommandManager.argument("name", StringArgumentType.word())
                     .suggests { _, b -> suggestFiltered(b, dev.iustitia.config.PresetManager.listCustom()); b.buildFuture() }
                     .executes { presetDelete(it) }))
-            .then(ClientCommandManager.literal("sonar")
-                .executes { sonarToggle(it, null) }
-                .then(ClientCommandManager.argument("state", StringArgumentType.word())
-                    .suggests { _, b -> suggestFiltered(b, listOf("on", "off")); b.buildFuture() }
-                    .executes { sonarToggle(it, StringArgumentType.getString(it, "state")) }))
             .then(ClientCommandManager.literal("wizard").executes { wizard(it) })
             .then(ClientCommandManager.literal("keybinds").executes { keybinds(it) })
             .then(ClientCommandManager.literal("alerts")
@@ -337,6 +331,27 @@ object IustitiaCommand {
     // ---- feedback helper ----
     private fun send(ctx: CommandContext<FabricClientCommandSource>, line: String) {
         ctx.source.sendFeedback(Text.literal(line))
+    }
+
+    // ---- companion-mod yield guards ----
+    // SnapClip / Scrollback / FollowCam are single-feature extracts of Iustitia. When one is
+    // installed it owns its feature, so the matching Iustitia commands defer with a pointer instead
+    // of running a second copy (double capture / double camera / double chat store). Core detection
+    // and every other command are unaffected. See dev.iustitia.compat.CompanionMods.
+    private fun companionOwnsReplay(ctx: CommandContext<FabricClientCommandSource>): Boolean {
+        if (!dev.iustitia.compat.CompanionMods.snapClip) return false
+        send(ctx, "$tag §7replay/clip/record is handled by §fSnapClip§7 (installed) — use its §f/replay§7, §f/clip§7 and §f/record§7 commands.")
+        return true
+    }
+    private fun companionOwnsChat(ctx: CommandContext<FabricClientCommandSource>): Boolean {
+        if (!dev.iustitia.compat.CompanionMods.scrollback) return false
+        send(ctx, "$tag §7chat history is handled by §fScrollback§7 (installed) — use its §f/scrollback§7 command.")
+        return true
+    }
+    private fun companionOwnsWatch(ctx: CommandContext<FabricClientCommandSource>): Boolean {
+        if (!dev.iustitia.compat.CompanionMods.followCam) return false
+        send(ctx, "$tag §7the follow-cam is handled by §fFollowCam§7 (installed) — use its §f/follow§7 command.")
+        return true
     }
 
     // ---- existing subcommands ----
@@ -532,9 +547,11 @@ object IustitiaCommand {
     }
 
     /** `/ius record start` — begin a manual long recording (capped at 10 min per segment; auto-saves
-     *  a segment on world change + at the cap and keeps recording). Captures the loaded world map
-     *  once (synchronous one-shot hitch, same as `/ius clip`). Feedback via [RecordManager.start]. */
+     *  a segment on world change + at the cap and keeps recording). The world map is rolled up in small
+     *  per-tick pieces while recording (no save-time sweep), plus every block edit observed. Feedback
+     *  via [dev.iustitia.replay.RecordManager.start]. */
     private fun recordStart(ctx: CommandContext<FabricClientCommandSource>): Int {
+        if (companionOwnsReplay(ctx)) return 1
         if (!ConfigManager.config.replayCapture) {
             send(ctx, "$tag §7replay capture is §cdisabled§7 in config — recording needs it on.")
             return 0
@@ -546,6 +563,7 @@ object IustitiaCommand {
     /** `/ius record stop [name]` — save the active recording as `<name>.iusclip` (default
      *  `record_<tick>_<idx>`) → plays back with `/ius playclip <name>`. Feedback via [RecordManager.stop]. */
     private fun recordStop(ctx: CommandContext<FabricClientCommandSource>, name: String?): Int {
+        if (companionOwnsReplay(ctx)) return 1
         send(ctx, dev.iustitia.replay.RecordManager.stop(name))
         return 1
     }
@@ -556,6 +574,7 @@ object IustitiaCommand {
 
     /** Bare `/ius chathist` / `/ius chathist phrase` usage hint. */
     private fun chathistUsage(ctx: CommandContext<FabricClientCommandSource>): Int {
+        if (companionOwnsChat(ctx)) return 1
         send(ctx, "$tag §7usage:")
         send(ctx, " §f/ius chathist <username> [page]§7 — a player's messages (newest first).")
         send(ctx, " §f/ius chathist phrase <phrase> [page]§7 — everyone who said <phrase>, in order.")
@@ -569,6 +588,7 @@ object IustitiaCommand {
 
     /** `/ius chathist <username> [page]` — that player's messages, newest-first, 8/page. */
     private fun chathistUser(ctx: CommandContext<FabricClientCommandSource>, username: String, page: Int): Int {
+        if (companionOwnsChat(ctx)) return 1
         val rows = dev.iustitia.chathist.ChatHistory.rowsForUser(username)
         renderChatPage(ctx, rows, page, "chathist $username")
         return 1
@@ -576,6 +596,7 @@ object IustitiaCommand {
 
     /** `/ius chathist phrase <phrase> [page]` — every player who said [phrase], in order, 8/page. */
     private fun chathistPhrase(ctx: CommandContext<FabricClientCommandSource>, phrase: String, page: Int): Int {
+        if (companionOwnsChat(ctx)) return 1
         val rows = dev.iustitia.chathist.ChatHistory.rowsForPhrase(phrase)
         renderChatPage(ctx, rows, page, "chathist phrase $phrase")
         return 1
@@ -583,6 +604,7 @@ object IustitiaCommand {
 
     /** `/ius chathist target <username> <phrase> [page]` — [username]'s messages containing [phrase]. */
     private fun chathistTarget(ctx: CommandContext<FabricClientCommandSource>, username: String, phrase: String, page: Int): Int {
+        if (companionOwnsChat(ctx)) return 1
         val rows = dev.iustitia.chathist.ChatHistory.rowsForUserPhrase(username, phrase)
         renderChatPage(ctx, rows, page, "chathist target $username $phrase")
         return 1
@@ -592,6 +614,7 @@ object IustitiaCommand {
 
     /** Bare `/ius chathist panel` usage hint. */
     private fun chathistPanelUsage(ctx: CommandContext<FabricClientCommandSource>): Int {
+        if (companionOwnsChat(ctx)) return 1
         send(ctx, "$tag §7usage:")
         send(ctx, " §f/ius chathist panel user <username> [n]§7 — side panel of <username>'s last [n] msgs (default 15).")
         send(ctx, " §f/ius chathist panel phrase <word> [n]§7 — side panel of everyone who said <word>.")
@@ -620,6 +643,7 @@ object IustitiaCommand {
 
     /** Open the chathist side panel for a query (mirrors `transcriptPanelNamed`'s mc.execute pattern). */
     private fun openChatPanel(ctx: CommandContext<FabricClientCommandSource>, subtitle: String, rowsProvider: () -> List<dev.iustitia.chathist.ChatHistory.Row>, limit: Int) {
+        if (companionOwnsChat(ctx)) return
         val mc = MinecraftClient.getInstance()
         mc.execute { try { mc.setScreen(ChatHistPanelScreen(subtitle, rowsProvider, limit, null)) } catch (_: Throwable) {} }
         send(ctx, "$tag §7chathist panel: §f$subtitle §8($limit)")
@@ -1072,6 +1096,7 @@ object IustitiaCommand {
      *  to position on them; switching targets mid-watch restores the saved HUD/perspective state
      *  first so the forced state isn't captured as the new baseline. Fail-open, client-thread only. */
     private fun spectate(ctx: CommandContext<FabricClientCommandSource>, nameArg: String?): Int {
+        if (companionOwnsWatch(ctx)) return 1
         val mc = MinecraftClient.getInstance()
         val active = try { dev.iustitia.render.WatchState.active } catch (_: Throwable) { false }
         // Explicit stop.
@@ -1118,10 +1143,11 @@ object IustitiaCommand {
         return 1
     }
 
-    // ---- replay / clip / playclip / sonar (Phase 2 instant-replay suite) ----
+    // ---- replay / clip / playclip (Phase 2 instant-replay suite) ----
     /** `/ius replay off` + `/ius playclip off` — stop any active replay/clip-playback; live rendering
      *  snaps back immediately (hide-live mixin re-enables). Idempotent. */
     private fun replayStop(ctx: CommandContext<FabricClientCommandSource>): Int {
+        if (companionOwnsReplay(ctx)) return 1
         val active = try { dev.iustitia.replay.ReplayState.active } catch (_: Throwable) { false }
         if (!active) { send(ctx, "$tag §7no replay running."); return 1 }
         dev.iustitia.replay.ReplayState.stop("stopped")
@@ -1201,6 +1227,7 @@ object IustitiaCommand {
 
     /** Common guard for the control subcommands: chat + return false if no replay is running. */
     private fun replayActive(ctx: CommandContext<FabricClientCommandSource>): Boolean {
+        if (companionOwnsReplay(ctx)) return false
         val active = try { dev.iustitia.replay.ReplayState.active } catch (_: Throwable) { false }
         if (!active) send(ctx, "$tag §7no replay running (start one with §f/ius replay <sec>§7 or §f/ius replay <name> <sec>§7).")
         return active
@@ -1232,6 +1259,7 @@ object IustitiaCommand {
      *  A name that isn't tracked/online still replays everyone (no focus) with a warning. Stops on
      *  finish / world-change / re-run. Fail-open, client-only. */
     private fun replay(ctx: CommandContext<FabricClientCommandSource>, target: String?, speedArg: String?): Int {
+        if (companionOwnsReplay(ctx)) return 1
         val cfg = ConfigManager.config
         if (!cfg.replayCapture) {
             send(ctx, "$tag §7replay capture is §cdisabled§7 in config (enable via §f/ius config§7) — nothing buffered.")
@@ -1281,10 +1309,11 @@ object IustitiaCommand {
 
     /** `/ius replay save <name>` — export the active replay's window to a `.iusclip` without exiting
      *  the replay. Requires an active replay (playing or held); errors if none. Contents match the
-     *  configured playclipMode: MODERN → frames + alerts + fresh terrain/chunks captured at save
-     *  time (reusing the /ius clip capture path); LEGACY → frames + alerts only. The replay keeps
-     *  running after a save (you can save again / keep watching). Fail-open. */
+     *  configured playclipMode: MODERN → frames + alerts + the per-segment world/block edits from the
+     *  rolling capture (a one-shot sweep is the fallback when nothing was rolled up) ; LEGACY → frames +
+     *  alerts only. The replay keeps running after a save (you can save again / keep watching). Fail-open. */
     private fun replaySave(ctx: CommandContext<FabricClientCommandSource>, nameArg: String): Int {
+        if (companionOwnsReplay(ctx)) return 1
         if (!dev.iustitia.replay.ReplayState.active) {
             send(ctx, "$tag §cno active replay to save§7 — start one with §f/ius replay§7 first.")
             return 0
@@ -1298,26 +1327,57 @@ object IustitiaCommand {
         // Capture terrain + chunks at save time only when MODERN and the replay isn't already
         // carrying them (a /ius replay window has none; a playclip-modern window already has them).
         val modern = cfg.playclipMode == dev.iustitia.config.IustitiaConfig.PlayclipMode.MODERN
-        val w1 = if (modern && cfg.clipTerrain && base.terrain == null) {
-            try { base.copy(terrain = dev.iustitia.replay.TerrainCapture.capture(base, focus)) } catch (_: Throwable) { base }
+        // Attach the per-segment world + block deltas from the rolling capture. A live `/ius replay`
+        // window carries none (it renders over the live world), so it's derived here; a
+        // playclip-modern window already owns its segments and is kept as-is.
+        val withSegments = if (modern && base.segments.isEmpty()) {
+            try { base.copy(segments = dev.iustitia.replay.ReplayBuffer.segmentsFor(base.frames)) } catch (_: Throwable) { base }
         } else base
-        val w2 = if (modern && cfg.clipChunkWorld && base.chunks == null) {
-            try {
-                val radius = try { cfg.clipChunkRadius } catch (_: Throwable) { 8 }
-                w1.copy(chunks = dev.iustitia.replay.ChunkCapture.capture(radius))
-            } catch (_: Throwable) { w1 }
-        } else w1
+        val w1 = if (modern && cfg.clipTerrain && withSegments.terrain == null) {
+            try { withSegments.copy(terrain = dev.iustitia.replay.TerrainCapture.capture(withSegments, focus)) } catch (_: Throwable) { withSegments }
+        } else withSegments
+        val w2 = if (modern && cfg.clipChunkWorld) ensureClipWorld(w1, cfg) else w1
         val saved = try { dev.iustitia.replay.ClipStore.save(nameArg, w2, focus) } catch (_: Throwable) { null }
         if (saved == null) { send(ctx, "$tag §cfailed to write clip (disk error)."); return 0 }
         val frames = w2.frames.size
         val alerts = w2.alerts.size
         val blocks = w2.terrain?.nonAirCount() ?: 0
         val terrainTxt = if (blocks > 0) "§8, $blocks terrain blocks§7" else ""
-        val chunkSections = w2.chunks?.sectionCount() ?: 0
+        val chunkSections = w2.chunks?.sectionCount()
+            ?: w2.segments.sumOf { it.chunks?.sectionCount() ?: 0 }
         val chunksTxt = if (chunkSections > 0) "§8, $chunkSections chunk sections§7" else ""
-        send(ctx, "$tag §7replay saved as clip §f$saved§7 §8($frames frames, $alerts alerts$terrainTxt$chunksTxt) §7→ §f${dev.iustitia.replay.ClipStore.dirDisplay()}§7. Replay still active.")
+        val segCount = w2.segments.size
+        val segTxt = if (segCount > 1) "§8, $segCount segments§7" else ""
+        val deltaCount = w2.segments.sumOf { it.blockDeltas.size }
+        val deltaTxt = if (deltaCount > 0) "§8, $deltaCount block edits§7" else ""
+        send(ctx, "$tag §7replay saved as clip §f$saved§7 §8($frames frames, $alerts alerts$terrainTxt$chunksTxt$segTxt$deltaTxt) §7→ §f${dev.iustitia.replay.ClipStore.dirDisplay()}§7. Replay still active.")
         send(ctx, " §7play it back with §f/ius playclip $saved§7.")
         return 1
+    }
+
+    /**
+     * Guarantee an exported clip window carries a world. The per-segment rolling capture has normally
+     * already rolled it up (no export-time sweep — the whole point of the v13 segments), so this is a
+     * no-op then. It sweeps once, synchronously, only when a segment has nothing — attaching the result
+     * to the first segment that lacks a world (or the top-level `chunks` when a window carries no
+     * segments) so the clip still opens as a solid world instead of ghosts-only. Fail-open: an error
+     * exports a world-less clip rather than failing the command.
+     */
+    private fun ensureClipWorld(
+        window: dev.iustitia.replay.ReplayBuffer.Window,
+        cfg: dev.iustitia.config.IustitiaConfig,
+    ): dev.iustitia.replay.ReplayBuffer.Window {
+        if (window.chunks != null) return window
+        // Fill the FIRST segment that has no world (normally the only one — a teleport is what creates a
+        // second). A clip whose later segments already carry their own capture therefore needs no sweep.
+        val missing = window.segments.indexOfFirst { it.chunks == null }
+        if (window.segments.isNotEmpty() && missing < 0) return window
+        return try {
+            val radius = try { cfg.clipChunkRadius } catch (_: Throwable) { 8 }
+            val map = dev.iustitia.replay.ChunkCapture.capture(radius) ?: return window
+            if (window.segments.isEmpty()) window.copy(chunks = map)
+            else window.copy(segments = window.segments.mapIndexed { i, s -> if (i == missing) s.copy(chunks = map) else s })
+        } catch (_: Throwable) { window }
     }
 
     /** `/ius clip <seconds> [name]` — dump the last N seconds of positions + alerts to a portable
@@ -1325,6 +1385,7 @@ object IustitiaCommand {
      *  of the persistence toggle). [name] is the clip's FILENAME (verbatim) so `/ius playclip <name>`
      *  round-trips; it also sets the focus player when it matches someone online. Omitted → `scene_<tick>`. Fail-open. */
     private fun clip(ctx: CommandContext<FabricClientCommandSource>, nameArg: String?): Int {
+        if (companionOwnsReplay(ctx)) return 1
         val cfg = ConfigManager.config
         if (!cfg.replayCapture) {
             send(ctx, "$tag §7replay capture is §cdisabled§7 in config — nothing to export.")
@@ -1332,8 +1393,14 @@ object IustitiaCommand {
         }
         val secs = DoubleArgumentType.getDouble(ctx, "seconds").toInt().coerceIn(1, dev.iustitia.replay.ReplayBuffer.MAX_SECONDS)
         val focus: java.util.UUID? = if (nameArg != null) resolveUuid(nameArg) else null
+        // LEGACY exports frames + alerts only (v1.1.0 was ghosts over the live world), so it must not
+        // pull in the captured world; MODERN exports the per-segment world + block deltas.
+        val modern = cfg.playclipMode == dev.iustitia.config.IustitiaConfig.PlayclipMode.MODERN
         val now = dev.iustitia.Iustitia.tickCounter
-        val window = try { dev.iustitia.replay.ReplayBuffer.snapshot(secs, now) } catch (_: Throwable) {
+        val window = try {
+            if (modern) dev.iustitia.replay.ReplayBuffer.snapshotForExport(secs, now)
+            else dev.iustitia.replay.ReplayBuffer.snapshot(secs, now)
+        } catch (_: Throwable) {
             dev.iustitia.replay.ReplayBuffer.Window(emptyList(), emptyList())
         }
         if (window.frames.isEmpty()) {
@@ -1353,21 +1420,14 @@ object IustitiaCommand {
         // (ReplayBuffer.snapshot builds a terrain-null window), so this only affects clips.
         // Legacy mode never downloads the world (v1.1.0 was ghosts-only) — terrain + chunk capture
         // are gated on Modern regardless of the clipTerrain/clipChunkWorld toggles.
-        val modern = cfg.playclipMode == dev.iustitia.config.IustitiaConfig.PlayclipMode.MODERN
         val windowWithTerrain = if (modern && cfg.clipTerrain) {
             try { window.copy(terrain = dev.iustitia.replay.TerrainCapture.capture(window, focus)) } catch (_: Throwable) { window }
         } else window
-        // Optionally snapshot every loaded chunk around the player so /ius playclip can render the
-        // clip's world as solid textured blocks (the real map) relocated to the user, with the live
-        // world hidden — free-spectate anywhere incl. underground. One-shot at save time; bounded by
-        // clipChunkRadius + a section budget. Fail-open to a chunks-less clip if capture throws or
-        // clipChunkWorld is off (the v5 wireframe terrain / ghosts path then plays as before).
-        val windowWithWorld = if (modern && cfg.clipChunkWorld) {
-            try {
-                val radius = try { cfg.clipChunkRadius } catch (_: Throwable) { 8 }
-                windowWithTerrain.copy(chunks = dev.iustitia.replay.ChunkCapture.capture(radius))
-            } catch (_: Throwable) { windowWithTerrain }
-        } else windowWithTerrain
+        // The world normally rides along per segment, already rolled up in small per-tick pieces while
+        // the scene was live ([dev.iustitia.replay.ReplayBuffer.snapshotForExport]) — so saving a clip
+        // no longer freezes the client sweeping ~300 chunks. Only when the rolling capture had nothing
+        // for this window (fresh session / toggle just enabled) does [ensureClipWorld] sweep once.
+        val windowWithWorld = if (modern && cfg.clipChunkWorld) ensureClipWorld(windowWithTerrain, cfg) else windowWithTerrain
         val saved = try { dev.iustitia.replay.ClipStore.save(clipName, windowWithWorld, focus) } catch (_: Throwable) { null }
         if (saved == null) {
             send(ctx, "$tag §cfailed to write clip (disk error).")
@@ -1377,9 +1437,16 @@ object IustitiaCommand {
         val alerts = window.alerts.size
         val blocks = windowWithWorld.terrain?.nonAirCount() ?: 0
         val terrainTxt = if (blocks > 0) "§8, $blocks terrain blocks§7" else ""
-        val chunkSections = windowWithWorld.chunks?.sectionCount() ?: 0
+        // Chunk sections can live on the top-level snapshot (pre-v13/world-less-segments export) or
+        // inside per-segment snapshots; count both so the feedback line matches what was written.
+        val chunkSections = windowWithWorld.chunks?.sectionCount()
+            ?: windowWithWorld.segments.sumOf { it.chunks?.sectionCount() ?: 0 }
         val chunksTxt = if (chunkSections > 0) "§8, $chunkSections chunk sections§7" else ""
-        send(ctx, "$tag §7clip saved: §f$saved§7 §8($frames frames, $alerts alerts, ${secs}s$terrainTxt$chunksTxt) §7→ §f${dev.iustitia.replay.ClipStore.dirDisplay()}")
+        val segCount = windowWithWorld.segments.size
+        val segTxt = if (segCount > 1) "§8, $segCount segments§7" else ""
+        val deltaCount = windowWithWorld.segments.sumOf { it.blockDeltas.size }
+        val deltaTxt = if (deltaCount > 0) "§8, $deltaCount block edits§7" else ""
+        send(ctx, "$tag §7clip saved: §f$saved§7 §8($frames frames, $alerts alerts, ${secs}s$terrainTxt$chunksTxt$segTxt$deltaTxt) §7→ §f${dev.iustitia.replay.ClipStore.dirDisplay()}")
         send(ctx, " §7play it back with §f/ius playclip $saved§7.")
         return 1
     }
@@ -1389,6 +1456,7 @@ object IustitiaCommand {
      *  saved clips. Validates the speed arg, then delegates load → start to [ClipPlayback] (shared with
      *  the clip-manager screen's left-click Play) so the two entry points can't drift. Fail-open. */
     private fun playclip(ctx: CommandContext<FabricClientCommandSource>, nameArg: String?, speedArg: String?): Int {
+        if (companionOwnsReplay(ctx)) return 1
         if (nameArg == null) {
             val clips = try { dev.iustitia.replay.ClipStore.list() } catch (_: Throwable) { emptyList() }
             if (clips.isEmpty()) { send(ctx, "$tag §7no saved clips yet. Save one with §f/ius clip <seconds> [name]§7."); return 1 }
@@ -1413,20 +1481,6 @@ object IustitiaCommand {
         return 0
     }
 
-    /** `/ius sonar [on|off]` — toggle the directional audio alert cue (additive to chat). Bare = toggle. */
-    private fun sonarToggle(ctx: CommandContext<FabricClientCommandSource>, stateArg: String?): Int {
-        val cfg = ConfigManager.config
-        val want = when (stateArg?.lowercase()) { "on" -> true; "off" -> false; else -> null }
-        val nowOn = when (want) {
-            true -> { cfg.sonarAlerts = true; true }
-            false -> { cfg.sonarAlerts = false; false }
-            null -> { cfg.sonarAlerts = !cfg.sonarAlerts; cfg.sonarAlerts }
-        }
-        try { ConfigManager.save() } catch (_: Throwable) {}
-        send(ctx, "$tag §7sonar alerts ${if (nowOn) "§aON" else "§cOFF"}§7 §8(pan = direction, pitch = distance, vol ${"%.2f".format(cfg.sonarVolume)}; additive to chat).")
-        return 1
-    }
-
     // ---- wizard (#13) + keybinds (#14) ----
     private fun wizard(ctx: CommandContext<FabricClientCommandSource>): Int {
         val mc = MinecraftClient.getInstance()
@@ -1442,6 +1496,7 @@ object IustitiaCommand {
 
     /** `/ius clips` — open the clip manager (list saved `.iusclip` files with Play + Delete). */
     private fun clipsScreen(ctx: CommandContext<FabricClientCommandSource>): Int {
+        if (companionOwnsReplay(ctx)) return 1
         val mc = MinecraftClient.getInstance()
         mc.execute { try { mc.setScreen(dev.iustitia.ui.ClipManagerScreen(mc.currentScreen)) } catch (_: Throwable) {} }
         return 1
@@ -1450,6 +1505,7 @@ object IustitiaCommand {
     /** `/ius deleteclip <name>` (alias `/ius delclip <name>`) — delete a saved `.iusclip` by name.
      *  Wires the existing [dev.iustitia.replay.ClipStore.delete]; fail-open with chat feedback. */
     private fun deleteClip(ctx: CommandContext<FabricClientCommandSource>): Int {
+        if (companionOwnsReplay(ctx)) return 1
         val name = StringArgumentType.getString(ctx, "name")
         val ok = try { dev.iustitia.replay.ClipStore.delete(name) } catch (_: Throwable) { false }
         if (ok) {
@@ -1483,7 +1539,7 @@ object IustitiaCommand {
             val kind = if (dev.iustitia.config.PresetManager.isBuiltIn(name)) "built-in" else "custom"
             send(ctx, "$tag §7applied $kind preset §f$name§7 — config saved. §8(/ius list§7 to see it; /ius status§7 for the panel.)")
         } else {
-            send(ctx, "$tag §cno preset §f$name§7. Built-ins: §f${dev.iustitia.config.PresetManager.builtInNames.joinToString("/")}§7. List all with §f/ius presets§7.")
+            send(ctx, "$tag §ccouldn't apply preset §f$name§7 §8(not found, or the preset file is unreadable)§7. Built-ins: §f${dev.iustitia.config.PresetManager.builtInNames.joinToString("/")}§7. List all with §f/ius presets§7.")
         }
         return if (ok) 1 else 0
     }

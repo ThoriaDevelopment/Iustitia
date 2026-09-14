@@ -18,6 +18,16 @@ import kotlin.math.max
  * 2-tick lag-absorb window with ≥2 same-tick, flags. Self-hurt and non-player victims
  * are already filtered by AttackInference.
  *
+ * Two paths, because they have different arithmetic:
+ *
+ *  - the level path (`distinctCount - 1`) climbs normally for a 3+-victim aura;
+ *  - the **pair path** covers the documented minimum (LiquidBounce `MultiTargets = 2`), where the
+ *    level is exactly `1.0` and the flag fires at most once per tick against a `1.0`/tick decay —
+ *    a measured break-even, so a two-target aura could run forever and never alert. The pair path
+ *    demands the pair repeat (see [Check.sustained]/[Check.flagEpisode]): hitting two different
+ *    players in the same tick is not something a legitimate client does even once, let alone on
+ *    most of the last four ticks.
+ *
  * setbackVL 2, decay 1/tick, level = distinctCount - 1.
  */
 class MultiTargetCheck : Check() {
@@ -55,6 +65,19 @@ class MultiTargetCheck : Check() {
                 flag(attacker, ctx, max(1.0, (sameTick - 1).toDouble()), "MultiTarget", ev.tick, Evidence(
                     subLabel = "same-tick", measurement = sameTick.toDouble(), threshold = thresh,
                     pos = attacker.pos, extra = "victims=${set.size}"))
+            }
+
+            // Pair path: 2 same-tick victims repeated — a sustained multi-aura whose per-tick
+            // level (1.0) exactly equals the decay. One pair is not asserted (a single same-tick
+            // pair is the documented minimum and the instantaneous form cannot alert); a pair on
+            // most of the last PAIR_WINDOW ticks is a module, and alerts one-shot per episode.
+            val pairNow = sustained(ctx, sameTick >= 2, PAIR_WINDOW, PAIR_MIN)
+            if (pairNow) {
+                flagEpisode(attacker, ctx, "MultiTarget", ev.tick, Evidence(
+                    subLabel = "pair-sustained", measurement = sameTick.toDouble(), threshold = 2.0,
+                    pos = attacker.pos, extra = "victims=${set.size}"))
+            } else {
+                rearmEpisode(ctx, pairNow)
             }
 
             // lag-absorb: union this tick + previous tick
@@ -101,5 +124,12 @@ class MultiTargetCheck : Check() {
 
     private class MultiTargetContext : CheckContext() {
         val tickVictims = ConcurrentHashMap<Int, MutableSet<UUID>>()
+    }
+
+    private companion object {
+        /** Rolling window of attack ticks the same-tick-pair verdict is judged over. */
+        const val PAIR_WINDOW = 4
+        /** Same-tick pairs required in the window (2 of the last 4 ticks). */
+        const val PAIR_MIN = 2
     }
 }

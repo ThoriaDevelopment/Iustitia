@@ -1,0 +1,94 @@
+package dev.iustitia.selftest
+
+import dev.iustitia.config.ConfigManager
+import dev.iustitia.config.IustitiaConfig
+import dev.iustitia.exempt.Exemptions
+import java.util.UUID
+
+/**
+ * A captured snapshot of the live config plus a quiet default profile, applied before
+ * a scenario runs. Scenarios MUST run detection under known-good settings -- a
+ * contributor's local config (a 600-tick join grace, an applied preset, muted checks,
+ * batching) would silently corrupt both the false-positive and the bypass assertions.
+ *
+ * [restore] puts the exact previous state back, so running the harness never changes
+ * the developer's client config. The harness temporarily sets:
+ *
+ * - `joinGraceTicks = 0` -- bots "join" when they spawn; a 30s grace would suppress
+ *   every alert in a 200-tick scenario.
+ * - `alertThrottleTicks = 0` -- each crossing is independently observable.
+ * - `alertBatching = false` -- no quiet-window flush dependency in assertions.
+ * - `persistenceEnabled = false` -- the harness never touches the roaming store.
+ * - `wizardCompleted = true` -- the first-launch setup wizard otherwise opens
+ *   `SetupWizardScreen` the instant the world joins, which blocks the client
+ *   gametest framework's world-join predicate until it times out (verified live:
+ *   the run failed with "Timed out waiting for predicate" and the wizard screen in
+ *   the log). Setting the flag is exactly what the wizard itself does on first open.
+ *
+ * The snapshot also clears and restores the session exemption list, because an
+ * exempted player is invisible to every check at the `Check.flag` chokepoint and
+ * would silently empty both passes.
+ *
+ * `ConfigManager.config`'s setter is private by design (the live reference must not
+ * be swapped out from under debounced saves), so the harness mutates fields in place
+ * on the client thread -- the same thread YACL edits run on.
+ */
+class TestConfigSnapshot private constructor(
+    private val savedFields: Map<String, Any?>,
+    private val savedExemptions: List<Pair<UUID, String>>,
+) {
+    companion object {
+        /** Capture the live config, stash the harness-touched fields, and apply the profile. */
+        fun captureAndApply(): TestConfigSnapshot {
+            lateinit var snap: TestConfigSnapshot
+            ClientThread.runOnClient { _ ->
+                val c = ConfigManager.config
+                val saved = mapOf<String, Any?>(
+                    "joinGraceTicks" to c.joinGraceTicks,
+                    "alertThrottleTicks" to c.alertThrottleTicks,
+                    "alertBatching" to c.alertBatching,
+                    "persistenceEnabled" to c.persistenceEnabled,
+                    "alertsEnabled" to c.alertsEnabled,
+                    "verbose" to c.verbose,
+                    "wizardCompleted" to c.wizardCompleted,
+                    "replayCapture" to c.replayCapture,
+                )
+                val exemptions = Exemptions.all()
+                Exemptions.clear()
+                snap = TestConfigSnapshot(saved, exemptions)
+                c.joinGraceTicks = 0
+                c.alertThrottleTicks = 0
+                c.alertBatching = false
+                c.persistenceEnabled = false
+                c.alertsEnabled = true
+                // Verbose is normally off (the flag tap is what the report reads), but the
+                // calibration loop needs the *sub-flag label* + measured value behind a false
+                // positive or a bypass -- set -Pselftest.verbose (live_selftest.py
+                // --verbose-log) and the game log carries every flag line.
+                c.verbose = System.getProperty("iustitia.selftest.verbose") == "1"
+                // The replay pass asserts the rolling buffer fills; a contributor who turned
+                // capture off must not get a confusing "capture is broken" failure.
+                c.replayCapture = true
+                c.wizardCompleted = true // keep the setup wizard off the world-join path
+            }
+            return snap
+        }
+    }
+
+    /** Put the developer's config + exemptions back exactly as they were. */
+    fun restore() {
+        ClientThread.runOnClient { _ ->
+            val c = ConfigManager.config
+            c.joinGraceTicks = savedFields["joinGraceTicks"] as Int
+            c.alertThrottleTicks = savedFields["alertThrottleTicks"] as Int
+            c.alertBatching = savedFields["alertBatching"] as Boolean
+            c.persistenceEnabled = savedFields["persistenceEnabled"] as Boolean
+            c.alertsEnabled = savedFields["alertsEnabled"] as Boolean
+            c.verbose = savedFields["verbose"] as Boolean
+            c.wizardCompleted = savedFields["wizardCompleted"] as Boolean
+            c.replayCapture = savedFields["replayCapture"] as Boolean
+            Exemptions.clear()
+            savedExemptions.forEach { (uuid, name) -> Exemptions.load(uuid, name) }
+        }
+    }
+}

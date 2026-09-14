@@ -103,6 +103,14 @@ class NoKnockbackCheck : Check() {
             // direction is only KB-dominated when the victim was ~stationary before the hit — a
             // charging victim's residual momentum would contaminate the direction. Snapshot the
             // pre-hit horizontal velocity (the tick the hit lands).
+            // Flush a partially-accumulated window before this hit resets it. A cheat that also
+            // skips the damage cooldown re-hits faster than [WINDOW], which would otherwise reset
+            // the measurement forever and make the check trivially evadable; the flush judges what
+            // was actually observed (see evaluate's `observed` scaling).
+            if (!ctx.evaluated && ctx.windowTicks > 0) {
+                ctx.evaluated = true
+                evaluate(victim, ctx, ev.tick, ctx.windowTicks)
+            }
             ctx.preHitDx = victim.delta.x
             ctx.preHitDz = victim.delta.z
             ctx.lastHitTick = ev.tick
@@ -177,12 +185,18 @@ class NoKnockbackCheck : Check() {
             // evaluate once when the window completes
             if (since >= WINDOW && !ctx.evaluated) {
                 ctx.evaluated = true
-                evaluate(tp, ctx, tick)
+                evaluate(tp, ctx, tick, ctx.windowTicks)
             }
         } catch (_: Throwable) {}
     }
 
-    private fun evaluate(tp: TrackedPlayer, ctx: NoKnockbackContext, tick: Int) {
+    /**
+     * [observed] is the number of post-hit ticks actually measured for this window (normally
+     * [WINDOW]; fewer when a following hit pre-empted it). The expected displacement is scaled by
+     * the observed fraction, so an interrupted window is judged on the motion it did see instead of
+     * being credited with displacement that was never sampled.
+     */
+    private fun evaluate(tp: TrackedPlayer, ctx: NoKnockbackContext, tick: Int, observed: Int = WINDOW) {
         if (tp.inVehicle || tp.gliding || tp.riptide) return
         if (tick - tp.lastTeleportTick < 5) return
         // Shield exemption: a player holding up a shield (UseAction.BLOCK on main/off hand) takes
@@ -220,17 +234,34 @@ class NoKnockbackCheck : Check() {
         // VelocityC attack-slowdown (Nemesis, §3/§8 step 11): an i-frame hit applies ~0.6× KB, so
         // the expected displacement is scaled down for a rapid consecutive hit — without this a
         // legit victim's naturally-reduced i-frame displacement false-flags.
-        var expectedDisp = impulse * KB_FRICTION_INTEGRAL
+        // KB spreads over the window, so the expected displacement for a partial window is the
+        // same impulse scaled by the fraction of the window actually observed.
+        val fObserved = (observed.coerceIn(0, WINDOW)).toDouble() / WINDOW.toDouble()
+        var expectedDisp = impulse * KB_FRICTION_INTEGRAL * fObserved
         if (ctx.attackSlowdown) expectedDisp *= ATTACK_SLOWDOWN
-        if (ctx.windowDisp < cfg.threshold * expectedDisp) {
-            val ratio = if (expectedDisp > 0.0) ctx.windowDisp / expectedDisp else 0.0
+        val absorbed = ctx.windowDisp < cfg.threshold * expectedDisp
+        val ratio = if (expectedDisp > 0.0) ctx.windowDisp / expectedDisp else 0.0
+        // Sustained-episode gate (see [Check.flagEpisode]): this check judges at most one hit per
+        // attack, so a level-1.0-per-hit flag against the 1.0/tick decay could never accumulate
+        // (measured live: the drive hit `NoKB` arithmetic exactly and still peaked at 1.0 of the
+        // 5.0 required). A cheater whose Velocity holds on most hits is what the window finds; a
+        // single absorbed hit — a legitimate mid-air strafe, a glancing i-frame hit that the
+        // slowdown gate misjudges — is not enough to alert.
+        val sustainedNow = sustained(ctx, absorbed, ABSORB_WINDOW, ABSORB_MIN)
+        if (sustainedNow) {
             val captured = tick - ctx.kbTick <= 3 && ctx.kbImpulseH > 0.1
             val expected = if (captured)
                 "vs server impulse ${"%.3f".format(ctx.kbImpulseH)}"
             else "vs vanilla sprint-KB ~$ASSUMED_SPRINT_KB (assumed)"
-            flag(tp, ctx, 1.0, "NoKB", tick, Evidence(
+            flagEpisode(tp, ctx, "NoKB", tick, Evidence(
                 subLabel = "kb-absorbed", measurement = ratio, threshold = cfg.threshold, pos = tp.pos,
-                extra = "took ${"%.0f".format(ratio * 100)}% of expected KB (absorbed ${"%.0f".format((1 - ratio) * 100)}%) — $expected"))
+                extra = "took ${"%.0f".format(ratio * 100)}% of expected KB (absorbed " +
+                    "${"%.0f".format((1 - ratio) * 100)}%) on ≥$ABSORB_MIN of the last $ABSORB_WINDOW " +
+                    "hits — $expected"))
+        } else {
+            rearmEpisode(ctx, sustainedNow)
+        }
+        if (absorbed) {
             // Axis B amplifier (plan §2.2/§6): a KnockbackDelay self-blink freezes the cheater's
             // own outgoing stream through the knockback it just took — observable as an entity-
             // local freeze episode (not global-lag) around the hit. Zero-KB coincident with that
@@ -366,6 +397,10 @@ class NoKnockbackCheck : Check() {
          *  A ~stationary victim's post-hit direction is KB-dominated; a redirect (HitFlick / Displace
          *  / a Velocity cheat canceling the facing-aligned KB) shows a larger mismatch. Tuned in step 14. */
         const val VECTOR_MISMATCH = 35.0
+        /** Rolling window of hits the absorbed-KB verdict is judged over. */
+        const val ABSORB_WINDOW = 5
+        /** Absorbed hits required in the window (3 of the last 5) to call anti-KB sustained. */
+        const val ABSORB_MIN = 3
         /** VelocityB sub-flag level. Tuned in step 14. */
         const val VL_VELOCITYB = 1.0
         /** KB-vector-mismatch sub-flag level (Axis C). Tuned in step 14. */

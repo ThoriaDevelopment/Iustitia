@@ -20,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap
  * and, under the quiet preset, a non-red drop during a server-lag burst), (2) preset-gated by
  * [IustitiaConfig.alertLevel] (quiet=red only / normal=orange+red / verbose=all — display-only), (3)
  * formatted (collapsed "Reach ×4, Backtrack ×2 (last 5s)" or single, compact when enabled), (4) sent
- * to chat, and (5) optionally an audio cue plays (yellow/red/nuclear). Mute (`/ius alerts`) and the
+ * to chat, and (5) optionally an audio cue plays (yellow/red). Mute (`/ius alerts`) and the
  * global chat-alerts switch suppress only the chat send — detection, [FlagHistory] tier/history and
  * the nametag prefix keep reflecting the player. So [FlagHistory.recordAlert] is called AFTER the
  * throttle passes (a real alert event) but BEFORE the mute/preset checks return, meaning a muted or
@@ -34,7 +34,6 @@ object AlertManager {
     private class AlertBatch(
         val name: String, var firstTick: Int, var lastTick: Int,
         val checks: java.util.LinkedHashMap<String, CountEntry> = java.util.LinkedHashMap(),
-        val primaries: java.util.HashSet<String> = java.util.HashSet(),
     )
 
     private val batches = ConcurrentHashMap<UUID, AlertBatch>()
@@ -96,7 +95,6 @@ object AlertManager {
                 if (vl > e.vl) e.vl = vl
                 e.setbackVL = setbackVL
                 e.label = check
-                if (checkId in FlagHistory.DEFINITIVE) batch.primaries.add(checkId)
             }
 
             if (!cfg.alertBatching) flushBatch(player, tick)
@@ -159,11 +157,7 @@ object AlertManager {
 
                 // 6. audio cue (gated by the same mute/preset rules — a muted/preset-dropped alert
                 //    is silent too).
-                if (cfg.audioCues) playCue(uuid, batch.primaries.size)
-                // 6b. sonar: directional cue positioned at the offender (pan = direction, pitch =
-                //     distance). Additive to chat — gated by sonarAlerts + the same mute/preset rules
-                //     the chat line above already passed. Fail-open inside.
-                try { dev.iustitia.alert.Sonar.cue(uuid) } catch (_: Throwable) {}
+                if (cfg.audioCues) playCue(uuid)
             }
         } catch (_: Throwable) {
             // fail-open
@@ -193,20 +187,16 @@ object AlertManager {
             tick - EntityTrackerManager.lastLagBurstTick <= 3
     } catch (_: Throwable) { false }
 
-    private fun playCue(uuid: UUID, primaryCount: Int) {
+    private fun playCue(uuid: UUID) {
         try {
             val cfg = ConfigManager.config
             val tier = FlagHistory.tierFor(uuid)
-            val nuclear = cfg.audioNuclear && tier == FlagHistory.Tier.RED && primaryCount >= 2
             val vol = cfg.audioVolume.toFloat()
             val client = MinecraftClient.getInstance()
             client.execute {
                 try {
                     val player = client.player ?: return@execute
-                    if (nuclear) {
-                        player.playSound(SoundEvents.BLOCK_NOTE_BLOCK_CHIME.value(), vol, 0.6f)
-                        player.playSound(SoundEvents.BLOCK_NOTE_BLOCK_BASS.value(), vol, 0.8f)
-                    } else when (tier) {
+                    when (tier) {
                         FlagHistory.Tier.RED -> player.playSound(SoundEvents.BLOCK_NOTE_BLOCK_BASS.value(), vol, 0.8f)
                         FlagHistory.Tier.YELLOW -> player.playSound(SoundEvents.BLOCK_NOTE_BLOCK_PLING.value(), vol, 1.2f)
                         FlagHistory.Tier.GREEN -> player.playSound(SoundEvents.BLOCK_NOTE_BLOCK_HARP.value(), vol * 0.6f, 1.0f)

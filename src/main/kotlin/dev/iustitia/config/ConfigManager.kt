@@ -177,10 +177,67 @@ object ConfigManager {
      *  byte-for-byte with the live config. Public for [PresetManager] preset export. */
     fun configToJson(c: IustitiaConfig): String = try { gson.toJson(toJson(c)) } catch (_: Throwable) { gson.toJson(toJson(IustitiaConfig())) }
 
-    /** Deserialize a config from a JSON object — reuses [fromJson] so a custom preset loads with
-     *  the same field semantics + calibration migration as the main config. Public for
-     *  [PresetManager] preset import. Fail-open: a bad object yields a fresh default config. */
-    fun configFromJson(obj: JsonObject): IustitiaConfig = try { fromJson(obj) } catch (_: Throwable) { IustitiaConfig() }
+    /** Serialize the PRESET-CONTENT view of a config to a fresh JSON object: the FULL schema
+     *  (every field the main config serializer writes) minus [PRESET_EXCLUDED_KEYS]. `configVersion`
+     *  is deliberately KEPT — it is the calibration-migration stamp [fromJsonInto] reads (see its
+     *  doc above [PRESET_EXCLUDED_KEYS]). Public for [PresetManager]: the built-in templates and
+     *  custom presets both flow through this, which is what makes preset content schema-derived
+     *  (a new config field is preset content automatically, with no second hand-maintained list
+     *  to drift). */
+    fun presetContentObj(c: IustitiaConfig): JsonObject {
+        val obj = try { toJson(c) } catch (_: Throwable) { toJson(IustitiaConfig()) }
+        for (key in PRESET_EXCLUDED_KEYS) obj.remove(key)
+        return obj
+    }
+
+    /** The string form of [presetContentObj] — what a custom preset FILE holds. Writes preset
+     *  content only (no muted players/checks, no wizard gate, no persistence preference, no
+     *  playclip-mode choice), so a preset file is portable and carries no per-user state. */
+    fun presetContentJson(c: IustitiaConfig): String = try {
+        gson.toJson(presetContentObj(c))
+    } catch (_: Throwable) {
+        gson.toJson(presetContentObj(IustitiaConfig()))
+    }
+
+    /** Config keys a preset apply must NEVER overwrite (the preset-content boundary — see
+     *  [PresetManager]'s class doc). Everything else in the schema IS preset content. Kept here,
+     *  next to the serializer, so adding a field to [toJson]/[fromJsonInto] needs no second
+     *  decision: a new field is preset content unless it lands on this list.
+     *
+     *  `configVersion` is deliberately NOT on this list: it must stay in the preset JSON as the
+     *  CALIBRATION-MIGRATION STAMP — [fromJsonInto] compares it against the live config's version
+     *  to decide whether the preset's setbackVL/decay/threshold values are current (a preset saved
+     *  before a recalibration round must not silently re-introduce stale calibration). It is still
+     *  never WRITTEN into the target: [fromJsonInto] has no assignment for it, so the live
+     *  config's version stays the code default regardless. */
+    private val PRESET_EXCLUDED_KEYS = setOf(
+        "mutedChecks",        // per-user session mutes
+        "mutedPlayers",       // per-user session mutes
+        "wizardCompleted",    // one-shot first-launch gate
+        "persistenceEnabled", // environmental preference, not part of a detection/display profile
+        "playclipMode",       // user-controlled generation selector (see IustitiaConfig.playclipMode)
+    )
+
+    /** Read the fields PRESENT in [obj] into the EXISTING [target] in place (never replacing the
+     *  reference — other subsystems hold it). Absent keys keep the target's current values, and
+     *  [PRESET_EXCLUDED_KEYS] are skipped entirely; `configVersion` is used as the calibration
+     *  stamp (see above) but never assigned into [target]. This is [fromJson]'s field-reading
+     *  logic restructured around an explicit [target] so [PresetManager] can apply a preset
+     *  without round-tripping through a throwaway config: a field missing from an older preset
+     *  file stays at its current value instead of resetting to the code default.
+     *
+     *  Returns true when the read ran to completion. A read that throws part-way (a mistyped
+     *  value in a hand-edited file) PROPAGATES — [target] may then hold a PARTIAL apply (the
+     *  fields read before the throw) and the caller picks the policy: the main-config path
+     *  swallows the throw at [fromJson] (fail-open to defaults), while the preset path treats it
+     *  as "preset not applied" — and reads into a throwaway scratch config first, so the throw
+     *  never leaves the live config half-mutated. No catch here: that honest failure is the
+     *  point. */
+    fun configFromJsonInto(obj: JsonObject, target: IustitiaConfig): Boolean {
+        for (key in PRESET_EXCLUDED_KEYS) obj.remove(key)
+        fromJsonInto(obj, target)
+        return true
+    }
 
     private fun toJson(c: IustitiaConfig): JsonObject = JsonObject().apply {
         addProperty("enabled", c.enabled)
@@ -204,7 +261,6 @@ object ConfigManager {
         addProperty("alertBatchWindowTicks", c.alertBatchWindowTicks)
         addProperty("audioCues", c.audioCues)
         addProperty("audioVolume", c.audioVolume)
-        addProperty("audioNuclear", c.audioNuclear)
         addProperty("lagSuppressAlerts", c.lagSuppressAlerts)
         addProperty("nametagBurstPulse", c.nametagBurstPulse)
         addProperty("compactMode", c.compactMode)
@@ -218,7 +274,7 @@ object ConfigManager {
         addProperty("burstSparks", c.burstSparks)
         addProperty("hoverTooltip", c.hoverTooltip)
         addProperty("tabListBadge", c.tabListBadge)
-        // Phase 2 instant-replay / sonar / clip (additive; fromJson reads them conditionally).
+        // Phase 2 instant-replay / clip (additive; fromJson reads them conditionally).
         addProperty("replayCapture", c.replayCapture)
         addProperty("replayHideLive", c.replayHideLive)
         addProperty("replayPlayerModels", c.replayPlayerModels)
@@ -228,12 +284,14 @@ object ConfigManager {
         addProperty("clipChunkRadius", c.clipChunkRadius)
         addProperty("clipChunkRenderDistance", c.clipChunkRenderDistance)
         addProperty("playclipMode", c.playclipMode.name)
-        addProperty("sonarAlerts", c.sonarAlerts)
-        addProperty("sonarVolume", c.sonarVolume)
         addProperty("replayKeybindSeconds", c.replayKeybindSeconds)
         addProperty("clipHealthIndicator", c.clipHealthIndicator)
         addProperty("clipTotemPopCounter", c.clipTotemPopCounter)
         addProperty("clipGhostEquipment", c.clipGhostEquipment)
+        addProperty("clipEntities", c.clipEntities)
+        addProperty("clipEntityCap", c.clipEntityCap)
+        addProperty("clipRollingChunkCap", c.clipRollingChunkCap)
+        addProperty("clipSegmentTeleportThreshold", c.clipSegmentTeleportThreshold)
         addProperty("chathistEnabled", c.chathistEnabled)
         addProperty("chathistCaptureUnknown", c.chathistCaptureUnknown)
         for ((key, cc) in c.checks()) add(key, checkToJson(cc))
@@ -248,84 +306,103 @@ object ConfigManager {
 
     private fun fromJson(o: JsonObject): IustitiaConfig {
         val c = IustitiaConfig()
+        // The partial-parse swallow lives HERE so the main config path stays fail-open (a mistyped
+        // value mid-file yields a config with the fields read so far, defaults for the rest). The
+        // preset path needs the throw instead, to report the failure honestly — see
+        // [configFromJsonInto].
         try {
-            // Calibration migration: if the persisted config predates the current calibration
-            // version, reset each check's CALIBRATION fields (setbackVL/decay/threshold) to the
-            // code defaults while preserving user choices (per-check enabled, mutes, alerts,
-            // nametag). Without this, a config/iustitia.json saved before a recalibration
-            // silently overrides the tuned defaults — the round-1/2 decay/VL edits were being
-            // clobbered this way (flyEnvelope decay stayed 1.0, throughWalls setbackVL stayed
-            // 5.0, timerRate setbackVL stayed 5.0), so the config tuning had no effect on the
-            // running game. c.configVersion is the fresh default (never overwritten from disk),
-            // so the next save stamps the file current.
-            val savedVersion = if (o.has("configVersion")) o.get("configVersion").asInt else 0
-            val resetCalibration = savedVersion < c.configVersion
-            if (o.has("enabled")) c.enabled = o.get("enabled").asBoolean
-            if (o.has("verbose")) c.verbose = o.get("verbose").asBoolean
-            if (o.has("alertThrottleTicks")) c.alertThrottleTicks = o.get("alertThrottleTicks").asInt
-            if (o.has("joinGraceTicks")) c.joinGraceTicks = o.get("joinGraceTicks").asInt
-            if (o.has("legitScaffoldStrictGates")) c.legitScaffoldStrictGates = o.get("legitScaffoldStrictGates").asBoolean
-            // sensitivitySubstrate: additive — a pre-field config keeps the default (off = substrate
-            // dropped, the dense-crowd FPS fix). No CONFIG_VERSION bump (not a check-calibration field).
-            if (o.has("sensitivitySubstrate")) c.sensitivitySubstrate = o.get("sensitivitySubstrate").asBoolean
-            if (o.has("alertsEnabled")) c.alertsEnabled = o.get("alertsEnabled").asBoolean
-            if (o.has("nametagPrefixes")) c.nametagPrefixes = o.get("nametagPrefixes").asBoolean
-            if (o.has("nametagGreenEnabled")) c.nametagGreenEnabled = o.get("nametagGreenEnabled").asBoolean
-            readStringList(o, "mutedChecks", c.mutedChecks)
-            readStringList(o, "mutedPlayers", c.mutedPlayers)
-            // Phase 2 UX fields (conditional — a pre-Phase-2 config simply keeps the defaults).
-            if (o.has("persistenceEnabled")) c.persistenceEnabled = o.get("persistenceEnabled").asBoolean
-            if (o.has("wizardCompleted")) c.wizardCompleted = o.get("wizardCompleted").asBoolean
-            if (o.has("alertLevel")) c.alertLevel = o.get("alertLevel").asInt
-            if (o.has("alertBatching")) c.alertBatching = o.get("alertBatching").asBoolean
-            if (o.has("alertBatchWindowTicks")) c.alertBatchWindowTicks = o.get("alertBatchWindowTicks").asInt
-            if (o.has("audioCues")) c.audioCues = o.get("audioCues").asBoolean
-            if (o.has("audioVolume")) c.audioVolume = o.get("audioVolume").asDouble
-            if (o.has("audioNuclear")) c.audioNuclear = o.get("audioNuclear").asBoolean
-            if (o.has("lagSuppressAlerts")) c.lagSuppressAlerts = o.get("lagSuppressAlerts").asBoolean
-            if (o.has("nametagBurstPulse")) c.nametagBurstPulse = o.get("nametagBurstPulse").asBoolean
-            if (o.has("compactMode")) c.compactMode = o.get("compactMode").asBoolean
-            if (o.has("evidenceWindowTicks")) c.evidenceWindowTicks = o.get("evidenceWindowTicks").asInt
-            if (o.has("transcriptPanel")) c.transcriptPanel = o.get("transcriptPanel").asBoolean
-            if (o.has("lagHudIcon")) c.lagHudIcon = o.get("lagHudIcon").asBoolean
-            if (o.has("confidenceHud")) c.confidenceHud = o.get("confidenceHud").asBoolean
-            if (o.has("targetHighlight")) c.targetHighlight = o.get("targetHighlight").asBoolean
-            if (o.has("ghostTrail")) c.ghostTrail = o.get("ghostTrail").asBoolean
-            if (o.has("watchFollowCam")) c.watchFollowCam = o.get("watchFollowCam").asBoolean
-            if (o.has("burstSparks")) c.burstSparks = o.get("burstSparks").asBoolean
-            if (o.has("hoverTooltip")) c.hoverTooltip = o.get("hoverTooltip").asBoolean
-            if (o.has("tabListBadge")) c.tabListBadge = o.get("tabListBadge").asBoolean
-            if (o.has("replayCapture")) c.replayCapture = o.get("replayCapture").asBoolean
-            if (o.has("replayHideLive")) c.replayHideLive = o.get("replayHideLive").asBoolean
-            if (o.has("replayPlayerModels")) c.replayPlayerModels = o.get("replayPlayerModels").asBoolean
-            if (o.has("replayRelocate")) c.replayRelocate = o.get("replayRelocate").asBoolean
-            if (o.has("clipTerrain")) c.clipTerrain = o.get("clipTerrain").asBoolean
-            if (o.has("clipChunkWorld")) c.clipChunkWorld = o.get("clipChunkWorld").asBoolean
-            if (o.has("clipChunkRadius")) c.clipChunkRadius = o.get("clipChunkRadius").asInt
-            if (o.has("clipChunkRenderDistance")) c.clipChunkRenderDistance = o.get("clipChunkRenderDistance").asInt
-            // playclipMode: additive enum. Bad/missing value keeps the LEGACY default (no CONFIG_VERSION bump).
-            if (o.has("playclipMode")) {
-                try { c.playclipMode = IustitiaConfig.PlayclipMode.valueOf(o.get("playclipMode").asString) } catch (_: Throwable) {}
-            }
-            if (o.has("sonarAlerts")) c.sonarAlerts = o.get("sonarAlerts").asBoolean
-            if (o.has("sonarVolume")) c.sonarVolume = o.get("sonarVolume").asDouble
-            if (o.has("replayKeybindSeconds")) c.replayKeybindSeconds = o.get("replayKeybindSeconds").asInt
-            // clipHealthIndicator / clipTotemPopCounter / clipGhostEquipment: additive — a pre-field
-            // config keeps the default (off/off/on). No CONFIG_VERSION bump (not check-calibration fields).
-            if (o.has("clipHealthIndicator")) c.clipHealthIndicator = o.get("clipHealthIndicator").asBoolean
-            if (o.has("clipTotemPopCounter")) c.clipTotemPopCounter = o.get("clipTotemPopCounter").asBoolean
-            if (o.has("clipGhostEquipment")) c.clipGhostEquipment = o.get("clipGhostEquipment").asBoolean
-            // chathistEnabled: additive — a pre-field config keeps the default (on). No CONFIG_VERSION bump.
-            if (o.has("chathistEnabled")) c.chathistEnabled = o.get("chathistEnabled").asBoolean
-            // chathistCaptureUnknown: additive — a pre-field config keeps the default (off). No CONFIG_VERSION bump.
-            if (o.has("chathistCaptureUnknown")) c.chathistCaptureUnknown = o.get("chathistCaptureUnknown").asBoolean
-            for ((key, cc) in c.checks()) {
-                if (o.has(key)) readCheck(o.getAsJsonObject(key), cc, resetCalibration)
-            }
+            fromJsonInto(o, c)
         } catch (_: Throwable) {
-            // partial parse → keep defaults for anything unread
+            // partial parse → keep what was read, defaults for the rest
         }
         return c
+    }
+
+    /** Read every field PRESENT in [o] into [c]. Throws on a malformed read (a mistyped value
+     *  mid-body aborts the tail of the schema) — the caller picks the fail-open policy:
+     *  [fromJson] swallows for the main config path, [configFromJsonInto] reports false for the
+     *  preset path. Per-check slices and string lists guard themselves in [readCheck] /
+     *  [readStringList]. */
+    private fun fromJsonInto(o: JsonObject, c: IustitiaConfig) {
+        // Calibration migration: if the persisted config predates the current calibration
+        // version, reset each check's CALIBRATION fields (setbackVL/decay/threshold) to the
+        // code defaults while preserving user choices (per-check enabled, mutes, alerts,
+        // nametag). Without this, a config/iustitia.json saved before a recalibration
+        // silently overrides the tuned defaults — the round-1/2 decay/VL edits were being
+        // clobbered this way (flyEnvelope decay stayed 1.0, throughWalls setbackVL stayed
+        // 5.0, timerRate setbackVL stayed 5.0), so the config tuning had no effect on the
+        // running game. c.configVersion is the fresh default (never overwritten from disk),
+        // so the next save stamps the file current.
+        val savedVersion = if (o.has("configVersion")) o.get("configVersion").asInt else 0
+        val resetCalibration = savedVersion < c.configVersion
+        if (o.has("enabled")) c.enabled = o.get("enabled").asBoolean
+        if (o.has("verbose")) c.verbose = o.get("verbose").asBoolean
+        if (o.has("alertThrottleTicks")) c.alertThrottleTicks = o.get("alertThrottleTicks").asInt
+        if (o.has("joinGraceTicks")) c.joinGraceTicks = o.get("joinGraceTicks").asInt
+        if (o.has("legitScaffoldStrictGates")) c.legitScaffoldStrictGates = o.get("legitScaffoldStrictGates").asBoolean
+        // sensitivitySubstrate: additive — a pre-field config keeps the default (off = substrate
+        // dropped, the dense-crowd FPS fix). No CONFIG_VERSION bump (not a check-calibration field).
+        if (o.has("sensitivitySubstrate")) c.sensitivitySubstrate = o.get("sensitivitySubstrate").asBoolean
+        if (o.has("alertsEnabled")) c.alertsEnabled = o.get("alertsEnabled").asBoolean
+        if (o.has("nametagPrefixes")) c.nametagPrefixes = o.get("nametagPrefixes").asBoolean
+        if (o.has("nametagGreenEnabled")) c.nametagGreenEnabled = o.get("nametagGreenEnabled").asBoolean
+        readStringList(o, "mutedChecks", c.mutedChecks)
+        readStringList(o, "mutedPlayers", c.mutedPlayers)
+        // Phase 2 UX fields (conditional — a pre-Phase-2 config simply keeps the defaults).
+        if (o.has("persistenceEnabled")) c.persistenceEnabled = o.get("persistenceEnabled").asBoolean
+        if (o.has("wizardCompleted")) c.wizardCompleted = o.get("wizardCompleted").asBoolean
+        if (o.has("alertLevel")) c.alertLevel = o.get("alertLevel").asInt
+        if (o.has("alertBatching")) c.alertBatching = o.get("alertBatching").asBoolean
+        if (o.has("alertBatchWindowTicks")) c.alertBatchWindowTicks = o.get("alertBatchWindowTicks").asInt
+        if (o.has("audioCues")) c.audioCues = o.get("audioCues").asBoolean
+        if (o.has("audioVolume")) c.audioVolume = o.get("audioVolume").asDouble
+        // `audioNuclear` (the removed opt-in "nuclear" red cue) is deliberately NOT read: an
+        // older config carrying the key keeps loading and the next save drops the key.
+        if (o.has("lagSuppressAlerts")) c.lagSuppressAlerts = o.get("lagSuppressAlerts").asBoolean
+        if (o.has("nametagBurstPulse")) c.nametagBurstPulse = o.get("nametagBurstPulse").asBoolean
+        if (o.has("compactMode")) c.compactMode = o.get("compactMode").asBoolean
+        if (o.has("evidenceWindowTicks")) c.evidenceWindowTicks = o.get("evidenceWindowTicks").asInt
+        if (o.has("transcriptPanel")) c.transcriptPanel = o.get("transcriptPanel").asBoolean
+        if (o.has("lagHudIcon")) c.lagHudIcon = o.get("lagHudIcon").asBoolean
+        if (o.has("confidenceHud")) c.confidenceHud = o.get("confidenceHud").asBoolean
+        if (o.has("targetHighlight")) c.targetHighlight = o.get("targetHighlight").asBoolean
+        if (o.has("ghostTrail")) c.ghostTrail = o.get("ghostTrail").asBoolean
+        if (o.has("watchFollowCam")) c.watchFollowCam = o.get("watchFollowCam").asBoolean
+        if (o.has("burstSparks")) c.burstSparks = o.get("burstSparks").asBoolean
+        if (o.has("hoverTooltip")) c.hoverTooltip = o.get("hoverTooltip").asBoolean
+        if (o.has("tabListBadge")) c.tabListBadge = o.get("tabListBadge").asBoolean
+        if (o.has("replayCapture")) c.replayCapture = o.get("replayCapture").asBoolean
+        if (o.has("replayHideLive")) c.replayHideLive = o.get("replayHideLive").asBoolean
+        if (o.has("replayPlayerModels")) c.replayPlayerModels = o.get("replayPlayerModels").asBoolean
+        if (o.has("replayRelocate")) c.replayRelocate = o.get("replayRelocate").asBoolean
+        if (o.has("clipTerrain")) c.clipTerrain = o.get("clipTerrain").asBoolean
+        if (o.has("clipChunkWorld")) c.clipChunkWorld = o.get("clipChunkWorld").asBoolean
+        if (o.has("clipChunkRadius")) c.clipChunkRadius = o.get("clipChunkRadius").asInt
+        if (o.has("clipChunkRenderDistance")) c.clipChunkRenderDistance = o.get("clipChunkRenderDistance").asInt
+        // playclipMode: additive enum. Bad/missing value keeps the LEGACY default (no CONFIG_VERSION bump).
+        if (o.has("playclipMode")) {
+            try { c.playclipMode = IustitiaConfig.PlayclipMode.valueOf(o.get("playclipMode").asString) } catch (_: Throwable) {}
+        }
+        if (o.has("replayKeybindSeconds")) c.replayKeybindSeconds = o.get("replayKeybindSeconds").asInt
+        // clipHealthIndicator / clipTotemPopCounter / clipGhostEquipment: additive — a pre-field
+        // config keeps the default (off/off/on). No CONFIG_VERSION bump (not check-calibration fields).
+        if (o.has("clipHealthIndicator")) c.clipHealthIndicator = o.get("clipHealthIndicator").asBoolean
+        if (o.has("clipTotemPopCounter")) c.clipTotemPopCounter = o.get("clipTotemPopCounter").asBoolean
+        if (o.has("clipGhostEquipment")) c.clipGhostEquipment = o.get("clipGhostEquipment").asBoolean
+        // clipEntities / clipEntityCap / clipRollingChunkCap / clipSegmentTeleportThreshold:
+        // additive (SnapClip replay-engine port) — a pre-field config keeps the defaults
+        // (true / 64 / 24000 / 64.0). No CONFIG_VERSION bump.
+        if (o.has("clipEntities")) c.clipEntities = o.get("clipEntities").asBoolean
+        if (o.has("clipEntityCap")) c.clipEntityCap = o.get("clipEntityCap").asInt
+        if (o.has("clipRollingChunkCap")) c.clipRollingChunkCap = o.get("clipRollingChunkCap").asInt
+        if (o.has("clipSegmentTeleportThreshold")) c.clipSegmentTeleportThreshold = o.get("clipSegmentTeleportThreshold").asDouble
+        // chathistEnabled: additive — a pre-field config keeps the default (on). No CONFIG_VERSION bump.
+        if (o.has("chathistEnabled")) c.chathistEnabled = o.get("chathistEnabled").asBoolean
+        // chathistCaptureUnknown: additive — a pre-field config keeps the default (off). No CONFIG_VERSION bump.
+        if (o.has("chathistCaptureUnknown")) c.chathistCaptureUnknown = o.get("chathistCaptureUnknown").asBoolean
+        for ((key, cc) in c.checks()) {
+            if (o.has(key)) readCheck(o.getAsJsonObject(key), cc, resetCalibration)
+        }
     }
 
     private fun readCheck(o: JsonObject, cc: IustitiaConfig.CheckConfig, resetCalibration: Boolean) {

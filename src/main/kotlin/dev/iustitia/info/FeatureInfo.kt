@@ -41,7 +41,5 @@ object FeatureInfo {
             "/ius clip <seconds> [name] exports the last N seconds of every tracked player's positions + every alert to a portable .iusclip file under %APPDATA%/.iustitia/clips — an evidence clip you can play back later with /ius playclip, not just a screenshot. [name] tags the focus player into the clip. Always writes (explicit export, independent of the persist-across-sessions toggle).",
         "playclip" to
             "/ius playclip [name] plays a saved .iusclip back in-world as ghost positions at 0.5×, exactly like /ius replay but from a file. No name = list your saved clips. /ius playclip off stops a playing clip early.",
-        "sonar" to
-            "/ius sonar [on|off] toggles directional audio alerts: on a flushed alert, a note plays at the offender's last-known position so the PAN tells you the direction and the PITCH tells you the distance (closer = higher). Eyes-free alerting — keep fighting and listen for cheats. Additive to chat; volume in /ius config.",
     )
 }

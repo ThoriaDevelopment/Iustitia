@@ -5,6 +5,7 @@ import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.event.AttackEvent
+import dev.iustitia.history.Evidence
 import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
 
@@ -12,8 +13,10 @@ import java.util.UUID
  * JumpReset detector (JumpOnHurt). The cheat auto-jumps the instant the cheater is hit to
  * "reset" knockback. Observer signature: the cheater's Δy jumps (~0.4) within 1 tick of
  * being hit, repeatedly, with no obstacle. We record each hit (into the *victim's* context)
- * from [AttackEvent] and watch for a jump in [process] within ±1 tick. After ≥5 hits with a
- * ≥90% jump-coincidence rate → flag. setbackVL 5, decay 0.2/tick.
+ * from [AttackEvent] and watch for a jump in [process] within ±1 tick. A jump-coincidence rate
+ * of ≥90% over a sliding window of hits is the cheat; the alert is a one-shot per sustained
+ * episode (see [Check.flagEpisode]) because the cadence is one verdict per hit — far below the
+ * decay, so per-event accumulation could never reach setbackVL.
  *
  * FP guards over the original 3-hit/80% gate:
  *  - **Higher bar (5 hits / 90%).** Jump-resetting is also a legit anti-KB technique; a
@@ -58,42 +61,63 @@ class JumpOnHurtCheck : Check() {
             // reflects the current fight — the documented "≥5 hits / ≥90% coincidence" bar.
             if (ctx.lastHitTick != -10000 && tick - ctx.lastHitTick > SESSION_RESET_TICKS) {
                 ctx.totalHits = 0
-                ctx.coincidentHits = 0
+                ctx.episodeRing.clear()
+                ctx.episodeActive = false
             }
             if (!ctx.pendingHit) return
             val since = tick - ctx.lastHitTick
-            if (since in 0..1 && tp.deltaY > cfg.threshold) {
+            // KB-induced-hop exemption: a recent velocity update means the Δy is server knockback,
+            // not a deliberate jump — the hit is skipped entirely (neither counted nor judged).
+            val kbHop = tick - tp.velocityTick < 3
+            if (since in 0..1 && !kbHop && tp.deltaY > cfg.threshold) {
                 ctx.pendingHit = false
-                // KB-induced-hop exemption: a recent velocity update means the Δy is server
-                // knockback, not a deliberate jump. Don't count it as a jump-reset coincidence.
-                if (tick - tp.velocityTick >= 3) {
-                    ctx.coincidentHits++
-                    if (ctx.totalHits >= MIN_HITS &&
-                        ctx.coincidentHits.toDouble() / ctx.totalHits >= COINCIDENCE
-                    ) {
-                        flag(tp, ctx, 1.0, "JumpReset", tick)
-                    }
-                }
-            } else if (since > 1) {
-                ctx.pendingHit = false // window closed with no jump
+                ctx.totalHits++
+                judge(ctx, tp, tick, jumped = true)
+            } else if ((since in 0..1 && !kbHop && tp.deltaY < -0.05) || since > 1) {
+                // The hit resolved without a self-jump: the victim was hit and did not hop (a
+                // negative Δy is the knockback settling, a ~zero Δy is standing still). Counting
+                // it is what keeps the ratio a real *rate* over hits rather than over jumps.
+                ctx.pendingHit = false
+                ctx.totalHits++
+                judge(ctx, tp, tick, jumped = false)
             }
         } catch (_: Throwable) {}
+    }
+
+    /**
+     * Record one resolved hit's verdict and alert once if the pattern is sustained.
+     *
+     * The gate is the documented "≥90% jump-coincidence rate": [WINDOW] resolved hits with at
+     * least [MIN_COINCIDENT] of them jumped on the hit tick. Expressed as a sliding window it is
+     * the same bar, but it now *alerts* (one-shot per episode) instead of accumulating a level-1.0
+     * flag at a one-per-hit cadence that the decay always outran.
+     */
+    private fun judge(ctx: JumpOnHurtContext, tp: TrackedPlayer, tick: Int, jumped: Boolean) {
+        val sustainedNow = sustained(ctx, jumped, WINDOW, MIN_COINCIDENT)
+        if (sustainedNow) {
+            flagEpisode(tp, ctx, "JumpReset", tick, Evidence(
+                subLabel = "jump-on-hit",
+                measurement = MIN_COINCIDENT.toDouble(), threshold = WINDOW.toDouble(),
+                pos = tp.pos,
+                extra = "jumped on ≥$MIN_COINCIDENT of the last $WINDOW hits (a hand cannot jump on " +
+                    "demand that consistently)"))
+        } else {
+            rearmEpisode(ctx, sustainedNow)
+        }
     }
 
     private class JumpOnHurtContext : CheckContext() {
         var lastHitTick: Int = -10000
         var pendingHit: Boolean = false
         var totalHits: Int = 0
-        var coincidentHits: Int = 0
     }
 
     private companion object {
-        /** Min confirmed hits before judging coincidence (raises the bar above legit jump-resetting). */
-        const val MIN_HITS = 5
-        /** Coincidence rate required to flag (above the legit anti-KB-hop ceiling). */
-        const val COINCIDENCE = 0.9
-        /** Idle window (no hit taken) after which the per-fight total/coincident counters reset,
-         *  so the coincidence ratio reflects the current fight instead of an all-time average. */
+        /** Sliding window of resolved hits the coincidence rate is measured over. */
+        const val WINDOW = 10
+        /** Jumps required inside the window — the documented ≥90% coincidence bar. */
+        const val MIN_COINCIDENT = 9
+        /** Idle window (no hit taken) after which the latch releases, so the next fight starts fresh. */
         const val SESSION_RESET_TICKS = 140
     }
 }

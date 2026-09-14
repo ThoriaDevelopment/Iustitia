@@ -711,7 +711,11 @@ class KillAuraCheck : Check() {
         if (ratio >= DRIFT_RATIO) {
             if (!ctx.driftActive) {
                 ctx.driftActive = true
-                flag(tp, ctx, VL_DRIFT, "drift", tick, Evidence(
+                // One-shot at a level that clears setbackVL (see [Check.flagEpisode]): a sustained
+                // combat-ward drift is a *confirmed episode*, and its cadence is one flag per
+                // episode by construction, so the old level-1.5 form sat at 1.5 of the 5.0 needed
+                // forever (measured live: 1 flag in 140 ticks of a constant-lag assist).
+                flagEpisode(tp, ctx, "drift", tick, Evidence(
                     pos = tp.pos, measurement = ratio.toDouble(), threshold = DRIFT_RATIO.toDouble(),
                     extra = "match=${matches}/${ctx.driftRing.size}"))
             }

@@ -48,7 +48,6 @@ object YaclScreenBuilder {
                     .option(int("Batch window (ticks)", "Quiet ticks before a batch flushes (100 = 5s).", { cfg.alertBatchWindowTicks }, 0, 600) { cfg.alertBatchWindowTicks = it })
                     .option(bool("Audio cues", "Play a note-block cue per flushed alert batch (yellow vs red).", { cfg.audioCues }) { cfg.audioCues = it })
                     .option(double("Audio volume", "Cue volume (0..1).", { cfg.audioVolume }, 0.0, 1.0) { cfg.audioVolume = it })
-                    .option(bool("Nuclear cue", "Distinct cue when a flush reaches RED from ≥2 primary checks.", { cfg.audioNuclear }) { cfg.audioNuclear = it })
                     .option(bool("Soften alerts on server lag", "Prefix [lag] and (under quiet) drop non-red alerts during a lag burst.", { cfg.lagSuppressAlerts }) { cfg.lagSuppressAlerts = it })
                     .option(bool("Compact mode", "One-line alert + screen summaries (less clutter).", { cfg.compactMode }) { cfg.compactMode = it })
                     .option(int("Evidence window (ticks)", "/ius evidence lookback (200 = 10s).", { cfg.evidenceWindowTicks }, 20, 1200) { cfg.evidenceWindowTicks = it })
@@ -66,13 +65,11 @@ object YaclScreenBuilder {
             )
             .group(
                 OptionGroup.createBuilder()
-                    .name(Text.literal("Replay, Sonar & Clip"))
+                    .name(Text.literal("Replay & Clip"))
                     .option(bool("Replay capture buffer", "Keep a rolling 60s buffer of every tracked player's position + every alert, so /ius replay and /ius clip can rewind/export the last N seconds. Off = skip the per-tick capture (disables replay + clip; detection keeps running).", { cfg.replayCapture }) { cfg.replayCapture = it })
                     .option(bool("Replay hides live players", "While a replay (/ius replay or /ius playclip) is active, hide every live OTHER player so only the buffered ghost copies render — a rewind-the-world feel. Off = overlay ghosts on the live scene. Render-only.", { cfg.replayHideLive }) { cfg.replayHideLive = it })
                     .option(bool("Replay player models", "Render replay/clip ghosts as the real Minecraft player model wearing each player's REAL skin (fetched from the tab list; Steve/Alex fallback) instead of the tier-colored humanoid box outline. On by default. The block scale + pose transforms are runtime-verified only — if a ghost renders at the wrong size or not at all, the box outline shows as fallback.", { cfg.replayPlayerModels }) { cfg.replayPlayerModels = it })
                     .option(int("Replay keybind seconds", "Seconds of buffered scene replayed when the replay-toggle keybind (numpad * by default) is pressed. 1..60 (capped to the 60s replay buffer).", { cfg.replayKeybindSeconds }, 1, 60) { cfg.replayKeybindSeconds = it })
-                    .option(bool("Sonar alerts", "On a flushed alert, play a DIRECTIONAL note at the offender's last position (pan = direction, pitch = distance) so you can keep fighting and listen for cheats. Additive to chat; gated by the same mute/preset rules.", { cfg.sonarAlerts }) { cfg.sonarAlerts = it })
-                    .option(double("Sonar volume", "Sonar cue volume (0..1). Quieter than chat cues by design — positional pings are frequent.", { cfg.sonarVolume }, 0.0, 1.0) { cfg.sonarVolume = it })
                     .option(bool("Chat history capture", "Capture messages from tracked OTHER players (not you, not system messages) for /ius chathist <user> / phrase / target. Per-server: persists across reconnects when 'Persist across sessions' is on, else in-memory only. Additive.", { cfg.chathistEnabled }) { cfg.chathistEnabled = it })
                     .option(bool("Chat history: capture unknown senders", "Permissive / cross-server mode (OFF by default). Decorated chat (rank/star servers like Hypixel, ArchMC, Minemen) normally anchors the sender to the tab list — a sender not in the tab list is dropped. With this ON, those senders are still captured (best-effort: the last word before the separator), so Bungee/Velocity cross-sub-server chat is recorded. Less accurate on suffix-decorated formats (Minemen can mis-attribute), hence the OFF default.", { cfg.chathistCaptureUnknown }) { cfg.chathistCaptureUnknown = it })
                     .build()
@@ -111,7 +108,19 @@ object YaclScreenBuilder {
                         val ghostEquip = boolAvail("Ghost equipment on clips",
                             "Render each ghost's held items + armor (main hand, off hand, head, chest, legs, feet) during /ius playclip & /ius replay — what the player actually held/wore at the recorded tick. Lossy (no enchant glint). Natively on. Modern-only.",
                             { cfg.clipGhostEquipment }, { cfg.clipGhostEquipment = it }, ::modern)
-                        val subs = listOf(relocate, terrain, chunkWorld, chunkRadius, chunkRenderDist, healthInd, totemInd, ghostEquip)
+                        val clipEntities = boolAvail("Clip captures entities",
+                            "Capture + render non-player entities (mobs, animals, boats, minecarts) within 64 blocks while a replay/clip window is live, so playback shows the whole scene instead of players only. Modern-only.",
+                            { cfg.clipEntities }, { cfg.clipEntities = it }, ::modern)
+                        val clipEntityCap = intAvail("Entity capture cap",
+                            "Max non-player entities captured per tick. Bounds the per-tick cost and the clip's size. Modern-only.",
+                            { cfg.clipEntityCap }, 0, 256, { cfg.clipEntityCap = it }, ::modern)
+                        val rollingCap = intAvail("Rolling world budget (sections)",
+                            "Total non-empty chunk sections the rolling per-segment world capture holds across ALL segments before the oldest (never the current one) is evicted. A section is up to 4096 bytes, so 24000 is roughly 20–95 MB depending on how full the segments are. Lower it on a memory-tight client; raise it if a long /ius record keeps losing its earliest world. Modern-only.",
+                            { cfg.clipRollingChunkCap }, 4096, 131072, { cfg.clipRollingChunkCap = it }, ::modern)
+                        val segThreshold = doubleAvail("New-segment distance",
+                            "Distance (blocks) you must move in one tick — or a world/dimension change — to start a NEW capture segment. Each segment keeps its own world snapshot + block edits, so a clip that spans a teleport replays both places. Lower = more, smaller segments. Modern-only.",
+                            { cfg.clipSegmentTeleportThreshold }, 8.0, 512.0, { cfg.clipSegmentTeleportThreshold = it }, ::modern)
+                        val subs = listOf(relocate, terrain, chunkWorld, chunkRadius, chunkRenderDist, healthInd, totemInd, ghostEquip, clipEntities, clipEntityCap, rollingCap, segThreshold)
                         option(Option.createBuilder<IustitiaConfig.PlayclipMode>()
                             .name(Text.literal("Playclip mode"))
                             .description(OptionDescription.of(Text.literal("LEGACY = the v1.1.0 playclip: ghosts render over the LIVE world at their recorded coords, the player walks and acts normally, no world is downloaded. MODERN = the current feature set: solid captured chunk world (free-spectate anywhere, incl. underground), relocated scene, auto-freecam, and spectator-like input/packet suppression while the clip plays. Default MODERN (since v1.2.0 — the C2 FPS fix made Modern match the 120 cap); existing configs keep their saved choice.")))
@@ -130,6 +139,10 @@ object YaclScreenBuilder {
                         option(healthInd)
                         option(totemInd)
                         option(ghostEquip)
+                        option(clipEntities)
+                        option(clipEntityCap)
+                        option(rollingCap)
+                        option(segThreshold)
                     }
                     .build()
             )
@@ -181,6 +194,16 @@ object YaclScreenBuilder {
             .name(Text.literal(name))
             .description(OptionDescription.of(Text.literal(desc)))
             .binding(getter(), getter, setter)
+            .controller { opt -> DoubleFieldControllerBuilder.create(opt).range(min, max) }
+            .build()
+
+    /** [double] + an availability snapshot — see [boolAvail]. */
+    private fun doubleAvail(name: String, desc: String, getter: () -> Double, min: Double, max: Double, setter: (Double) -> Unit, available: () -> Boolean): Option<Double> =
+        Option.createBuilder<Double>()
+            .name(Text.literal(name))
+            .description(OptionDescription.of(Text.literal(desc)))
+            .binding(getter(), getter, setter)
+            .available(available())
             .controller { opt -> DoubleFieldControllerBuilder.create(opt).range(min, max) }
             .build()
 

@@ -1,6 +1,7 @@
 {
   "required": true,
   "package": "dev.iustitia.mixin",
+  "plugin": "dev.iustitia.mixin.IustitiaMixinPlugin",
   "compatibilityLevel": "JAVA_21",
   "client": [
     "ClientPlayNetworkHandlerMixin",
@@ -18,7 +19,8 @@
     "FreecamEntityMixin",
     "WorldRendererMixin",
     "GameRendererMixin",
-    "GameRendererBobViewMixin"
+    "GameRendererBobViewMixin",
+    "WorldChunkMixin"
   ],
   "injectors": {
     "defaultRequire": 1

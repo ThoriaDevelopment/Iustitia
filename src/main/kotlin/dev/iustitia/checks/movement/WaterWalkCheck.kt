@@ -55,10 +55,28 @@ class WaterWalkCheck : Check() {
                 !WorldQueries.isSolidAt(world, bx, footY, bz)
             ) {
                 // legit-support exemptions: lily pad / climbable at the feet, or a boat below.
+                //
+                // Plus the **body-in-water** exemption, which is what a vanilla swimmer is. A
+                // surface swimmer whose head is above the water still has water at the feet (the
+                // feet block is the liquid one) and is not sprint-swimming, so `tp.swimming` stays
+                // false for them and the bare "liquid at the feet, not solid, moving, level Y" test
+                // describes them exactly -- verified live, it flagged a legit swimmer every tick
+                // (streak >= 3, VL 1.0/tick past setbackVL 5). Both limbs of the exemption are
+                // about the *feet being inside the liquid* rather than resting on its surface:
+                //  - (a) the next block up is also liquid (the player is submerged to the waist),
+                //    or
+                //  - (b) the feet sit strictly BELOW the liquid block's top face (a body occupying
+                //    the water column, i.e. floating), by more than interpolated-surface noise.
+                // A WaterWalk/Jesus player stands ON the surface -- feet exactly at the top face,
+                // air above -- so neither limb holds and the cheat still flags.
+                val liquidTop = (footY + 1).toDouble()
+                val feetBelowSurface = tp.pos.y < liquidTop - SURFACE_EPS
+                val bodyInLiquid = WorldQueries.isLiquidAt(world, bx, footY + 1, bz)
                 val supported = WorldQueries.isLilyPadAt(world, bx, footY, bz) ||
                     WorldQueries.isLilyPadAt(world, bx, footY + 1, bz) ||
                     WorldQueries.isClimbableAt(world, bx, footY, bz) ||
-                    WorldQueries.isBoatBelow(world, tp.pos.x, tp.pos.y, tp.pos.z)
+                    WorldQueries.isBoatBelow(world, tp.pos.x, tp.pos.y, tp.pos.z) ||
+                    bodyInLiquid || feetBelowSurface
                 if (supported) { ctx.streak = 0; return }
                 ctx.streak++
                 if (ctx.streak >= 3) flag(tp, ctx, 1.0, "WaterWalk", tick)
@@ -77,5 +95,10 @@ class WaterWalkCheck : Check() {
         private const val LAG_WINDOW = 8
         /** Window (ticks) after a batched catch-up burst within which water-walk samples are skipped. */
         private const val BURST_WINDOW = 3
+        /** Margin (blocks) by which the feet must sit below the liquid's top face to count as "the
+         *  body is in the water" rather than "standing on it". Well above position-interpolation
+         *  noise (~1e-3) and well below the ~0.4 a floating swimmer sits at, so neither a legit
+         *  swimmer nor a surface-stander lands ambiguous. */
+        private const val SURFACE_EPS = 0.05
     }
 }

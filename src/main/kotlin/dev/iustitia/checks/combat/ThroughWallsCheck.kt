@@ -80,17 +80,23 @@ class ThroughWallsCheck : Check() {
             val ctx = contextOf(attacker.uuid) as ThroughWallsContext
             ctx.push(occluded)
             val size = ctx.size
-            if (size >= MIN_SAMPLE) {
-                val rate = ctx.occludedCount.toDouble() / size
-                if (rate >= cfg.threshold) {
-                    flag(attacker, ctx, 1.0, "ThroughWalls", ev.tick, Evidence(
-                        subLabel = "match-rate",
-                        pos = eye,
-                        victim = victim.uuid,
-                        measurement = ctx.occludedCount.toDouble(),
-                        threshold = size.toDouble(),
-                        extra = "occluded ${ctx.occludedCount}/$size (rate ${"%.2f".format(rate)} ≥ ${"%.2f".format(cfg.threshold)})"))
-                }
+            if (size < MIN_SAMPLE) return
+            val rate = ctx.occludedCount.toDouble() / size
+            // The match-rate IS the sustained gate here; the alert is one-shot per episode (see
+            // [Check.flagEpisode]) because the flag cadence is one per hit — the old per-hit
+            // level-1.0 form could never climb past the 0.5/tick decay however blatant the aura
+            // was. Re-arms when the occluded rate falls back under the configured ratio.
+            val sustainedNow = rate >= cfg.threshold
+            if (sustainedNow) {
+                flagEpisode(attacker, ctx, "ThroughWalls", ev.tick, Evidence(
+                    subLabel = "match-rate",
+                    pos = eye,
+                    victim = victim.uuid,
+                    measurement = ctx.occludedCount.toDouble(),
+                    threshold = size.toDouble(),
+                    extra = "occluded ${ctx.occludedCount}/$size (rate ${"%.2f".format(rate)} ≥ ${"%.2f".format(cfg.threshold)})"))
+            } else {
+                rearmEpisode(ctx, sustainedNow)
             }
         } catch (_: Throwable) {}
     }

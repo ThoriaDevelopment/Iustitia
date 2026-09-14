@@ -9,17 +9,19 @@ import net.minecraft.text.Text
 /**
  * #13 (first-launch wizard): a one-shot manual-render screen shown when `wizardCompleted` is false
  * (driven from `onInitializeClient`). Three preset buttons — General / Moderation / Ranked Player —
- * each write a curated set of display/UX fields (NOT check calibration) to the config, stamp
- * `wizardCompleted`, save, react to the persistence toggle, and close to the game. A "Skip / keep
- * defaults" button just stamps the flag and closes without changing anything. Everything the wizard
- * touches is display-only; no check threshold/decay/VL is ever changed here. Fail-open.
+ * stamp `wizardCompleted`, save, react to the persistence toggle, and close to the game. A "Skip /
+ * keep defaults" button just stamps the flag and closes without changing anything. Fail-open.
  *
  * Preset rationale:
- *  - **General** — everyday play: normal alerts, nametag on, no audio, batching on, no persistence.
+ *  - **General** — everyday play: applies [dev.iustitia.config.PresetManager]'s `standard` preset
+ *    (one "everyday" profile, not two drift-prone field lists) plus the wizard's own display deltas
+ *    (overlays + transcript panel off) and persistence off. NOTE: this DOES set detection
+ *    calibration — the wizard button re-applies it, which is the point (fresh install → the tuned
+ *    default calibration; a `/ius wizard` re-run → back to standard tuning).
  *  - **Moderation** — staff reviewing a server: verbose alerts, audio cues, no batching (every
  *    individual flag), nametag-suspects-only (no green ticks), persistence on so notes + history
  *    survive restarts, transcript panel on.
- *  - **Ranked Player** — competitive: quiet (red-band only), compact one-liners, audio + nuclear,
+ *  - **Ranked Player** — competitive: quiet (red-band only), compact one-liners, audio cues,
  *    batching on, no persistence, no transcript panel.
  */
 class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
@@ -27,21 +29,25 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
     private data class Preset(val label: String, val blurb: String, val apply: () -> Unit)
 
     private val presets: List<Preset> = listOf(
+        // General IS the standard preset (one "everyday" profile, not two drift-prone ones —
+        // this used to be a hand-rolled field list that had diverged from PresetManager's
+        // `standard`). The wizard only layers its own display deltas on top (overlays off,
+        // transcript panel off); persistence stays a wizard decision, not preset content.
         Preset("§aGeneral", "Everyday play. Normal alerts, nametag on, silent, no persistence.") {
+            try { dev.iustitia.config.PresetManager.apply("standard") } catch (_: Throwable) {}
             val c = ConfigManager.config
-            c.alertLevel = 1
-            c.alertsEnabled = true
-            c.nametagPrefixes = true
-            c.nametagGreenEnabled = true
-            c.nametagBurstPulse = true
-            c.audioCues = false
-            c.audioNuclear = true
-            c.audioVolume = 0.6
-            c.alertBatching = true
-            c.compactMode = false
-            c.persistenceEnabled = false
-            c.lagSuppressAlerts = true
             c.transcriptPanel = false
+            c.targetHighlight = false
+            c.ghostTrail = false
+            c.watchFollowCam = false
+            c.burstSparks = false
+            c.hoverTooltip = false
+            c.tabListBadge = false
+            c.nametagBurstPulse = false
+            // lagHudIcon deliberately NOT silenced: the standard preset keeps the lag indicator
+            // on (the casual player's one "why are alerts soft?" hint) and General IS standard.
+            c.confidenceHud = false
+            c.persistenceEnabled = false
         },
         Preset("§6Moderation", "Staff review. Verbose, audio, every flag, suspects-only, persistence on.") {
             val c = ConfigManager.config
@@ -51,7 +57,6 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
             c.nametagGreenEnabled = false
             c.nametagBurstPulse = true
             c.audioCues = true
-            c.audioNuclear = true
             c.audioVolume = 0.8
             c.alertBatching = false
             c.compactMode = false
@@ -59,7 +64,7 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
             c.lagSuppressAlerts = true
             c.transcriptPanel = true
         },
-        Preset("§cRanked Player", "Competitive. Quiet (red only), compact, audio + nuclear, no persistence.") {
+        Preset("§cRanked Player", "Competitive. Quiet (red only), compact, audio, no persistence.") {
             val c = ConfigManager.config
             c.alertLevel = 0
             c.alertsEnabled = true
@@ -67,7 +72,6 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
             c.nametagGreenEnabled = false
             c.nametagBurstPulse = true
             c.audioCues = true
-            c.audioNuclear = true
             c.audioVolume = 1.0
             c.alertBatching = true
             c.compactMode = true
@@ -98,7 +102,7 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
             val cx = this.width / 2
             context.drawTextWithShadow(tr, Text.literal("§8[§diustitia§8] §f§lFirst-launch setup"), cx - tr.getWidth("§8[§diustitia§8] §f§lFirst-launch setup") / 2, 20, WHITE)
             context.drawTextWithShadow(tr, Text.literal("§7How do you use Iustitia? Pick a preset — you can tweak everything later in §f/ius config§7."), cx - 180, 40, WHITE)
-            context.drawTextWithShadow(tr, Text.literal("§7(this only changes display + alert settings; detection calibration is never touched)"), cx - 180, 52, WHITE)
+            context.drawTextWithShadow(tr, Text.literal("§7(General applies the standard preset; the other two only change display + alert settings)"), cx - 180, 52, WHITE)
             val bw = 360; val bh = 52
             var y = 78
             for ((i, p) in presets.withIndex()) {

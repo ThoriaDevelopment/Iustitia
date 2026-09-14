@@ -1,0 +1,37 @@
+name: Verify documentation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    name: Documentation links and templates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Validate repository documentation
+        run: python scripts/verify_contribution.py --static
+
+      - name: Check documentation files are present
+        run: |
+          test -f CONTRIBUTING.md
+          test -f SUPPORT.md
+          test -f SECURITY.md
+          test -f CODE_OF_CONDUCT.md
+          test -f docs/ai-assisted-development.md
+          test -f docs/live-verification.md
+          test -f .claude/skills/iustitia-contributor/SKILL.md
+          test -f .github/PULL_REQUEST_TEMPLATE.md

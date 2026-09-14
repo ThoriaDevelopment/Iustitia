@@ -215,6 +215,16 @@ object WorldQueries {
      * endpoint chunks via [isChunkLoaded], so the common unloaded case returns early there;
      * this just closes the rare exception path.) Coordinates are floored (not truncated
      * via toInt) so negative X/Z map to the correct chunk.
+     *
+     * **The raycast needs a non-null entity.** `RaycastContext`'s entity feeds the
+     * `ShapeContext` the collision spliterator builds, and `World.raycast` throws on a null
+     * one — which the fail-open `catch` above silently converted into "clear" for every
+     * solid wall, leaving this helper (and therefore [ThroughWallsCheck]) structurally unable
+     * to observe an occluded hit ever. Verified live: a stone wall one block in front of the
+     * attacker's eye produces a `BLOCK` hit at the wall's near face, and the previous form
+     * still reported line-of-sight. The observer's entity is the correct context — it only
+     * selects entity-dependent collision shapes and never affects the ray itself. If even that
+     * is unavailable the read fails open (clear), preserving the documented posture.
      */
     fun hasLineOfSight(world: ClientWorld?, from: Vec3d, to: Vec3d): Boolean {
         if (world == null) return true
@@ -222,11 +232,12 @@ object WorldQueries {
             if (!isChunkLoaded(world, Math.floor(from.x).toInt(), Math.floor(from.z).toInt()) ||
                 !isChunkLoaded(world, Math.floor(to.x).toInt(), Math.floor(to.z).toInt())
             ) return true
+            val shapeEntity: Entity? = try { MinecraftClient.getInstance().player } catch (_: Throwable) { null }
             val ctx = RaycastContext(
                 from, to,
                 RaycastContext.ShapeType.COLLIDER,
                 RaycastContext.FluidHandling.NONE,
-                null as Entity?,
+                shapeEntity,
             )
             val hit = world.raycast(ctx)
             // MISS (lands at `to`) = clear. A block hit short of `to` = blocked — UNLESS the
@@ -234,7 +245,11 @@ object WorldQueries {
             if (hit.type == HitResult.Type.MISS) return true
             if (hit is BlockHitResult) {
                 val state = world.getBlockState(hit.blockPos)
-                if (!state.isAir && !state.isOpaque) return true
+                // `isOpaqueFullCube()` is the explicit "a full opaque cube" predicate the doc
+                // above describes (stone/planks block; glass/leaves/ice/fences/panes/bars stay
+                // see-through). `isOpaque()` happens to agree for stone but also reports true for
+                // see-through full-cube-shaped states, i.e. it is the looser, FP-prone form.
+                if (!state.isAir && !state.isOpaqueFullCube()) return true
             }
             hit.getPos().squaredDistanceTo(to) < 1.0E-6
         } catch (_: Throwable) {

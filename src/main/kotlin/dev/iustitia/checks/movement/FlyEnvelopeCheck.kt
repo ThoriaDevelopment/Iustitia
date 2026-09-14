@@ -89,6 +89,22 @@ class FlyEnvelopeCheck : Check() {
                 ctx.hoverTicks = 0
                 return
             }
+            // Climbable exemption, applied to **every** vertical sub-flag rather than only to the
+            // ascend branch. A ladder/vine/scaffolding column sustains a legit upward drift
+            // (dy≈0.2-0.35/tick) that satisfies the FlyB friction band and the physics-breach
+            // prediction within the first ticks of a climb -- verified live on a 0.2 b/t ladder
+            // climb, which fired FlyB every tick to peakVL 24.5 (past setbackVL 5) for ~20 ticks
+            // before the sustained-Levitation guard took over. Exempting only the ascend path left
+            // the other two consumers of the same physics unguarded, which is what made this the
+            // suite's loudest false positive. The counts are cleared so a climb leaves no partial
+            // streak for the tick the player steps off.
+            if (isOnClimbable(tp)) {
+                ctx.breachTicks = 0
+                ctx.flyBTicks = 0
+                ctx.hoverTicks = 0
+                ctx.ascendTicks = 0
+                return
+            }
 
             val dy = tp.deltaY
 
@@ -254,13 +270,6 @@ class FlyEnvelopeCheck : Check() {
                         ctx.strafeHopActive = false
                     }
                 }
-                // Climbable exemption: ladders / vines / scaffolding sustain a legit upward
-                // drift (dy≈0.2–0.35) that the jump recognizer never arms (prevDeltaY stays
-                // high), so without this the ascend branch flags the entire climb — the
-                // dominant Fly(Ascend) FP source. A real fly over a ladder column is already
-                // caught by the physics-breach sub. (Ascend is the last sub, so returning here
-                // skips nothing else.)
-                if (isOnClimbable(tp)) { ctx.ascendTicks = 0; return }
                 val blockedAbove = hasBlockAbove(tp)
                 if (!levitating && !blockedAbove && tick - ctx.lastJumpTick > 2) {
                     ctx.ascendTicks++
@@ -280,12 +289,22 @@ class FlyEnvelopeCheck : Check() {
         val bx = Math.floor(tp.pos.x).toInt()
         val bz = Math.floor(tp.pos.z).toInt()
         val by = Math.floor(tp.pos.y).toInt()
-        // A player climbing a ladder/vine/scaffolding column intersects the climbable block at
-        // foot level or the block below it; sample both so a freshly-grabbed ladder (feet still
-        // in air) still exempts. Fail-negative (return false) on unload/error → no exemption,
-        // same conservative posture as hasBlockAbove.
-        WorldQueries.isClimbableAt(world, bx, by, bz) ||
-            WorldQueries.isClimbableAt(world, bx, by - 1, bz)
+        // A climbing player occupies the block *beside* the ladder: the ladder is attached to a
+        // wall in a neighbouring column and the climber's own column is air (that is what
+        // `can climb` means), so sampling only the player's own column never matches anything.
+        // Verified live: a ladder column one block away at z+1 left `flyEnvelope`'s exemption dead
+        // and the drive kept false-flagging. Sample the player's column plus the four horizontal
+        // neighbours, at foot level and one below (a freshly-grabbed ladder has the feet still in
+        // air). Fail-negative (return false) on unload/error → no exemption, same conservative
+        // posture as hasBlockAbove.
+        for (y in intArrayOf(by, by - 1)) {
+            if (WorldQueries.isClimbableAt(world, bx, y, bz)) return true
+            if (WorldQueries.isClimbableAt(world, bx + 1, y, bz)) return true
+            if (WorldQueries.isClimbableAt(world, bx - 1, y, bz)) return true
+            if (WorldQueries.isClimbableAt(world, bx, y, bz + 1)) return true
+            if (WorldQueries.isClimbableAt(world, bx, y, bz - 1)) return true
+        }
+        false
     } catch (_: Throwable) {
         false
     }

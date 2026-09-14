@@ -39,11 +39,30 @@ class AimWrapCheck : Check() {
                 tick - tp.hurtTick < 3 ||
                 tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
                 tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
-            if (!exempt && abs(wrappedDelta) > cfg.threshold && abs(ctx.lastWrappedDelta) < 30.0) {
-                flag(tp, ctx, 1.0, "AimWrap", tick)
+            if (!exempt && abs(ctx.lastWrappedDelta) < 30.0) {
+                // A snap opportunity: the previous tick was near-still, so this tick's rotation is
+                // judged on its own. Ticks that follow a large rotation are not opportunities --
+                // the check is a "snap out of rest" detector, and every large delta would
+                // otherwise be counted twice (once on the way out, once on the way back).
+                judge(tp, ctx, tick, abs(wrappedDelta) > cfg.threshold)
             }
             ctx.lastWrappedDelta = wrappedDelta.toDouble()
         } catch (_: Throwable) {}
+    }
+
+    /**
+     * Record one snap opportunity's verdict and alert once when the pattern is sustained.
+     *
+     * A single snap is flagged at `1.0` against a `0.5`/tick decay, and a snap has to be
+     * followed by a near-still tick before the next one can be judged -- so the maximum flag rate
+     * is `0.5`/tick, exactly the decay: the VL pinballs around 1.0 and a real aimbot snap never
+     * alerts. Requiring the pattern (see [Check.sustained]) and flagging the episode once at a
+     * level that clears setbackVL is what turns it into an alert, while a single human flick that
+     * happens to be extreme stays a sub-threshold flag.
+     */
+    private fun judge(tp: TrackedPlayer, ctx: AimWrapContext, tick: Int, snapped: Boolean) {
+        val sustainedNow = sustained(ctx, snapped, WINDOW, MIN_VIOLATIONS)
+        if (sustainedNow) flagEpisode(tp, ctx, "AimWrap", tick) else rearmEpisode(ctx, sustainedNow)
     }
 
     private class AimWrapContext : CheckContext() {
@@ -55,5 +74,11 @@ class AimWrapCheck : Check() {
         private const val LAG_WINDOW = 8
         /** Window (ticks) after a batched catch-up burst within which rotation snaps are exempt. */
         private const val BURST_WINDOW = 3
+        /** Rolling window of snap opportunities the episode is judged over. */
+        private const val WINDOW = 8
+        /** Snaps required in the window. The per-event rotation (>=150 deg in one tick) is already
+         *  well past human reaction, so 3 of 8 is generous to the cheater and still cannot be
+         *  reached by a legitimate flick, which cannot repeat the superhuman delta. */
+        private const val MIN_VIOLATIONS = 3
     }
 }

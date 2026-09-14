@@ -183,6 +183,39 @@ object ChunkMesher {
     fun bakedChunk(cx: Int, cz: Int): ChunkBlocks? = baked[key(cx, cz)]
 
     /**
+     * The chunk keys whose bake must be redone after a block changes at (x,y,z): the containing chunk
+     * plus any neighbour when the cell sits on a chunk border (a border block's face-cull depends on
+     * the neighbour chunk's blocks). Ported from SnapClip; used by the block-delta overlay so a replayed
+     * world edit re-meshes the affected chunk(s) instead of showing the stale baked mesh.
+     */
+    fun invalidateAround(x: Int, y: Int, z: Int): Set<Long> {
+        val cx = x shr 4; val cz = z shr 4
+        val lx = x and 15; val lz = z and 15
+        val out = HashSet<Long>(5)
+        out.add(key(cx, cz))
+        if (lx == 0) out.add(key(cx - 1, cz))
+        if (lx == 15) out.add(key(cx + 1, cz))
+        if (lz == 0) out.add(key(cx, cz - 1))
+        if (lz == 15) out.add(key(cx, cz + 1))
+        return out
+    }
+
+    /**
+     * Drop + close the baked chunks at [keys] (so the next frame lazy-bakes them from the current
+     * snapshot + overlay). Closes the static `GpuBuffer`s before removing, so a delta-driven
+     * re-mesh doesn't orphan GL buffers. Fail-open per chunk.
+     */
+    fun invalidateChunks(keys: Set<Long>) {
+        try {
+            for (k in keys) {
+                val cb = baked.remove(k) ?: continue
+                closeChunkBlocks(cb)
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
+    /**
      * Bake one chunk's face-culled quads **on demand** (the lazy-bake primitive). Idempotent — returns
      * the cached [ChunkBlocks] if (cx,cz) was already baked. Returns null when the snapshot has no
      * chunk at (cx,cz), or on any throw (fail-open → renderer skips that chunk, keeps going).
@@ -236,12 +269,6 @@ object ChunkMesher {
             val baseY = sec.sectionY shl 4
             val pw = if (sec.palette.size <= 256) 1 else 2
             for (entry in 0 until 4096) {
-                val name = readIndex(sec, entry, pw) ?: continue
-                if (name == "minecraft:air") continue
-                val st = stateFor(name) ?: continue
-                // Fluids + invisible-render-type blocks render nothing (matches the old
-                // renderBlockAsEntity self-skip). MODEL + ENTITYBLOCK_ANIMATED proceed via their model.
-                if (st.renderType == BlockRenderType.INVISIBLE) continue
                 // Local cell coords (iteration order y-major → z → x, inverse of ChunkCapture).
                 val lx = entry and 15
                 val lz = (entry shr 4) and 15
@@ -249,6 +276,15 @@ object ChunkMesher {
                 val x = baseX + lx
                 val y = baseY + ly
                 val z = baseZ + lz
+                // Overlay first (SnapClip port): a block change recorded during the replay outranks the
+                // captured palette — a placed block (palette says air) bakes, a broken block (overlay
+                // says air) is skipped. No-op when no overlay is active (the common live-clip case).
+                val name = snap.overlayAt(x, y, z) ?: (readIndex(sec, entry, pw) ?: continue)
+                if (name == "minecraft:air") continue
+                val st = stateFor(name) ?: continue
+                // Fluids + invisible-render-type blocks render nothing (matches the old
+                // renderBlockAsEntity self-skip). MODEL + ENTITYBLOCK_ANIMATED proceed via their model.
+                if (st.renderType == BlockRenderType.INVISIBLE) continue
                 // Block-level surface-shell skip: all 6 neighbours opaque ⇒ fully interior ⇒ never seen.
                 if (isOpaqueAt(snap, x + 1, y, z) &&
                     isOpaqueAt(snap, x - 1, y, z) &&
@@ -464,10 +500,13 @@ object ChunkMesher {
     /** Close every static `GpuBuffer` in a baked-chunks map (fail-open per buffer). Used by
      *  [ensureSnapshot] + [free] before dropping/replacing the map, so GL buffers aren't orphaned. */
     private fun closeStaticBaked(map: Map<Long, ChunkBlocks>) {
-        for (cb in map.values) {
-            for (st in cb.staticByLayer.values) {
-                try { st.vb.close() } catch (_: Throwable) {}
-            }
+        for (cb in map.values) closeChunkBlocks(cb)
+    }
+
+    /** Close one baked chunk's static `GpuBuffer`s (fail-open per buffer). */
+    private fun closeChunkBlocks(cb: ChunkBlocks) {
+        for (st in cb.staticByLayer.values) {
+            try { st.vb.close() } catch (_: Throwable) {}
         }
     }
 }

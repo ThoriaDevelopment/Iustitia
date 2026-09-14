@@ -15,14 +15,25 @@ import net.minecraft.client.render.RenderLayers
 import net.minecraft.client.render.OverlayTexture
 import net.minecraft.client.render.VertexConsumerProvider
 import net.minecraft.client.render.VertexRendering
+import net.minecraft.block.Blocks
 import net.minecraft.client.render.command.OrderedRenderCommandQueue
+import net.minecraft.client.render.entity.EntityRenderer
 import net.minecraft.client.render.entity.LivingEntityRenderer
 import net.minecraft.client.render.entity.PlayerEntityRenderer
 import net.minecraft.client.render.entity.feature.ArmorFeatureRenderer
 import net.minecraft.client.render.entity.feature.FeatureRenderer
 import net.minecraft.client.render.entity.feature.HeldItemFeatureRenderer
 import net.minecraft.client.render.entity.model.BipedEntityModel
+import net.minecraft.client.render.entity.model.EntityModel
+import net.minecraft.client.render.entity.state.BoatEntityRenderState
+import net.minecraft.client.render.entity.state.EntityRenderState
+import net.minecraft.client.render.entity.state.LivingEntityRenderState
+import net.minecraft.client.render.entity.state.MinecartEntityRenderState
 import net.minecraft.client.render.entity.state.PlayerEntityRenderState
+import net.minecraft.client.render.state.CameraRenderState
+import net.minecraft.entity.Entity
+import net.minecraft.entity.EntityType
+import net.minecraft.entity.SpawnReason
 import net.minecraft.client.util.BufferAllocator
 import net.minecraft.client.util.math.MatrixStack
 import net.minecraft.entity.EntityPose
@@ -118,6 +129,11 @@ object ReplayRenderer {
     private const val GHOST_WIDTH = 1.5f
     private const val FOCUS_WIDTH = 2.5f
 
+    /** Non-player entity ghosts (v13) are only drawn within this radius (blocks) of the camera, so a
+     *  big captured scene doesn't submit hundreds of far entity models per frame. */
+    private const val ENTITY_RENDER_RADIUS = 64.0
+    private const val ENTITY_RENDER_RADIUS_SQ = ENTITY_RENDER_RADIUS * ENTITY_RENDER_RADIUS
+
     // Fullbright light coord for see-through text (LightmapTextureManager.MAX_LIGHT_COORDINATE).
     private const val FULL_LIGHT = 0xF000F0
 
@@ -160,7 +176,10 @@ object ReplayRenderer {
 
     private fun drawGhosts(ctx: WorldRenderContext) {
         val frame = ReplayState.currentFrameLerped(MinecraftClient.getInstance().renderTickCounter.getTickProgress(false)) ?: return
-        if (frame.snaps.isEmpty()) return
+        // Draw when EITHER ghost set is non-empty: a frame whose tracked players have all logged off can
+        // still carry captured mobs/vehicles (SnapClip short-circuits on empty snaps only, which drops
+        // those entity ghosts).
+        if (frame.snaps.isEmpty() && frame.entities.isEmpty()) return
         val mc = MinecraftClient.getInstance()
         val camera = ctx.gameRenderer().camera
         val camPos = camera.getCameraPos()
@@ -244,6 +263,28 @@ object ReplayRenderer {
                     // skip one bad ghost, keep the rest
                 }
             }
+            // v13 non-player entity ghosts (mobs / animals / boats / minecarts) — the rest of the
+            // captured scene, drawn with each entity's vanilla renderer model (no tier color: a mob
+            // isn't flagged). Gated by clipEntities; fail-open per entity. Drawn after the players so
+            // the two ghost sets share the one relocation translate above.
+            try {
+                val cfg = try { ConfigManager.config } catch (_: Throwable) { null }
+                // Skipped for a Legacy playclip: v1.1.0 was ghosts-over-the-live-world, with no captured
+                // scene — belt-and-suspenders with the chunks/terrain gates above.
+                if (cfg?.clipEntities == true && !ReplayState.legacyPlayclip && frame.entities.isNotEmpty()) {
+                    for (e in frame.entities) {
+                        try {
+                            if (entityRendererFor(e.typeId) != null) {
+                                drawEntityGhost(matrices, vcp, e, camPos, o, frame.tick)
+                            } else if (nonLivingRendererFor(e.typeId) != null) {
+                                drawNonLivingEntityGhost(matrices, vcp, e, camPos, o, frame.tick)
+                            }
+                        } catch (_: Throwable) {
+                            // skip one bad entity, keep the rest
+                        }
+                    }
+                }
+            } catch (_: Throwable) {}
             // NOTE: the dedicated text Immediate is NOT flushed here — it's flushed at END_MAIN so the
             // name tags draw on top of the chunk-world blocks + ghost models (see [register]). The text
             // vertices already baked their matrices at tr.draw time above, so the current matrix doesn't
@@ -854,6 +895,240 @@ object ReplayRenderer {
     ) {
         val shape = VoxelShapes.cuboid(Box(minx, miny, minz, maxx, maxy, maxz))
         VertexRendering.drawOutline(matrices, lines, shape, 0.0, 0.0, 0.0, color, width)
+    }
+
+    // ---- v13 non-player entity ghosts (SnapClip port) ------------------------------------------------
+    //
+    // A captured mob/animal is drawn through the vanilla entity renderer resolved from its captured
+    // registry type (`Registries.ENTITY_TYPE`), driven by a render state built from its prototype
+    // entity (which is what gives the model its correct dimensions/parts) plus the snap's pose/yaw/
+    // health. Boats/minecarts have no model of their own — their renderer submits into an
+    // OrderedRenderCommandQueue instead — so they go through [ImmediateRenderQueue], which emits that
+    // work straight into the overlay's [VertexConsumerProvider]. Both paths are display-only and
+    // fail-open per entity; the renderer/prototype caches are keyed by type id so a scene with 20
+    // zombies resolves the renderer once. Runtime-only-verifiable (the model transforms + the
+    // non-living submit path can only be confirmed in a live client).
+
+    /** typeId → vanilla living renderer (null when the type has no living renderer / resolution failed). */
+    private val entityRendererCache = ConcurrentHashMap<String, LivingEntityRenderer<*, *, *>?>()
+    /** typeId → a fabricated prototype living entity (used to seed `updateRenderState`). */
+    private val entityPrototypeCache = ConcurrentHashMap<String, net.minecraft.entity.LivingEntity?>()
+    /** typeId → vanilla non-living renderer (boats/minecarts). */
+    private val nonLivingRendererCache = ConcurrentHashMap<String, EntityRenderer<*, *>?>()
+    /** typeId → a fabricated prototype non-living entity. */
+    private val nonLivingPrototypeCache = ConcurrentHashMap<String, Entity?>()
+
+    /** Resolve (and cache) the vanilla living renderer for a captured entity type id, or null. */
+    private fun entityRendererFor(typeId: String): LivingEntityRenderer<*, *, *>? {
+        entityRendererCache[typeId]?.let { return it }
+        val r = lookupEntityRenderer(typeId)
+        entityRendererCache[typeId] = r
+        return r
+    }
+
+    private fun lookupEntityRenderer(typeId: String): LivingEntityRenderer<*, *, *>? = try {
+        val mc = MinecraftClient.getInstance()
+        val world = mc.world ?: return null
+        val id = Identifier.of(typeId)
+        if (!Registries.ENTITY_TYPE.containsId(id)) return null
+        val type = Registries.ENTITY_TYPE.get(id)
+        val proto = type.create(world, SpawnReason.COMMAND) ?: return null
+        if (proto !is net.minecraft.entity.LivingEntity) return null
+        entityPrototypeCache[typeId] = proto
+        val renderer = mc.getEntityRenderDispatcher().getRenderer(proto)
+        renderer as? LivingEntityRenderer<*, *, *>
+    } catch (_: Throwable) { null }
+
+    /** Resolve (and cache) the vanilla non-living renderer for a captured entity type id, or null. */
+    private fun nonLivingRendererFor(typeId: String): EntityRenderer<*, *>? {
+        nonLivingRendererCache[typeId]?.let { return it }
+        val r = lookupNonLivingRenderer(typeId)
+        nonLivingRendererCache[typeId] = r
+        return r
+    }
+
+    private fun lookupNonLivingRenderer(typeId: String): EntityRenderer<*, *>? = try {
+        val mc = MinecraftClient.getInstance()
+        val world = mc.world ?: return null
+        val id = Identifier.of(typeId)
+        if (!Registries.ENTITY_TYPE.containsId(id)) return null
+        val type = Registries.ENTITY_TYPE.get(id)
+        val proto = type.create(world, SpawnReason.COMMAND) ?: return null
+        if (proto is net.minecraft.entity.LivingEntity) return null
+        nonLivingPrototypeCache[typeId] = proto
+        mc.getEntityRenderDispatcher().getRenderer(proto)
+    } catch (_: Throwable) { null }
+
+    /**
+     * Draw one living entity ghost (mob/animal) at its recorded pose: resolve the renderer for its
+     * type, build a render state from the prototype, overwrite the recorded pose/yaw/health, derive a
+     * limb-swing from consecutive-snap movement, then render the bare model with the vanilla
+     * `scale(-1,-1,1)` + `translate(0,-1.501,0)` body transform. Culled beyond [ENTITY_RENDER_RADIUS].
+     * Fail-open (returns quietly on any missing piece).
+     */
+    private fun drawEntityGhost(
+        matrices: MatrixStack,
+        vcp: VertexConsumerProvider,
+        e: ReplayBuffer.EntitySnap,
+        camPos: Vec3d,
+        offset: Vec3d,
+        tick: Int,
+    ) {
+        val ex = e.x.toDouble() + offset.x
+        val ey = e.y.toDouble() + offset.y
+        val ez = e.z.toDouble() + offset.z
+        val dx = ex - camPos.x
+        val dy = ey - camPos.y
+        val dz = ez - camPos.z
+        if (dx * dx + dy * dy + dz * dz > ENTITY_RENDER_RADIUS_SQ) return
+
+        val cached = entityRendererFor(e.typeId) ?: return
+        @Suppress("UNCHECKED_CAST")
+        val r = cached as LivingEntityRenderer<net.minecraft.entity.LivingEntity, LivingEntityRenderState, EntityModel<LivingEntityRenderState>>
+        val state: LivingEntityRenderState = try { r.createRenderState() } catch (_: Throwable) { return }
+        val model: EntityModel<LivingEntityRenderState> = try { r.model } catch (_: Throwable) { return }
+
+        val proto = entityPrototypeCache[e.typeId]
+        if (proto != null) {
+            try {
+                @Suppress("UNCHECKED_CAST")
+                (r as LivingEntityRenderer<net.minecraft.entity.LivingEntity, LivingEntityRenderState, *>)
+                    .updateRenderState(proto, state, 0f)
+            } catch (_: Throwable) {
+            }
+        }
+
+        state.baseScale = 1f
+        state.ageScale = 1f
+        state.light = FULL_LIGHT
+        state.invisible = false
+        state.hurt = e.hurtTime > 0
+        state.deathTime = 0f
+        state.shaking = false
+        state.baby = false
+        state.bodyYaw = e.bodyYaw
+        state.relativeHeadYaw = net.minecraft.util.math.MathHelper.wrapDegrees(e.headYaw - e.bodyYaw)
+        state.pitch = e.pitch
+        state.age = tick.toFloat()
+        state.usingRiptide = (e.pose == ReplayBuffer.POSE_RIPTIDE)
+        when (e.pose) {
+            ReplayBuffer.POSE_SNEAK -> state.pose = EntityPose.CROUCHING
+            ReplayBuffer.POSE_GLIDE -> state.pose = EntityPose.GLIDING
+            ReplayBuffer.POSE_SWIM -> state.pose = EntityPose.SWIMMING
+            ReplayBuffer.POSE_RIPTIDE -> state.pose = EntityPose.SPIN_ATTACK
+            else -> state.pose = EntityPose.STANDING
+        }
+
+        // Movement-derived limb swing (no entity to tick a LimbAnimator): distance between consecutive
+        // snaps → amplitude, integrated into phase. Reuses the players' [WalkState] keyed by uuid (a mob
+        // and a player never share a uuid, so one map is fine). Seek/scrub (tickJump != 1) resets to 0.
+        val ws = walkState.computeIfAbsent(e.uuid()) { WalkState() }
+        val tickJump = tick - ws.lastTick
+        when {
+            tickJump == 1 -> {
+                if (!ws.lastX.isNaN()) {
+                    val ddx = e.x - ws.lastX
+                    val ddz = e.z - ws.lastZ
+                    ws.lastTickDist = sqrt((ddx * ddx + ddz * ddz).toDouble()).toFloat().coerceAtMost(1.5f)
+                }
+                ws.lastX = e.x; ws.lastZ = e.z; ws.lastTick = tick
+                val walkTarget = if (ws.lastTickDist > 0.05f) (ws.lastTickDist / 0.3f).coerceIn(0f, 1f) else 0f
+                ws.amp += (walkTarget - ws.amp) * 0.3f
+                ws.phase += ws.amp * 0.94f
+            }
+            tickJump != 0 -> {
+                ws.lastX = e.x; ws.lastZ = e.z; ws.lastTick = tick; ws.lastTickDist = 0f; ws.amp = 0f
+            }
+        }
+        state.limbSwingAmplitude = ws.amp
+        state.limbSwingAnimationProgress = ws.phase
+
+        try { model.setAngles(state) } catch (_: Throwable) { return }
+        val texture = try { r.getTexture(state) } catch (_: Throwable) { return }
+        val layer = try { model.getLayer(texture) ?: return } catch (_: Throwable) { return }
+        val vc = try { vcp.getBuffer(layer) } catch (_: Throwable) { return }
+
+        matrices.push()
+        try {
+            matrices.translate(e.x.toDouble(), e.y.toDouble(), e.z.toDouble())
+            matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180f - e.bodyYaw))
+            matrices.scale(-1f, -1f, 1f)
+            matrices.translate(0f, -1.501f, 0f)
+            val overlay = if (e.hurtTime > 0)
+                try { LivingEntityRenderer.getOverlay(state, 0f) } catch (_: Throwable) { OverlayTexture.DEFAULT_UV }
+            else OverlayTexture.DEFAULT_UV
+            try {
+                model.render(matrices, vc, FULL_LIGHT, overlay)
+            } catch (_: Throwable) {
+            }
+        } catch (_: Throwable) {
+        } finally {
+            matrices.pop()
+        }
+    }
+
+    /**
+     * Draw one non-living entity ghost (boat/minecart) at its recorded pose via the vanilla entity
+     * renderer + [ImmediateRenderQueue] (which turns the renderer's deferred submissions into direct
+     * vertex writes). Culled beyond [ENTITY_RENDER_RADIUS]. Fail-open.
+     */
+    private fun drawNonLivingEntityGhost(
+        matrices: MatrixStack,
+        vcp: VertexConsumerProvider,
+        e: ReplayBuffer.EntitySnap,
+        camPos: Vec3d,
+        offset: Vec3d,
+        tick: Int,
+    ) {
+        val ex = e.x.toDouble() + offset.x
+        val ey = e.y.toDouble() + offset.y
+        val ez = e.z.toDouble() + offset.z
+        val dx = ex - camPos.x
+        val dy = ey - camPos.y
+        val dz = ez - camPos.z
+        if (dx * dx + dy * dy + dz * dz > ENTITY_RENDER_RADIUS_SQ) return
+
+        val cached = nonLivingRendererFor(e.typeId) ?: return
+        @Suppress("UNCHECKED_CAST")
+        val r = cached as EntityRenderer<Entity, EntityRenderState>
+        val state: EntityRenderState = try { r.createRenderState() } catch (_: Throwable) { return }
+
+        val proto = nonLivingPrototypeCache[e.typeId]
+        if (proto != null) {
+            try { r.updateRenderState(proto, state, 0f) } catch (_: Throwable) {}
+        }
+
+        state.x = e.x.toDouble()
+        state.y = e.y.toDouble()
+        state.z = e.z.toDouble()
+        state.light = FULL_LIGHT
+        state.age = tick.toFloat()
+        state.invisible = false
+
+        when (state) {
+            is BoatEntityRenderState -> state.yaw = e.bodyYaw
+            is MinecartEntityRenderState -> {
+                state.lerpedYaw = e.bodyYaw
+                state.containedBlock = Blocks.AIR.defaultState
+            }
+        }
+
+        matrices.push()
+        try {
+            matrices.translate(e.x.toDouble(), e.y.toDouble(), e.z.toDouble())
+            r.render(state, matrices, ImmediateRenderQueue(vcp), CameraRenderState())
+        } catch (_: Throwable) {
+        } finally {
+            matrices.pop()
+        }
+    }
+
+    /** Drop the per-uuid walk/health ghost caches (called from [ReplayState.stop]). Idempotent. */
+    fun clearGhostCaches() {
+        try {
+            walkState.clear()
+            healthState.clear()
+        } catch (_: Throwable) {}
     }
 
     private fun tierColor(tier: FlagHistory.Tier): Int = when (tier) {

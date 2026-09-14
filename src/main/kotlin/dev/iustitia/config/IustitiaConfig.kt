@@ -87,8 +87,6 @@ data class IustitiaConfig(
     var audioCues: Boolean = false,
     /** Audio cue volume (0..1). */
     var audioVolume: Double = 0.6,
-    /** Distinct "nuclear" cue when a flush reaches RED tier from ≥2 primary checks at once. */
-    var audioNuclear: Boolean = true,
     /** During a server-lag burst (per [dev.iustitia.tracking.EntityTrackerManager.lastServerLagTick])
      *  prefix flushed alerts with `[lag]` and, under the quiet preset, drop the non-red ones so a
      *  noisy read doesn't spam chat. Display-only. */
@@ -151,7 +149,7 @@ data class IustitiaConfig(
      *  touches your own row. */
     var tabListBadge: Boolean = true,
 
-    // --- Phase 2 instant-replay / sonar / clip ---
+    // --- Phase 2 instant-replay / clip ---
     /** Master toggle for the rolling replay capture buffer ([dev.iustitia.replay.ReplayBuffer]). On by
      *  default — the per-tick work is tiny (≤64 players × ≤1200 frames), and turning it off only
      *  disables `/ius replay` + `/ius clip` (no in-world ghost playback, no `.iusclip` export). The
@@ -189,10 +187,14 @@ data class IustitiaConfig(
      *  the player into a `.iusclip` when `/ius clip` runs, so `/ius playclip` can render the clip's world
      *  as **solid, textured blocks** (the real map, relocated to you) and you can free-spectate anywhere
      *  — including underground — like ReplayMod. The live world is hidden during playback and restored on
-     *  `/ius playclip off`. The capture is one-shot at save time (only the chunks loaded then are kept;
-     *  a chunk that unloaded earlier in the window isn't captured) and bounded by [clipChunkRadius] +
-     *  a section budget. Flip off to save clips without the chunk world (the v5 wireframe terrain / ghosts
-     *  path). On by default. */
+     *  `/ius playclip off`. The capture is **rolling, not one-shot**: the live buffer rolls each segment's
+     *  world up in small per-tick pieces ([dev.iustitia.replay.ChunkRollingCapture]) while the scene is
+     *  still live, so `/ius clip` doesn't freeze on a ~300-chunk sweep and a window that spans a teleport
+     *  keeps one world per segment — only the chunks loaded *during* the window and within [clipChunkRadius]
+     *  are captured, bounded by [clipRollingChunkCap] sections. A window the rolling capture has nothing
+     *  for (fresh session, or this toggle just enabled) falls back to a single sweep at save time. Flip
+     *  off to save clips without the chunk world (the v5 wireframe terrain / ghosts path), which also
+     *  stops the rolling capture. On by default. */
     var clipChunkWorld: Boolean = true,
     /** Capture radius in chunks for [clipChunkWorld] (a `clipChunkRadius`-chunk square centred on the
      *  player; 8 → 17×17 = 289 chunks). Larger = more of the map captured + a bigger `.iusclip` file +
@@ -214,13 +216,6 @@ data class IustitiaConfig(
      *  take effect in Modern; in Legacy they're ignored (forced off). User-controlled: NOT overridden by
      *  preset applies. */
     var playclipMode: PlayclipMode = PlayclipMode.MODERN,
-    /** Sonar alerting: on a flushed alert batch, play a DIRECTIONAL note positioned at the offender's
-     *  last-known world position (pan = direction, pitch = distance) so you can keep fighting and
-     *  listen for cheats. Additive to chat alerts; gated by the same mute/preset rules. */
-    var sonarAlerts: Boolean = true,
-    /** Sonar cue volume (0..1). Independent of the chat audio-cue volume — sonar pings are quieter by
-     *  design (positional, frequent). */
-    var sonarVolume: Double = 0.7,
     /** Seconds of buffered scene to replay when the replay-toggle keybind (numpad * by default) is
      *  pressed. 1..60 (clamped to the 60s replay buffer). Default 30. Additive — no CONFIG_VERSION
      *  bump; a pre-field config keeps the default. */
@@ -245,6 +240,32 @@ data class IustitiaConfig(
      *  `OrderedRenderCommandQueue` from the world render context — if unavailable, degrades fail-open to
      *  the skin-only ghost (features silently skip). */
     var clipGhostEquipment: Boolean = true,
+    /** Capture + render **non-player entity ghosts** (mobs, animals, boats, minecarts) during
+     *  `/ius replay` / `/ius playclip`, so a replay shows the whole scene and not just players. Living
+     *  entities are drawn through their vanilla entity renderer model (mobs/animals), non-living ones
+     *  (boats/minecarts) through their entity renderer. ON by default. Display/capture only — adds NO
+     *  detection. Additive — no CONFIG_VERSION bump; a pre-field config keeps the default (on). */
+    var clipEntities: Boolean = true,
+    /** Max non-player entities captured per tick ([clipEntities]) — bounds the per-tick capture cost
+     *  and the per-frame snap payload written into a clip. Clamped 0..256 at capture. Display/UX only.
+     *  Additive — no CONFIG_VERSION bump; a pre-field config keeps the default (64). */
+    var clipEntityCap: Int = 64,
+    /** Total non-empty-section budget for the **rolling** per-segment chunk capture used by `/ius
+     *  record` and the live replay buffer ([dev.iustitia.replay.ChunkRollingCapture]); past it the
+     *  oldest segment (never the current one) is evicted. Larger = more of a long recording's world is
+     *  retained + more memory: a section is up to 4096 bytes of palette indices, so the 24 000 default
+     *  is roughly 20–95 MB of live captured world depending on how full the segments are (a fully
+     *  captured 17×17 radius is ~3 500 sections ≈ 14 MB, so ~7 segments fit). Lower it on a memory-tight
+     *  client; raise it if a long `/ius record` keeps losing its earliest world. Clamped 4096..131072 at
+     *  capture. Display/UX only. Additive — no CONFIG_VERSION bump; a pre-field config keeps the default
+     *  (24000, matched to SnapClip's own default). */
+    var clipRollingChunkCap: Int = 24_000,
+    /** Distance (blocks) the local player must move in one tick — or a world/dimension change — to
+     *  begin a **new capture segment**, each keeping its own world snapshot + block deltas (so a clip
+     *  that spans a teleport replays both places instead of one). Lower = more, smaller segments;
+     *  higher = fewer, larger ones. Default 64. Display/UX only. Additive — no CONFIG_VERSION bump; a
+     *  pre-field config keeps the default (64). */
+    var clipSegmentTeleportThreshold: Double = 64.0,
 
     /** `/ius chathist` capture master toggle (on by default). When on, messages from tracked OTHER
      *  players (not the local player, not system messages) are captured at the packet level and
@@ -433,8 +454,9 @@ data class IustitiaConfig(
             // drift at startup; until then return a SAFE default: disabled + max setback/threshold
             // so the check can't fire (most movement checks flag on `value > threshold`, so
             // MAX_VALUE means never — a `<`-comparison orphan like NoKnockback is the known gap the
-            // self-check catches instead). NB: checks do NOT gate on `enabled`, so the threshold
-            // is the real guard, not the enabled flag.
+            // self-check catches instead). NB: checks do NOT read `enabled` in their own dispatch
+            // paths (movement skips via the tick loop, combat via Check.flag's disabled-check gate),
+            // so this slice's max threshold is the real guard for a stale id, not the enabled flag.
             CheckConfig(enabled = false, setbackVL = Double.MAX_VALUE, decay = 1.0, threshold = Double.MAX_VALUE)
         }
     }

@@ -10,32 +10,32 @@ import java.util.UUID
  * Manual long-recording buffer for `/ius record start|stop`. Unlike the always-on 60 s rolling
  * [ReplayBuffer] (which `/ius replay` + `/ius clip` dump the last N seconds of), this is an
  * **explicit, opt-in** capture of arbitrary length — bounded at [MAX_RECORD_FRAMES] (10 min) per
- * segment. `start` snapshots the loaded world map once (the same synchronous [ChunkCapture.capture]
- * `/ius clip` uses) and begins accumulating per-tick frames; `stop` bundles frames + map into a
- * [ReplayBuffer.Window] and writes a normal `.iusclip` via [ClipStore.save] — so `/ius playclip
- * <name>` round-trips a recording exactly like a clip.
+ * segment. `start` begins an incremental world capture ([ChunkRollingCapture]) and accumulates
+ * per-tick frames + block deltas; `stop` bundles frames + alerts + totems + the captured world
+ * (segments) into a [ReplayBuffer.Window] and writes a normal `.iusclip` via [ClipStore.save] — so
+ * `/ius playclip <name>` round-trips a recording exactly like a clip.
  *
  * ## Auto-split (world change + 10-min cap)
  *
  * A genuine world/seed change is detected instantly by [dev.iustitia.mixin.ClientPlayNetworkHandlerMixin]
  * (seed + dimension comparison on `onPlayerRespawn` / `onGameJoin`) → [dev.iustitia.Iustitia.resetAll],
- * which calls [onWorldChange]. If a recording is active, the current segment auto-saves (silent) and
- * a FRESH map is captured for the new world, keeping `recording=true` — one segment per world, no
- * data lost. Block-only updates within the same world are ignored (the first captured map is kept).
- * Hitting [MAX_RECORD_FRAMES] likewise auto-saves + starts a new segment (the 10-min cap, no data
- * loss). No 5 s poll — the existing instant detector is the only split signal.
+ * which calls [onWorldChange]. If a recording is active, the current segment auto-saves (silent) and a
+ * FRESH capture starts for the new world, keeping `recording=true` — one segment per world, no data
+ * lost. Hitting [MAX_RECORD_FRAMES] likewise auto-saves + starts a new segment (the 10-min cap, no
+ * data loss). No polling — the existing instant detector is the only split signal.
+ *
+ * ## Merge provenance
+ *
+ * Iustitia's original recorder (frames + alerts + totems + equipment) extended with SnapClip's
+ * incremental world + block-delta capture. **The alert timeline is preserved** — SnapClip's recorder
+ * dropped it.
  *
  * ## Memory + threading
  *
- * Reuses [ReplayBuffer.Frame] / [ReplayBuffer.PlayerSnap] / [ReplayBuffer.AlertRec] /
- * [ReplayBuffer.TotemRec] — no new snap type. The per-tick work is identical to
- * [ReplayBuffer.recordTick] (already profiled as negligible); a second growable buffer only matters
- * while a recording is active. Worst case at the 10-min cap is ~64 players × 12000 frames ≈ ~770k
- * small data-class instances; the cap auto-save+clear bounds it. [recordTick] runs on the client
- * tick thread (from [dev.iustitia.Iustitia.onClientTick]); [start]/[stop]/[saveSegment] run on the
- * client thread (command handlers). The deques are synchronized on the deque object — coarse but
- * correct; the per-tick work is tiny. All paths fail-open — a capture/IO error never stalls the tick
- * or crashes the client.
+ * [recordTick] runs on the client tick thread (from [dev.iustitia.Iustitia.onClientTick]);
+ * [start]/[stop]/[saveSegment] run on the client thread (command handlers). The deques are
+ * synchronized on the deque object — coarse but correct; the per-tick work is tiny. All paths
+ * fail-open — a capture/IO error never stalls the tick or crashes the client.
  */
 object RecordManager {
 
@@ -44,10 +44,15 @@ object RecordManager {
     private const val MAX_PLAYERS_PER_FRAME = 64
     private const val MAX_ALERTS = 40000
     private const val MAX_TOTEMS = 4000
+    private const val MAX_RECORD_DELTAS = 120_000
+
+    /** Synthetic segment id for the manual recording's rolling chunk capture (distinct from buffer segments). */
+    private const val RECORD_SEGMENT_ID = 1_000_000
 
     private val frames: ArrayDeque<ReplayBuffer.Frame> = ArrayDeque()
     private val alerts: ArrayDeque<ReplayBuffer.AlertRec> = ArrayDeque()
     private val totems: ArrayDeque<ReplayBuffer.TotemRec> = ArrayDeque()
+    private val blockDeltas: ArrayDeque<BlockDeltaBuffer.BlockDelta> = ArrayDeque()
 
     private var recording: Boolean = false
     private var segmentStartTick: Int = 0
@@ -61,13 +66,19 @@ object RecordManager {
     /** Currently buffered frame count (diagnostic / feedback). Fail-open. */
     fun frameCount(): Int = try { synchronized(frames) { frames.size } } catch (_: Throwable) { 0 }
 
+    /** Frame count captured BEFORE [stop] clears the deque (for the feedback line). */
+    private var frameCountBeforeClear: Int = 0
+
+    private val tag: String get() = "§8[§diustitia§8]"
+
     /**
-     * Begin a recording. Idempotent — a second `start` while recording returns a "already
-     * recording" message and does nothing. Captures the loaded world map once (synchronous, same
-     * one-shot hitch `/ius clip` has) gated on `clipChunkWorld`; fail-open to a ghosts-only segment.
-     * Returns a chat-feedback string.
+     * Begin a recording. Idempotent — a second `start` while recording returns an "already recording"
+     * message and does nothing. Begins incremental world capture ([ChunkRollingCapture]) gated on
+     * `clipChunkWorld`; fail-open to a ghosts-only segment. Returns a chat-feedback string.
      */
     fun start(): String = try {
+        // Yield long-recording to SnapClip when it's installed (it owns /record).
+        if (dev.iustitia.compat.CompanionMods.snapClip) return "$tag §7recording is handled by §fSnapClip§7 (installed) — use its §f/record start§7."
         if (recording) return "$tag §7already recording §8(§f${frameCount()}§7 frames so far) — §f/ius record stop§7 to save."
         val cfg = ConfigManager.config
         recording = true
@@ -76,10 +87,23 @@ object RecordManager {
         synchronized(frames) { frames.clear() }
         synchronized(alerts) { alerts.clear() }
         synchronized(totems) { totems.clear() }
-        chunkMap = if (cfg.clipChunkWorld) {
-            try { ChunkCapture.capture(try { cfg.clipChunkRadius } catch (_: Throwable) { 8 }) } catch (_: Throwable) { null }
-        } else null
-        val mapTxt = if (chunkMap != null) " §7+ map" else ""
+        synchronized(blockDeltas) { blockDeltas.clear() }
+        chunkMap = null
+        var mapOn = false
+        if (cfg.clipChunkWorld) {
+            try {
+                val p = net.minecraft.client.MinecraftClient.getInstance().player
+                if (p != null) {
+                    val radius = try { cfg.clipChunkRadius } catch (_: Throwable) { 8 }
+                    val pcx = Math.floorDiv(p.x.toInt(), 16)
+                    val pcz = Math.floorDiv(p.z.toInt(), 16)
+                    ChunkRollingCapture.clearSegment(RECORD_SEGMENT_ID)
+                    ChunkRollingCapture.onSegmentStart(RECORD_SEGMENT_ID, pcx, pcz, radius)
+                    mapOn = true
+                }
+            } catch (_: Throwable) {}
+        }
+        val mapTxt = if (mapOn) " §7+ map" else ""
         "$tag §7recording started §8(segment §f$segmentIndex§8)§7 — §f/ius record stop§7 to save$mapTxt§7."
     } catch (_: Throwable) {
         recording = false
@@ -97,7 +121,9 @@ object RecordManager {
         synchronized(frames) { frames.clear() }
         synchronized(alerts) { alerts.clear() }
         synchronized(totems) { totems.clear() }
+        synchronized(blockDeltas) { blockDeltas.clear() }
         chunkMap = null
+        try { ChunkRollingCapture.clearSegment(RECORD_SEGMENT_ID) } catch (_: Throwable) {}
         if (saved == null) "$tag §cfailed to write recording (disk error)."
         else "$tag §7recording saved: §f$saved§7 §8(${frameCountBeforeClear} frames) §7→ §f${ClipStore.dirDisplay()}"
     } catch (_: Throwable) {
@@ -105,17 +131,16 @@ object RecordManager {
         "$tag §cfailed to save recording."
     }
 
-    /** Frame count captured BEFORE [stop] clears the deque (for the feedback line). */
-    private var frameCountBeforeClear: Int = 0
-
     /**
      * Record one tick of the scene into the growable buffer. Call from the client tick thread after
      * [ReplayBuffer.recordTick]. No-op when not recording. On hitting [MAX_RECORD_FRAMES] the current
-     * segment auto-saves (silent, no command ctx) and a new segment begins — the 10-min cap, no data
-     * lost. Fail-open: a capture error never stalls the tick.
+     * segment auto-saves (silent) and a new segment begins — the 10-min cap, no data lost. Fail-open.
      */
     fun recordTick(tick: Int, tracked: Collection<TrackedPlayer>) {
         if (!recording) return
+        // Defensive: start()/onWorldChange() already refuse to begin a recording while SnapClip owns
+        // /record, but a recording begun before the companion was noticed must not keep buffering.
+        if (dev.iustitia.compat.CompanionMods.snapClip) return
         try {
             val snaps = ArrayList<ReplayBuffer.PlayerSnap>(minOf(tracked.size, MAX_PLAYERS_PER_FRAME))
             for (tp in tracked) {
@@ -123,22 +148,31 @@ object RecordManager {
                 val snap = ReplayBuffer.buildSnap(tp) ?: continue
                 snaps.add(snap)
             }
-            synchronized(frames) { frames.addLast(ReplayBuffer.Frame(tick, snaps)) }
-            // 10-min cap: auto-save this segment silently, then start a fresh one. Done outside the
-            // frames lock so [saveSegment] (which re-locks) and [ChunkCapture.capture] (a one-shot
-            // world read) don't hold the deque lock during their work. A one-frame race with [stop]
-            // is benign — worst case a frame or two extra lands in the saved segment.
+            val mc = net.minecraft.client.MinecraftClient.getInstance()
+            val entities = try {
+                val world = mc.world
+                if (world != null) ReplayBuffer.buildEntitySnaps(world, mc.player) else emptyList()
+            } catch (_: Throwable) { emptyList() }
+            try {
+                val cfg = ConfigManager.config
+                val self = mc.player
+                if (cfg.clipChunkWorld && self != null) {
+                    val radius = try { cfg.clipChunkRadius } catch (_: Throwable) { 8 }
+                    val pcx = Math.floorDiv(self.x.toInt(), 16)
+                    val pcz = Math.floorDiv(self.z.toInt(), 16)
+                    ChunkRollingCapture.tickCapture(RECORD_SEGMENT_ID, pcx, pcz, radius)
+                }
+            } catch (_: Throwable) {}
+            synchronized(frames) { frames.addLast(ReplayBuffer.Frame(tick, snaps, entities, RECORD_SEGMENT_ID)) }
             if (frameCount() > MAX_RECORD_FRAMES) {
                 saveSegment(null)
                 synchronized(frames) { frames.clear() }
                 synchronized(alerts) { alerts.clear() }
                 synchronized(totems) { totems.clear() }
+                synchronized(blockDeltas) { blockDeltas.clear() }
                 segmentStartTick = tick
                 segmentIndex += 1
-                val cfg = ConfigManager.config
-                chunkMap = if (cfg.clipChunkWorld) {
-                    try { ChunkCapture.capture(try { cfg.clipChunkRadius } catch (_: Throwable) { 8 }) } catch (_: Throwable) { null }
-                } else null
+                restartRollingCapture()
             }
         } catch (_: Throwable) {
             // fail-open
@@ -169,10 +203,23 @@ object RecordManager {
         } catch (_: Throwable) {}
     }
 
+    /** Record one observed block change into the active recording (fed by
+     *  [dev.iustitia.mixin.WorldChunkMixin]). No-op when not recording / unchanged. Fail-open. */
+    fun recordDelta(tick: Int, x: Int, y: Int, z: Int, before: String, after: String) {
+        if (!recording) return
+        if (before == after) return
+        try {
+            synchronized(blockDeltas) {
+                blockDeltas.addLast(BlockDeltaBuffer.BlockDelta(tick, x, y, z, before, after))
+                while (blockDeltas.size > MAX_RECORD_DELTAS) blockDeltas.removeFirst()
+            }
+        } catch (_: Throwable) {}
+    }
+
     /**
      * World-change auto-split (called from [dev.iustitia.Iustitia.resetAll]). If recording, silently
-     * save the current segment, capture a FRESH map for the new world, and keep `recording=true` —
-     * one segment per world. If not recording, no-op. Fail-open.
+     * save the current segment, reset capture for the new world, and keep `recording=true` — one
+     * segment per world. If not recording, no-op. Fail-open.
      */
     fun onWorldChange() {
         if (!recording) return
@@ -181,19 +228,33 @@ object RecordManager {
             synchronized(frames) { frames.clear() }
             synchronized(alerts) { alerts.clear() }
             synchronized(totems) { totems.clear() }
+            synchronized(blockDeltas) { blockDeltas.clear() }
             segmentStartTick = Iustitia.tickCounter
             segmentIndex += 1
+            restartRollingCapture()
+        } catch (_: Throwable) {}
+    }
+
+    /** Re-init the recording's rolling chunk capture for a fresh segment (fail-open). */
+    private fun restartRollingCapture() {
+        try {
             val cfg = ConfigManager.config
-            chunkMap = if (cfg.clipChunkWorld) {
-                try { ChunkCapture.capture(try { cfg.clipChunkRadius } catch (_: Throwable) { 8 }) } catch (_: Throwable) { null }
-            } else null
+            chunkMap = null
+            try { ChunkRollingCapture.clearSegment(RECORD_SEGMENT_ID) } catch (_: Throwable) {}
+            if (!cfg.clipChunkWorld) return
+            val p = net.minecraft.client.MinecraftClient.getInstance().player ?: return
+            val radius = try { cfg.clipChunkRadius } catch (_: Throwable) { 8 }
+            val pcx = Math.floorDiv(p.x.toInt(), 16)
+            val pcz = Math.floorDiv(p.z.toInt(), 16)
+            ChunkRollingCapture.onSegmentStart(RECORD_SEGMENT_ID, pcx, pcz, radius)
         } catch (_: Throwable) {}
     }
 
     /**
-     * Bundle the current frames + alerts + totems + the captured map into a [ReplayBuffer.Window]
-     * and write `<name>.iusclip` (default `record_<startTick>_<idx>`). Returns the saved display
-     * name, or null on any IO/codec error. Caller owns clearing the deques after. Fail-open.
+     * Bundle the current frames + alerts + totems + block deltas + the rolled-up world into a
+     * [ReplayBuffer.Window] (one [ReplayBuffer.Segment]) and write `<name>.iusclip` (default
+     * `record_<startTick>_<idx>`). Returns the saved display name, or null on any IO/codec error.
+     * Caller owns clearing the deques after. Fail-open.
      */
     private fun saveSegment(name: String?): String? = try {
         frameCountBeforeClear = frameCount()
@@ -204,10 +265,36 @@ object RecordManager {
         synchronized(alerts) { outAlerts = alerts.toList() }
         synchronized(totems) { outTotems = totems.toList() }
         if (outFrames.isEmpty()) return null
-        val window = ReplayBuffer.Window(outFrames, outAlerts, chunks = chunkMap, totems = outTotems)
+
+        val map = try { ChunkRollingCapture.snapshotForSegment(RECORD_SEGMENT_ID) } catch (_: Throwable) { null }
+        val dimKey = try {
+            net.minecraft.client.MinecraftClient.getInstance().world?.registryKey?.value?.toString() ?: "?"
+        } catch (_: Throwable) { "?" }
+        if (map != null) try { map.dimension = dimKey } catch (_: Throwable) {}
+
+        val deltas: List<BlockDeltaBuffer.BlockDelta> = if (map == null) emptyList() else try {
+            val minTick = outFrames.first().tick
+            val maxTick = outFrames.last().tick
+            val chunkKeys = buildSet {
+                for (c in map.chunks) add((c.chunkX.toLong() shl 32) or (c.chunkZ.toLong() and 0xFFFFFFFFL))
+            }
+            synchronized(blockDeltas) {
+                blockDeltas.filter { d ->
+                    d.tick in minTick..maxTick && chunkKeys.contains((d.x shr 4).toLong().let { (it shl 32) or ((d.z shr 4).toLong() and 0xFFFFFFFFL) })
+                }.toList()
+            }
+        } catch (_: Throwable) { emptyList() }
+
+        val segments = listOf(
+            ReplayBuffer.Segment(dimKey, 0, map, deltas, snapshotIsStart = true)
+        )
+        // The world lives in the segment (v13+). [ReplayBuffer.Window.chunks] stays null to avoid
+        // writing the same chunk snapshot twice; the play path derives chunks from the segment.
+        val window = ReplayBuffer.Window(
+            outFrames, outAlerts,
+            chunks = null, totems = outTotems, segments = segments,
+        )
         val segName = name ?: "record_${segmentStartTick}_$segmentIndex"
         ClipStore.save(segName, window, null)
     } catch (_: Throwable) { null }
-
-    private val tag: String get() = "§8[§diustitia§8]"
 }

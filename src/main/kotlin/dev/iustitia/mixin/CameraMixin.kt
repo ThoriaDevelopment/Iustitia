@@ -248,6 +248,9 @@ class CameraMixin {
     private fun tryWatch(tickDelta: Float): Boolean {
         try {
             if (!ConfigManager.config.watchFollowCam) return false
+            // FollowCam owns the watch follow-cam when installed (WatchState.enable is gated too).
+            // Returning false lets the offline branch fall through and leave vanilla's camera be.
+            if (dev.iustitia.compat.CompanionMods.followCam) return false
             if (!WatchState.active) return false
             val uuid = WatchState.targetUuid ?: return false
             val mc = MinecraftClient.getInstance()

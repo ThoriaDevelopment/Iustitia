@@ -79,7 +79,12 @@ object ChatHistory {
     }
     private val chathistDir: Path get() = dataDir.resolve("chathist")
 
-    private val enabled: Boolean get() = try { ConfigManager.config.chathistEnabled } catch (_: Throwable) { false }
+    /** Capture gate: the user's toggle AND Iustitia owning chat history. When Scrollback is
+     *  installed it owns per-player chat history, so Iustitia stops capturing (no duplicate rows, no
+     *  second `history.jsonl` writer). Every capture path checks this, so gating here is enough. */
+    private val enabled: Boolean get() = try {
+        ConfigManager.config.chathistEnabled && !dev.iustitia.compat.CompanionMods.scrollback
+    } catch (_: Throwable) { false }
     private val persist: Boolean get() = try { ConfigManager.config.persistenceEnabled } catch (_: Throwable) { false }
     /** Permissive / cross-server capture: also capture senders NOT in the tab list (Bungee/Velocity network chat). Defaults OFF. */
     private val captureUnknown: Boolean get() = try { ConfigManager.config.chathistCaptureUnknown } catch (_: Throwable) { false }
