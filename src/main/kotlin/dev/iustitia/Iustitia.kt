@@ -35,6 +35,38 @@ object Iustitia {
     var tickCounter: Int = 0
 
     /**
+     * Netty→client-thread handoff queue. Packet-thread callers (mixin handlers) must not
+     * mutate engine state inline: they would race the client-tick driver (VL decay, tracker
+     * poll, check processing) on plain, unsynchronized fields. [defer] enqueues a block;
+     * the tick driver drains the queue at the top of [onClientTick] — BEFORE poll /
+     * decayAll / process — so all engine mutations run single-threaded on the client
+     * thread. Every event carries its own explicit tick stamp, so the ≤1-tick latency does
+     * not affect correlation or exemption windows (all tick-difference based).
+     */
+    private val deferred = java.util.concurrent.ConcurrentLinkedQueue<() -> Unit>()
+
+    /** True iff the current thread is the client main thread (== render thread on 1.21.11). */
+    fun onClientThread(): Boolean = try {
+        MinecraftClient.getInstance().isOnThread
+    } catch (_: Throwable) {
+        // fail-open: when we can't tell (headless unit tests, very early boot), behave as
+        // if on-thread so callers dispatch inline — no behavior change vs pre-queue.
+        true
+    }
+
+    /** Enqueue [block] to run on the client thread at the start of the next client tick. */
+    fun defer(block: () -> Unit) {
+        deferred.add(block)
+    }
+
+    private fun drainDeferred() {
+        while (true) {
+            val block = deferred.poll() ?: return
+            try { block() } catch (_: Throwable) {}
+        }
+    }
+
+    /**
      * Ghost-trail sample cadence in ticks. Sampling every tick would clump consecutive
      * positions (a walking player moves <0.2 blocks/tick); every 3 ticks spreads the
      * breadcrumbs enough to read as a trail (~0.6 blocks apart walking). Used by
@@ -122,6 +154,9 @@ object Iustitia {
     /** Called every END_CLIENT_TICK by the entrypoint. */
     fun onClientTick(tick: Int) {
         tickCounter = tick
+        // Drain the netty→client handoff queue FIRST so packet-side mutations (bus events,
+        // tracker marks, world-change resets) are all applied before this tick's engine pass.
+        try { drainDeferred() } catch (_: Throwable) {}
         try {
             val client = MinecraftClient.getInstance()
             val world = client.world

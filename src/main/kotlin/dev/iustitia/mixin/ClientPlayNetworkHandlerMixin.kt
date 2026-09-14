@@ -60,7 +60,10 @@ class ClientPlayNetworkHandlerMixin {
     private fun iustitia_onGameJoin(packet: GameJoinS2CPacket, ci: CallbackInfo) {
         try {
             ProtocolDetector.redetect()
-            Iustitia.resetAll()
+            // resetAll touches mc.options (HUD/perspective), does disk I/O and clears every
+            // engine structure — all client-thread-only concerns, and far too heavy for the
+            // netty event loop mid join-burst. Hand off to the tick driver's defer queue.
+            Iustitia.defer { Iustitia.resetAll() }
             // Record the world identity of this session so a later onPlayerRespawn can tell
             // a death-respawn (same world) from a dimension-transfer / Bungee sub-server switch
             // (different world). See iustitia_onPlayerRespawn.
@@ -94,7 +97,8 @@ class ClientPlayNetworkHandlerMixin {
             val seedChanged = newSeed != SpawnState.seed
             if (dimChanged || seedChanged) {
                 ProtocolDetector.redetect()
-                Iustitia.resetAll()
+                // client-thread handoff — same rationale as iustitia_onGameJoin.
+                Iustitia.defer { Iustitia.resetAll() }
                 SpawnState.seed = newSeed
             }
             // same world (death-respawn): intentionally preserve all VL — see PacketSignals.
@@ -205,8 +209,12 @@ class ClientPlayNetworkHandlerMixin {
         try {
             val entity = otherPlayer(packet.entityId) ?: return
             val vel = packet.velocity
-            EntityTrackerManager.markVelocity(entity, Iustitia.tickCounter, vel)
-            Iustitia.bus.publish(VelocitySignal(entity, Iustitia.tickCounter, vel))
+            val tick = Iustitia.tickCounter
+            // markVelocity writes TrackedPlayer state the tick driver reads — hand off to the
+            // defer queue (FIFO, so it still lands before the VelocitySignal subscribers that
+            // the publish below enqueues after it).
+            Iustitia.defer { EntityTrackerManager.markVelocity(entity, tick, vel) }
+            Iustitia.bus.publish(VelocitySignal(entity, tick, vel))
         } catch (_: Throwable) {}
     }
 
@@ -221,7 +229,7 @@ class ClientPlayNetworkHandlerMixin {
             val blindAmp = if (isBlind) packet.getAmplifier() else -1
             // markEffect is Speed-only (feeds the SpeedEnvelope cap raise); Blindness is tracked
             // per-check (sprintHack subscribes EffectSignal) — no shared TrackedPlayer field.
-            EntityTrackerManager.markEffect(entity, isSpeed, amp, added = true)
+            Iustitia.defer { EntityTrackerManager.markEffect(entity, isSpeed, amp, added = true) }
             Iustitia.bus.publish(EffectSignal(entity, Iustitia.tickCounter, isSpeed, amp, isBlind, blindAmp, added = true))
         } catch (_: Throwable) {}
     }
@@ -237,7 +245,7 @@ class ClientPlayNetworkHandlerMixin {
             // remove packet carries no amplifier, so blindAmplifier = -1 on removal (the
             // sprintHack check only cares that Blindness ended, not the level).
             if (!isSpeed && !isBlind) return
-            if (isSpeed) EntityTrackerManager.markEffect(entity, isSpeed, -1, added = false)
+            if (isSpeed) Iustitia.defer { EntityTrackerManager.markEffect(entity, isSpeed, -1, added = false) }
             Iustitia.bus.publish(EffectSignal(entity, Iustitia.tickCounter, isSpeed, -1, isBlind, -1, added = false))
         } catch (_: Throwable) {}
     }

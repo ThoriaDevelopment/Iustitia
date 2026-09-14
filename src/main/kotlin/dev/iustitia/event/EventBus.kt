@@ -22,6 +22,18 @@ class EventBus {
         subscribe(T::class.java, handler)
 
     fun publish(event: Any) {
+        // Threading: publishers arrive from two threads — the netty packet thread (mixin
+        // handlers) and the client tick thread. Inline dispatch on the packet thread races
+        // the tick driver on subscriber state (check VL, TrackedPlayer scalars, inference
+        // buffers), so off-thread publishes are handed to the tick driver's defer queue and
+        // dispatched on the client thread at the next tick start (events carry explicit
+        // tick stamps; the ≤1-tick latency does not affect any window). On-thread publishes
+        // dispatch inline, unchanged — a MinecraftClient.execute{} hop would run inline here
+        // anyway (client==render thread on 1.21.11).
+        if (!dev.iustitia.Iustitia.onClientThread()) {
+            dev.iustitia.Iustitia.defer { publish(event) }
+            return
+        }
         val list = subs[event.javaClass] ?: return
         for (h in list) {
             try {

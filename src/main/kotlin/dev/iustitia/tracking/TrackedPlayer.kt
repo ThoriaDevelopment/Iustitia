@@ -64,23 +64,28 @@ class TrackedPlayer(val uuid: UUID, var entityId: Int, val joinTick: Int) {
     var swimming: Boolean = false
     var inVehicle: Boolean = false
 
-    var velocity: Vec3d = Vec3d.ZERO
+    // The fields below are written by packet-side marks (markVelocity / markHurt / markAttack /
+    // markEffect — now handed off to the client thread via Iustitia.defer) and read by the
+    // tick driver and render mixins. @Volatile is defense-in-depth: it guarantees a fresh
+    // read even if a future call site bypasses the defer queue, and costs nothing.
+
+    @Volatile var velocity: Vec3d = Vec3d.ZERO
     /** Tick of the last received EntityVelocityUpdateS2CPacket (velocity-exemption window). */
-    var velocityTick: Int = -1000
+    @Volatile var velocityTick: Int = -1000
     /** Tick of the last detected large position jump (>8b) — movement/reach teleport exemption. */
     var lastTeleportTick: Int = -1000
     /** Tick of the last HurtSignal for this player — knockback-exemption window (Speed/Fly).
      *  Substitutes for [velocityTick] on servers that don't broadcast other-player
      *  EntityVelocityUpdate packets (confirmed unobserved on 1.21.11 arch.mc): knockback
      *  follows a hit, so a recent hurt marks the knockback peak we must not flag. */
-    var hurtTick: Int = -10000
+    @Volatile var hurtTick: Int = -10000
     /** Tick of the last inferred [dev.iustitia.event.AttackEvent] where this player was the ATTACKER
      *  — the combat-relevance gate for the [sensitivity] substrate feed (see [EntityTrackerManager].
      *  updateSnapshot). Set centrally from the bus ([Iustitia] subscribes AttackEvent → markAttack),
      *  mirroring [hurtTick]. The substrate's only consumers (aimGcd / KillAura-GCD) flag the
      *  attacker, so feeding sensitivity only for recent attackers excludes the dense-crowd bystanders
      *  that were the FPS regression. Default -10000 so a player who never attacks is never fed. */
-    var lastAttackTick: Int = -10000
+    @Volatile var lastAttackTick: Int = -10000
 
     /** Tick of the last detected no-damage knockback burst (wind charge / TNT-cannon-style): a sudden
      *  unexplained upward or horizontal impulse with no recent hurt (so not attack-knockback, which
@@ -91,12 +96,12 @@ class TrackedPlayer(val uuid: UUID, var entityId: Int, val joinTick: Int) {
      *  burst while eating false-flags `NoSlow`. Detected in
      *  [EntityTrackerManager.updateSnapshot]; drives the Fly + NoSlow burst-exemption windows.
      *  Default -10000 so a player never bursted is never exempt. */
-    var burstTick: Int = -10000
+    @Volatile var burstTick: Int = -10000
 
     /** Last client-ticked hand-swing phase for this player (vanilla `LivingEntity.handSwingTicks`,
      *  0 when not mid-swing; advanced client-side in `OtherClientPlayerEntity.tickMovement`). Captured
      *  into the replay/clip buffer so a replay ghost's arm swings when the player attacked/mined. */
-    var handSwingTicks: Int = 0
+    @Volatile var handSwingTicks: Int = 0
 
     /** Tick of the last tick this player actually moved (|delta|² >= 0.0001). Idle-since-join
      *  players keep the default -10000 so they never inflate the EntityTrackerManager mass-
@@ -106,7 +111,7 @@ class TrackedPlayer(val uuid: UUID, var entityId: Int, val joinTick: Int) {
 
     // --- observed status effects ---
     /** Speed effect amplifier currently on the player (0=I, 1=II, ...); -1 = none. */
-    var speedAmplifier: Int = -1
+    @Volatile var speedAmplifier: Int = -1
 
     // --- shared movement accumulators ---
     var fallAccum: Double = 0.0

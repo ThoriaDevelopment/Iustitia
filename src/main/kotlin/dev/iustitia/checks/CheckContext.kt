@@ -7,7 +7,33 @@ import java.util.UUID
  * throttling. Subclasses add check-specific buffers (swing intervals, fall accum, ...).
  */
 open class CheckContext {
-    var vl: Double = 0.0
+    /**
+     * Violation level, in milli-VL fixed point backed by an atomic. Written from flag sites
+     * (packet-thread bus handlers, pre-defer-queue) and decayed from the tick driver, so a
+     * plain `var` lost updates: a cheater could flag forever and never cross setbackVL.
+     * The defer queue now makes all writers client-thread, but the atomic keeps the RMW
+     * safe by construction — any future off-thread flag site can't reintroduce the race.
+     * Exposed as the original `var vl: Double` API so call sites stay unchanged.
+     */
+    private val vlBits = java.util.concurrent.atomic.AtomicLong(0L)
+
+    var vl: Double
+        get() = vlBits.get() / 1000.0
+        set(value) { vlBits.set((value * 1000.0).toLong()) }
+
+    /** Atomic `vl += amount` (flag sites). */
+    fun addVl(amount: Double) { vlBits.addAndGet((amount * 1000.0).toLong()) }
+
+    /** Atomic `vl = max(vl - amount, 0)` (tick decay) — a single CAS, so no lost update vs addVl. */
+    fun decayVl(amount: Double) {
+        val dec = (amount * 1000.0).toLong()
+        vlBits.updateAndGet { cur -> (cur - dec).coerceAtLeast(0L) }
+    }
+
+    fun decay(amount: Double) {
+        decayVl(amount)
+    }
+
     var lastAlertTick: Int = -1000
 
     /**
@@ -31,8 +57,4 @@ open class CheckContext {
     /** True while a sustained episode is latched, so one episode produces one alert. */
     @Volatile
     var episodeActive: Boolean = false
-
-    fun decay(amount: Double) {
-        vl = (vl - amount).coerceAtLeast(0.0)
-    }
 }

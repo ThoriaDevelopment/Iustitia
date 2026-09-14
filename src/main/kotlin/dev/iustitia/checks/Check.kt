@@ -149,7 +149,7 @@ abstract class Check {
             // an exempt player stays clean. Tracking/replay/render still run (only detection is
             // suppressed). Forward-looking only — does NOT clear existing flags (use /ius clear).
             if (dev.iustitia.exempt.Exemptions.isExempt(tp.uuid)) return
-            ctx.vl += level
+            ctx.addVl(level)
             VerboseLog.countFlag()
             // Session flag history (drives /ius hist, status counts, alert hover, nametag tier).
             // Fail-open: a history error must never block a flag.
