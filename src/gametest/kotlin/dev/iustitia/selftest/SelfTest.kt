@@ -52,6 +52,20 @@ import java.util.UUID
  */
 object SelfTest {
 
+    /** Total budget the inter-scenario teardown barrier ([awaitServerTeardown]) will wait. */
+    private const val SERVER_TEARDOWN_TIMEOUT_MS = 120_000L
+
+    /** Natural-teardown grace before the barrier forces a disconnect on a lingering server. */
+    private const val SERVER_TEARDOWN_GRACE_MS = 5_000L
+
+    /** Poll interval for the teardown barrier. */
+    private const val SERVER_TEARDOWN_POLL_MS = 250L
+
+    /** Set when the teardown barrier gave up on a frozen integrated server (see
+     *  [awaitServerTeardown]); [runAll] aborts the suite on the next loop iteration
+     *  instead of letting every later scenario cascade-fail. */
+    private var suiteFatal: String? = null
+
     /** A scriptable other-player bot. The handle exposes a tick-aligned action API. */
     class BotHandle internal constructor(
         val name: String,
@@ -626,8 +640,54 @@ object SelfTest {
                 error = "${t.javaClass.simpleName}: ${t.message}",
             )
         } finally {
+            awaitServerTeardown(scenario.name)
             snapshot.restore()
             ClientThread.unbind()
+        }
+    }
+
+    /**
+     * Defensive post-close barrier between scenarios: wait until the scenario's integrated
+     * server is *really* gone before letting the next one create a world.
+     *
+     * The framework's world close already blocks for teardown -- but with a finite timeout
+     * that throws instead of keeping its promise. When one slow teardown blows that budget
+     * the server is still running as the next scenario calls `worldBuilder().create()`, and
+     * everything after it cascade-fails with "Cannot create a world when a server is running"
+     * (the known full-run flake; shard re-runs pass only because each shard has more
+     * wall-clock slack per scenario). This barrier gives teardown a far more generous
+     * budget, and when a server still lingers past a short grace window it forces a
+     * disconnect on the client thread instead of giving up. It prints a line whenever it
+     * had to intervene, so the slow scenario is identifiable in the run output. Fail-open
+     * like the rest of the harness: a broken barrier must never mask the scenario's result.
+     *
+     * When it has to give up entirely, the server is frozen for good: thread dumps of that
+     * state show the gametest framework's own client/server synchronizers parked forever on
+     * unreleased semaphores (nothing Iustitia touches is in the deadlock, and a forced
+     * disconnect does not release them). Every later scenario then cascade-fails on "Cannot
+     * create a world when a server is running" at ~2 min apiece, so continuing is pure
+     * waste -- [suiteFatal] is set and [runAll] aborts the suite instead. The runner's
+     * incomplete-run guard reports the aborted run honestly (exit 1, no report clobbered).
+     */
+    private fun awaitServerTeardown(scenarioName: String) {
+        try {
+            val deadline = System.currentTimeMillis() + SERVER_TEARDOWN_TIMEOUT_MS
+            val graceDeadline = System.currentTimeMillis() + SERVER_TEARDOWN_GRACE_MS
+            var intervened = false
+            while (System.currentTimeMillis() < deadline) {
+                if (!ClientThread.computeOnClient { mc -> mc.server != null || mc.isIntegratedServerRunning }) return
+                if (!intervened && System.currentTimeMillis() >= graceDeadline) {
+                    intervened = true
+                    println("[iustitia-selftest] WARN teardown barrier: server still running after '$scenarioName' closed -- forcing disconnect")
+                    ClientThread.runOnClient { mc -> mc.disconnectWithSavingScreen() }
+                }
+                Thread.sleep(SERVER_TEARDOWN_POLL_MS)
+            }
+            println("[iustitia-selftest] WARN teardown barrier: gave up waiting for the server after '$scenarioName' (${SERVER_TEARDOWN_TIMEOUT_MS / 1000}s) -- later scenarios may fail to create worlds")
+            suiteFatal = ("integrated server frozen after '$scenarioName' teardown (fabric-client-gametest-api-v1 network-sync deadlock; " +
+                "client restart required) -- aborting the suite, re-run to retry")
+        } catch (_: Throwable) {
+            // fail-open
         }
     }
 
@@ -728,7 +788,10 @@ object SelfTest {
     /**
      * The two-pass runner: runs the scenarios in order and returns all reports. A
      * scenario that throws yields a failed report instead of aborting the run, so one
-     * bad scenario never masks the rest.
+     * bad scenario never masks the rest. The one exception is a frozen integrated server
+     * (see [awaitServerTeardown] / [suiteFatal]): once the teardown barrier gives up, every
+     * later scenario is guaranteed to cascade-fail, so the suite aborts after logging that
+     * scenario's own FAIL line -- the runner's incomplete-run guard surfaces it as NOT RUN.
      */
     fun runAll(ctx: ClientGameTestContext, scenarios: List<Scenario>): List<ScenarioReport> {
         silenceClientAudio(ctx)
@@ -740,6 +803,10 @@ object SelfTest {
             println("[iustitia-selftest] $tag ${s.pass}/${s.name} missed=${r.missedChecks} fps=${r.falsePositives} err=${r.error}")
             for (entry in r.knownOpen) println("[iustitia-selftest]   $entry")
             for (entry in r.driveGaps) println("[iustitia-selftest]   $entry")
+            suiteFatal?.let { fatal ->
+                println("[iustitia-selftest] ABORT $fatal")
+                throw IllegalStateException(fatal)
+            }
         }
         return reports
     }

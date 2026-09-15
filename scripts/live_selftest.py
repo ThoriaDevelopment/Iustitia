@@ -637,6 +637,27 @@ def main() -> int:
             print("launch, a mixin failed to apply, or the world could not be created.")
             return 1
 
+    # A run that dies mid-suite (client crash, teardown hang) still emits per-scenario status
+    # lines for every scenario it finished, so the reconstruction above can hand us 1 report
+    # out of 84 and look green. The manifest is printed by the same filtered scenario list the
+    # game then runs, so a healthy run's report count must equal it exactly -- anything less
+    # means the suite died part-way, which is a FAILURE even when every scenario that ran
+    # happened to pass. Checked BEFORE merge_reports so a dead run also stops clobbering the
+    # accumulated report/manifest evidence with its partial results.
+    expected = len((manifest or {}).get("scenarios") or [])
+    if expected and len(reports) < expected:
+        ran = {r.get("scenario") for r in reports}
+        missing = [s.get("scenario") for s in manifest["scenarios"] if s.get("scenario") not in ran]
+        tail = "\n".join(output.splitlines()[-args.tail:])
+        print(f"The live suite died mid-run: only {len(reports)}/{expected} scenarios reported.")
+        if missing:
+            print(f"First scenario never reported: {missing[0]} ({len(missing)} missing total).")
+        print("Treat this as a FAILURE, not a partial pass -- the client crashed or a world")
+        print("teardown hung before the suite finished. The tail of the game output follows:")
+        print()
+        print(tail)
+        return 1
+
     # Union with the previous report instead of replacing it. A filtered (`--check`) or sharded
     # (`--shard`) run only contains its own scenarios, so a plain overwrite would make --matrix
     # lose every other shard's evidence -- and, worse, silently shrink it while still looking

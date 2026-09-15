@@ -96,6 +96,18 @@ fabricApi {
 // A filter that matches nothing FAILS the run, so a typo can never look like a pass.
 tasks.withType(JavaExec::class.java).named("runClientGameTest") {
     jvmArgs("-Dfabric.selftest=1")
+    // Iustitia observes packets by hooking the netty pipeline (ClientPlayNetworkHandlerMixin),
+    // which is exactly the "interfacing with packets at a lower level" case the Fabric client
+    // gametest API's network synchronizer cannot model. With the synchronizer active, full runs
+    // intermittently die inside the framework's own phase machine: the server thread parks
+    // forever on its postRunTasks semaphore during world creation (spawn prep never advances,
+    // world load times out, every later scenario cascade-fails), and packet-heavy scenarios can
+    // trip the synchronizer's 10s "Detected interfacing with packets at a lower level" watch
+    // outright. Disabling synchronization is the framework's documented escape for this class of
+    // mod. Our drives publish synthetic signals on the client thread, so scenario timing does not
+    // depend on packet/tick alignment; the ≤1-tick packet latency this reintroduces is already
+    // tolerated by the engine's defer queue and the scenarios' window margins.
+    jvmArgs("-Dfabric.client.gametest.disableNetworkSynchronizer=true")
     providers.gradleProperty("selftest.filter").orNull?.let { jvmArgs("-Diustitia.selftest.filter=$it") }
     providers.gradleProperty("selftest.pass").orNull?.let { jvmArgs("-Diustitia.selftest.pass=$it") }
     providers.gradleProperty("selftest.source").orNull?.let { jvmArgs("-Diustitia.selftest.source=$it") }
