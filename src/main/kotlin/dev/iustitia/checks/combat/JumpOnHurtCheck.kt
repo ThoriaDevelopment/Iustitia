@@ -44,7 +44,6 @@ class JumpOnHurtCheck : Check() {
             val ctx = contextOf(ev.victim) as JumpOnHurtContext
             ctx.lastHitTick = ev.tick
             ctx.pendingHit = true
-            ctx.totalHits++
         } catch (_: Throwable) {}
     }
 
@@ -53,14 +52,11 @@ class JumpOnHurtCheck : Check() {
             if (tp.inVehicle || tp.gliding || tp.riptide) return
             if (tick - tp.lastTeleportTick < 5) return
             val ctx = contextOf(tp.uuid) as JumpOnHurtContext
-            // totalHits/coincidentHits used to accumulate all-session, so the coincidence ratio
-            // went stale: a cheater who toggled JumpReset on late could never climb back to
-            // 0.9 against a huge all-time denominator (fail-negative), and a one-off early
-            // coincidence was permanently baked in. Reset the per-fight counters once the
-            // player has been out of combat (no hit) for SESSION_RESET_TICKS, so the ratio
-            // reflects the current fight — the documented "≥5 hits / ≥90% coincidence" bar.
+            // The episode verdict is judged purely from the rolling [sustained] window, so stale
+            // history doesn't need arithmetic correction — but the episode latch itself must
+            // release once the player has been out of combat (no hit) for SESSION_RESET_TICKS,
+            // so the next fight starts fresh rather than inheriting the old latch state.
             if (ctx.lastHitTick != -10000 && tick - ctx.lastHitTick > SESSION_RESET_TICKS) {
-                ctx.totalHits = 0
                 ctx.episodeRing.clear()
                 ctx.episodeActive = false
             }
@@ -71,14 +67,13 @@ class JumpOnHurtCheck : Check() {
             val kbHop = tick - tp.velocityTick < 3
             if (since in 0..1 && !kbHop && tp.deltaY > cfg.threshold) {
                 ctx.pendingHit = false
-                ctx.totalHits++
                 judge(ctx, tp, tick, jumped = true)
             } else if ((since in 0..1 && !kbHop && tp.deltaY < -0.05) || since > 1) {
                 // The hit resolved without a self-jump: the victim was hit and did not hop (a
-                // negative Δy is the knockback settling, a ~zero Δy is standing still). Counting
-                // it is what keeps the ratio a real *rate* over hits rather than over jumps.
+                // negative Δy is the knockback settling, a ~zero Δy is standing still). Pushing
+                // the counter-example verdict is what keeps [sustained] a real *rate* over hits
+                // rather than over jumps.
                 ctx.pendingHit = false
-                ctx.totalHits++
                 judge(ctx, tp, tick, jumped = false)
             }
         } catch (_: Throwable) {}
@@ -109,7 +104,6 @@ class JumpOnHurtCheck : Check() {
     private class JumpOnHurtContext : CheckContext() {
         var lastHitTick: Int = -10000
         var pendingHit: Boolean = false
-        var totalHits: Int = 0
     }
 
     private companion object {

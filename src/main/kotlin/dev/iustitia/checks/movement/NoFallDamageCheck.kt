@@ -1,5 +1,6 @@
 package dev.iustitia.checks.movement
 
+import dev.iustitia.NumFmt
 import dev.iustitia.Iustitia
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
@@ -156,7 +157,7 @@ class NoFallDamageCheck : Check() {
                         val level = max(1.0, ceil((tp.fallAccum - 3.0) * 2.0))
                         flag(tp, ctx, level, "NoFall", tick, Evidence(
                             subLabel = "landed-no-hurt", measurement = tp.fallAccum, threshold = cfg.threshold,
-                            extra = "landed a ${"%.1f".format(tp.fallAccum)}-block fall with no hurt signal"))
+                            extra = "landed a ${NumFmt.d(digits = 1, v = tp.fallAccum)}-block fall with no hurt signal"))
                     }
                 }
                 tp.fallAccum = 0.0
@@ -234,7 +235,7 @@ class NoFallDamageCheck : Check() {
                     ctx.spoofEpisode = true
                     flag(tp, ctx, setbackVL + 1.0, "NoFall(Spoof)", tick, Evidence(
                         subLabel = "ground-spoof-over-air", measurement = tp.fallAccum, threshold = 4.0,
-                        extra = "onGround spoofed over air — Δy ${"%.3f".format(dy)}, fell ${"%.1f".format(tp.fallAccum)} blocks"))
+                        extra = "onGround spoofed over air — Δy ${NumFmt.d(digits = 3, v = dy)}, fell ${NumFmt.d(digits = 1, v = tp.fallAccum)} blocks"))
                 }
             } else {
                 ctx.spoofStreak = 0

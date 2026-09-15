@@ -27,6 +27,9 @@ import java.util.UUID
  *
  * All fields are `@Volatile`: the only cross-thread handoff is client→render on [pending] and
  * render→render on [activeReq]/[frameActive] (same render thread, but volatile keeps it honest).
+ * On 1.21.11 the client and render threads are the same physical thread, so the volatile is about
+ * happens-before visibility within a tick (the render callback must see the `arm()` write), not
+ * true concurrency — kept anyway; it's the honest contract for handoff state a mixin consumes.
  * Fail-open everywhere — a thrown override leaves the camera at its vanilla (player-derived) state.
  */
 object OffenderCapture {

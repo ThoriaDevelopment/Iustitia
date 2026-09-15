@@ -6,7 +6,6 @@ import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
-import net.minecraft.block.Blocks
 import net.minecraft.client.MinecraftClient
 import java.util.UUID
 import kotlin.math.hypot
@@ -64,7 +63,7 @@ class LongJumpCheck : Check() {
                 // (×1.3). A null/unloaded foot block is fail-NEGATIVE (skip the flag) — a
                 // single-tick check can't afford to strict-flag on an unloaded chunk, per the
                 // chunk-unloaded-never-FP rule. The grounded reset below still runs.
-                var eff = cfg.threshold * speedFactor(tp)
+                var eff = cfg.threshold * SpeedMath.speedFactor(tp.speedAmplifier)
                 val world = MinecraftClient.getInstance().world
                 if (world != null) {
                     val state = WorldQueries.blockStateAt(
@@ -74,7 +73,7 @@ class LongJumpCheck : Check() {
                         Math.floor(tp.pos.z).toInt()
                     )
                     if (state != null) {
-                        if (isSpeedBlock(state)) eff *= 1.3
+                        if (SpeedMath.isSpeedBlock(state)) eff *= 1.3
                         if (horiz > eff) flag(tp, ctx, 1.0, "LongJump", tick)
                     }
                 }
@@ -83,16 +82,7 @@ class LongJumpCheck : Check() {
         } catch (_: Throwable) {}
     }
 
-    private fun speedFactor(tp: TrackedPlayer): Double =
-        if (tp.speedAmplifier >= 0) 1.0 + 0.2 * (tp.speedAmplifier + 1) else 1.0
-
-    private fun isSpeedBlock(state: net.minecraft.block.BlockState): Boolean = try {
-        state.isOf(Blocks.ICE) || state.isOf(Blocks.BLUE_ICE) ||
-            state.isOf(Blocks.PACKED_ICE) || state.isOf(Blocks.FROSTED_ICE) ||
-            state.isOf(Blocks.SLIME_BLOCK)
-    } catch (_: Throwable) {
-        false
-    }
+    // speedFactor / isSpeedBlock now live in [SpeedMath] (shared with SpeedEnvelopeCheck).
 
     private class LongJumpContext : CheckContext() {
         var airborneStart: Int = -1

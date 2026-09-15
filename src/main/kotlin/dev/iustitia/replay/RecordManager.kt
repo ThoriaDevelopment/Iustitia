@@ -57,10 +57,6 @@ object RecordManager {
     private var recording: Boolean = false
     private var segmentStartTick: Int = 0
     private var segmentIndex: Int = 0
-    /** The one-shot world map captured at [start] (or re-captured on a world-change auto-split). Null
-     *  when [dev.iustitia.config.IustitiaConfig.clipChunkWorld] is off → a ghosts-only segment. */
-    private var chunkMap: ChunkSnapshot? = null
-
     val isRecording: Boolean get() = recording
 
     /** Currently buffered frame count (diagnostic / feedback). Fail-open. */
@@ -88,7 +84,6 @@ object RecordManager {
         synchronized(alerts) { alerts.clear() }
         synchronized(totems) { totems.clear() }
         synchronized(blockDeltas) { blockDeltas.clear() }
-        chunkMap = null
         var mapOn = false
         if (cfg.clipChunkWorld) {
             try {
@@ -122,7 +117,6 @@ object RecordManager {
         synchronized(alerts) { alerts.clear() }
         synchronized(totems) { totems.clear() }
         synchronized(blockDeltas) { blockDeltas.clear() }
-        chunkMap = null
         try { ChunkRollingCapture.clearSegment(RECORD_SEGMENT_ID) } catch (_: Throwable) {}
         if (saved == null) "$tag §cfailed to write recording (disk error)."
         else "$tag §7recording saved: §f$saved§7 §8(${frameCountBeforeClear} frames) §7→ §f${ClipStore.dirDisplay()}"
@@ -239,7 +233,6 @@ object RecordManager {
     private fun restartRollingCapture() {
         try {
             val cfg = ConfigManager.config
-            chunkMap = null
             try { ChunkRollingCapture.clearSegment(RECORD_SEGMENT_ID) } catch (_: Throwable) {}
             if (!cfg.clipChunkWorld) return
             val p = net.minecraft.client.MinecraftClient.getInstance().player ?: return

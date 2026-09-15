@@ -34,7 +34,10 @@ import java.util.UUID
  * ## Threading
  *
  * [enable]/[disableNow]/[tickSafety] run on the client thread (keybind / `Iustitia.onClientTick`).
- * [active]/[targetUuid] are `@Volatile` — read from the render thread by [CameraMixin]. The
+ * [active]/[targetUuid] are `@Volatile` — read from the render thread by [CameraMixin]. (On 1.21.11
+ * the client and render threads are the same physical thread; the volatile guarantees the
+ * happens-before visibility of a keybind/tick write to the render callback reading it later in the
+ * same tick, and documents the cross-thread intent — it is not guarding true concurrency. Kept.) The
  * target-gone case detected in [CameraMixin] (render thread) does NOT mutate options directly;
  * it only sets [requestExit] so the client-thread tick loop performs the HUD/perspective restore
  * (option writes stay off the render thread). Fail-open throughout.

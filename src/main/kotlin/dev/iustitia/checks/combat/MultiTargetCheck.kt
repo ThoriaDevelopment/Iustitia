@@ -80,24 +80,13 @@ class MultiTargetCheck : Check() {
                 rearmEpisode(ctx, pairNow)
             }
 
-            // lag-absorb: union this tick + previous tick
-            val prev = ctx.tickVictims[ev.tick - 1]
-            if (prev != null && sameTick.toDouble() >= thresh) {
-                val union = HashSet<UUID>(set.size + prev.size)
-                union.addAll(set)
-                union.addAll(prev)
-                if (union.size.toDouble() >= thresh + 1.0) {
-                    flag(attacker, ctx, max(1.0, (union.size - 1).toDouble()), "MultiTarget", ev.tick, Evidence(
-                        subLabel = "window", measurement = union.size.toDouble(), threshold = thresh + 1.0,
-                        pos = attacker.pos, extra = "victims=${union.size}"))
-                }
-            }
             // lag-absorb (independent detector): a multi-aura spread across two ticks — e.g.
             // 2 victims on the previous tick + 1 now, or 1 + 2 — sums to >=3 across the 2-tick
-            // window even when no single tick reached 2. The branch above is gated on
-            // sameTick >= threshold (the same gate as the same-tick flag, so it only double-counts
-            // and is dead as an independent detector); this one fires when sameTick < threshold,
-            // a strictly additional detector that never reduces the existing same-tick vl.
+            // window even when no single tick reached 2. It fires only when sameTick < thresh:
+            // when sameTick >= thresh the same-tick flag above already covers it, and the union
+            // branch could only double-count the same evidence. A strictly additional detector
+            // that never reduces the existing same-tick vl.
+            val prev = ctx.tickVictims[ev.tick - 1]
             if (prev != null && sameTick.toDouble() < thresh) {
                 val union = HashSet<UUID>(set.size + prev.size)
                 union.addAll(set)

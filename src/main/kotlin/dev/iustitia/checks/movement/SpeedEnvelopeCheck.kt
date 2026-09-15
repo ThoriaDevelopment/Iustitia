@@ -124,7 +124,7 @@ class SpeedEnvelopeCheck : Check() {
 
             // ---- Speed (3-of-6 bps blatancy) — only when not soft-exempt ----
             val cap = cfg.threshold
-            val speedFactor = if (tp.speedAmplifier >= 0) 1.0 + 0.2 * (tp.speedAmplifier + 1) else 1.0
+            val speedFactor = SpeedMath.speedFactor(tp.speedAmplifier)
             if (!skipFlag) {
                 pushFront(ctx.bpsWindow, offsetH * 20.0, 6)
                 // cap raise on ice/slime/soul-sand (chunk-gated via WorldQueries)
@@ -137,7 +137,7 @@ class SpeedEnvelopeCheck : Check() {
                     val by = Math.floor(tp.pos.y - 1.0).toInt()
                     val bz = Math.floor(tp.pos.z).toInt()
                     val state = WorldQueries.blockStateAt(world, bx, by, bz)
-                    if (state != null && isSpeedBlock(state)) effectiveCap *= 1.3
+                    if (state != null && SpeedMath.isSpeedBlock(state)) effectiveCap *= 1.3
                 }
                 // Sustained/alternating overspeed: ≥3 of the last 6 ticks over the cap. A
                 // single knockback/lag spike (1 over-cap tick) cannot reach 3, so it never
@@ -219,15 +219,8 @@ class SpeedEnvelopeCheck : Check() {
         else -> DEFAULT_SLIP
     }
 
-    private fun isSpeedBlock(state: BlockState): Boolean = try {
-        // Frictionless / momentum-carrying surfaces. Soul sand is intentionally excluded —
-        // it does not make a player faster (a cap raise there is wrong-intent leniency).
-        state.isOf(Blocks.ICE) || state.isOf(Blocks.BLUE_ICE) ||
-            state.isOf(Blocks.PACKED_ICE) || state.isOf(Blocks.FROSTED_ICE) ||
-            state.isOf(Blocks.SLIME_BLOCK)
-    } catch (_: Throwable) {
-        false
-    }
+    // isSpeedBlock now lives in [SpeedMath] (shared with LongJumpCheck) — slipperiness() below
+    // keeps its own mapping because it needs the actual friction value, not a boolean.
 
     private fun <T> pushFront(deque: ArrayDeque<T>, value: T, cap: Int) {
         deque.addFirst(value)

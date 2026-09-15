@@ -3,8 +3,10 @@ package dev.iustitia.checks
 import java.util.UUID
 
 /**
- * Per-(player, check) mutable state. Holds the violation level + last-alert tick for
- * throttling. Subclasses add check-specific buffers (swing intervals, fall accum, ...).
+ * Per-(player, check) mutable state. Holds the violation level; subclasses add check-specific
+ * buffers (swing intervals, fall accum, ...). Alert throttling lives in [dev.iustitia.alert.AlertManager]
+ * (its own per-(player, check) map), not here — an earlier `lastAlertTick` copy on this class had
+ * no readers.
  */
 open class CheckContext {
     /**
@@ -33,8 +35,6 @@ open class CheckContext {
     fun decay(amount: Double) {
         decayVl(amount)
     }
-
-    var lastAlertTick: Int = -1000
 
     /**
      * Recent per-event violation verdicts (newest first), for the **sustained-episode** gate.

@@ -1,5 +1,6 @@
 package dev.iustitia.checks.combat
 
+import dev.iustitia.NumFmt
 import dev.iustitia.Iustitia
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
@@ -94,7 +95,7 @@ class ThroughWallsCheck : Check() {
                     victim = victim.uuid,
                     measurement = ctx.occludedCount.toDouble(),
                     threshold = size.toDouble(),
-                    extra = "occluded ${ctx.occludedCount}/$size (rate ${"%.2f".format(rate)} ≥ ${"%.2f".format(cfg.threshold)})"))
+                    extra = "occluded ${ctx.occludedCount}/$size (rate ${NumFmt.d(digits = 2, v = rate)} ≥ ${NumFmt.d(digits = 2, v = cfg.threshold)})"))
             } else {
                 rearmEpisode(ctx, sustainedNow)
             }

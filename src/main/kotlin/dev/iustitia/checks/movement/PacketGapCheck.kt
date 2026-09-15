@@ -1,5 +1,6 @@
 package dev.iustitia.checks.movement
 
+import dev.iustitia.NumFmt
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
@@ -81,7 +82,7 @@ class PacketGapCheck : Check() {
                             flag(tp, ctx, VL_PULSE, "Blink(Pulse)", tick, Evidence(
                                 subLabel = "fixed-cadence", measurement = ctx.meanInterval(),
                                 threshold = CADENCE_STDDEV.toDouble(), pos = tp.pos,
-                                extra = "intervals=${ctx.intervalList()} stddev=${"%.2f".format(ctx.intervalStddev())}"))
+                                extra = "intervals=${ctx.intervalList()} stddev=${NumFmt.d(digits = 2, v = ctx.intervalStddev())}"))
                         }
                     } catch (_: Throwable) {}
                     // Axis B amplifier (plan §2.2/§6): FakeLag Dynamic flushes its packet queue *on*

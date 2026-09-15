@@ -1,5 +1,6 @@
 package dev.iustitia.inference
 
+import dev.iustitia.NumFmt
 import dev.iustitia.Iustitia
 import dev.iustitia.VerboseLog
 import dev.iustitia.event.AttackEvent
@@ -138,7 +139,7 @@ object AttackInference {
         try {
             val aName = VerboseLog.nameOf(bestTp?.username(), a)
             val vName = VerboseLog.nameOf(victimTp.username(), h.victim)
-            VerboseLog.log("AttackEvent $aName→$vName dist=${"%.2f".format(bestDist)} @tick ${h.tick}")
+            VerboseLog.log("AttackEvent $aName→$vName dist=${NumFmt.d(digits = 2, v = bestDist)} @tick ${h.tick}")
             VerboseLog.countAttack()
             Iustitia.bus.publish(AttackEvent(a, h.victim, h.tick, bestNano))
         } catch (_: Throwable) {}

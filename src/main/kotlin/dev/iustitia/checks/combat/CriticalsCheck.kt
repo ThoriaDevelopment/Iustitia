@@ -1,5 +1,6 @@
 package dev.iustitia.checks.combat
 
+import dev.iustitia.NumFmt
 import dev.iustitia.Iustitia
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
@@ -166,7 +167,7 @@ class CriticalsCheck : Check() {
                 ctx.phaseActive = true
                 flag(tp, ctx, setbackVL + 1.0, "Crits(Timing)", tick, Evidence(
                     subLabel = "fall-arc-phase", measurement = sd, threshold = PHASE_TIGHT,
-                    pos = tp.pos, extra = "n=${sample.size} stDev=${"%.4f".format(sd)}"))
+                    pos = tp.pos, extra = "n=${sample.size} stDev=${NumFmt.d(digits = 4, v = sd)}"))
             }
         } else if (sd >= PHASE_RECOVER) {
             // cluster broke (attacks no longer at a fixed phase) → re-arm for a fresh episode.

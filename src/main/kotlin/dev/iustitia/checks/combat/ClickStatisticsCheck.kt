@@ -1,5 +1,6 @@
 package dev.iustitia.checks.combat
 
+import dev.iustitia.NumFmt
 import dev.iustitia.Iustitia
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
@@ -97,7 +98,7 @@ class ClickStatisticsCheck : Check() {
             if (a < 10_000_000L && b < 50_000_000L) {
                 flag(tp, ctx, 2.0, "ClickStats(Robot)", tick, Evidence(
                     subLabel = "robot", measurement = a / 1_000_000.0, threshold = 10.0,
-                    extra = "${"%.1f".format(a / 1_000_000.0)}ms double-click — below human ~10ms"))
+                    extra = "${NumFmt.d(digits = 1, v = a / 1_000_000.0)}ms double-click — below human ~10ms"))
             }
         }
 
@@ -108,7 +109,7 @@ class ClickStatisticsCheck : Check() {
             if (stdev < 0.45) {
                 flag(tp, ctx, 1.0, "ClickStats(StDev)", tick, Evidence(
                     subLabel = "stdev", measurement = stdev, threshold = 0.45,
-                    extra = "click intervals too uniform: stDev ${"%.2f".format(stdev)} (human > 0.45)"))
+                    extra = "click intervals too uniform: stDev ${NumFmt.d(digits = 2, v = stdev)} (human > 0.45)"))
             }
         }
 
@@ -124,7 +125,7 @@ class ClickStatisticsCheck : Check() {
                     // then vl decays away with no re-flag while the autoclicker holds the bar.
                     flag(tp, ctx, setbackVL + 1.0, "ClickStats(Kurt)", tick, Evidence(
                         subLabel = "kurtosis", measurement = k, threshold = KURT_STRICT,
-                        extra = "near-uniform clicks: excess kurtosis ${"%.2f".format(k)} (human > $KURT_STRICT)"))
+                        extra = "near-uniform clicks: excess kurtosis ${NumFmt.d(digits = 2, v = k)} (human > $KURT_STRICT)"))
                 }
             } else if (k >= KURT_RECOVER) {
                 // kurt rose back toward human-like → re-arm so a stop-then-restart re-triggers.

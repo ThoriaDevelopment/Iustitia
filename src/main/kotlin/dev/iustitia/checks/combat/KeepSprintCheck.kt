@@ -1,5 +1,6 @@
 package dev.iustitia.checks.combat
 
+import dev.iustitia.NumFmt
 import dev.iustitia.Iustitia
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
@@ -74,7 +75,7 @@ class KeepSprintCheck : Check() {
                 flagEpisode(tp, ctx, "KeepSprint", tick, Evidence(
                     subLabel = "speed-retained", measurement = ratio, threshold = cfg.threshold,
                     pos = tp.pos,
-                    extra = "kept ${"%.0f".format(ratio * 100)}% of pre-hit speed with sprint held " +
+                    extra = "kept ${NumFmt.d(digits = 0, v = ratio * 100)}% of pre-hit speed with sprint held " +
                         "(vanilla decelerates to ~60%) on $MIN_VIOLATIONS+ of the last $WINDOW hits"))
             } else {
                 rearmEpisode(ctx, sustainedNow)

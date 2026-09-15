@@ -1,5 +1,6 @@
 package dev.iustitia.ui
 
+import dev.iustitia.NumFmt
 import dev.iustitia.Iustitia
 import dev.iustitia.history.Evidence
 import dev.iustitia.history.FlagHistory
@@ -89,7 +90,7 @@ class PlayerHistoryScreen(private val uuid: java.util.UUID, private val parent: 
             val total = counts.values.sum()
             val maxVl = maxVlMap.values.maxOrNull() ?: 0.0
             context.drawTextWithShadow(tr, Text.literal(
-                "§7alerts §f${FlagHistory.sessionAlertCount(uuid)} §7flags §f$total §7max vl §f${"%.1f".format(maxVl)}" +
+                "§7alerts §f${FlagHistory.sessionAlertCount(uuid)} §7flags §f$total §7max vl §f${NumFmt.d(digits = 1, v = maxVl)}" +
                     (FlagHistory.topCheck(uuid)?.let { " §7top §b$it" } ?: "")), x, y, WHITE); y += 12
             context.drawTextWithShadow(tr, Text.literal("§7confidence: §f" + FlagHistory.confidenceLine(uuid)), x, y, WHITE); y += 14
             // max vl per check bar (top 8)
@@ -98,7 +99,7 @@ class PlayerHistoryScreen(private val uuid: java.util.UUID, private val parent: 
             maxVlMap.entries.take(8).forEach { (cid, vl) ->
                 val filled = (vl / maxVlForScale * 10.0).toInt().coerceIn(0, 10)
                 val bar = "▓".repeat(filled) + "░".repeat(10 - filled)
-                context.drawTextWithShadow(tr, Text.literal("§b" + cid.padEnd(16).take(16) + " §7$bar §f${"%.1f".format(vl)}"), x, y, WHITE); y += 11
+                context.drawTextWithShadow(tr, Text.literal("§b" + cid.padEnd(16).take(16) + " §7$bar §f${NumFmt.d(digits = 1, v = vl)}"), x, y, WHITE); y += 11
             }
             y += 4
             // ---- filter row ----
@@ -128,12 +129,12 @@ class PlayerHistoryScreen(private val uuid: java.util.UUID, private val parent: 
                 when (item) {
                     is Item.Group -> {
                         if (hovered) context.fill(x, ry, this.width - 4, ry + ROW_H, 0x30FFFF00)
-                        context.drawTextWithShadow(tr, Text.literal("§e§l${item.checkId} §r§7(${item.count} flags, max ${"%.1f".format(item.maxVl)})"), x + 2, ry + 4, WHITE)
+                        context.drawTextWithShadow(tr, Text.literal("§e§l${item.checkId} §r§7(${item.count} flags, max ${NumFmt.d(digits = 1, v = item.maxVl)})"), x + 2, ry + 4, WHITE)
                     }
                     is Item.Row -> {
                         if (hovered) context.fill(x, ry, this.width - 4, ry + ROW_H, 0x20FFFFFF)
                         val f = item.flag
-                        context.drawTextWithShadow(tr, Text.literal("§7  @t${f.tick} §f${f.label} §7vl§f${"%.1f".format(f.vl)}"), x + 2, ry + 2, WHITE)
+                        context.drawTextWithShadow(tr, Text.literal("§7  @t${f.tick} §f${f.label} §7vl§f${NumFmt.d(digits = 1, v = f.vl)}"), x + 2, ry + 2, WHITE)
                         val ev = f.evidence
                         if (ev != null) context.drawTextWithShadow(tr, Text.literal("§7    " + evidenceLine(ev)), x + 2, ry + 12, WHITE)
                     }

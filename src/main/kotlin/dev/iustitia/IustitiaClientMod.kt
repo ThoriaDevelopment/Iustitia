@@ -147,13 +147,15 @@ class IustitiaClientMod : ClientModInitializer {
         // First-launch setup wizard: opens once (until wizardCompleted is stamped) on the first
         // tick the player is actually in-game. Guarded so it never fires from a non-foreground
         // context; a failure to open is non-fatal (the user can re-run /ius wizard).
+        // The stamp itself lives in SetupWizardScreen.finish() — it runs on EVERY exit path
+        // (apply, skip, Esc → close()), so an open that's immediately dismissed still counts as
+        // seen; stamping it here instead would mark the wizard "done" the instant it opened and
+        // skip it for users who quit the game mid-wizard.
         ClientTickEvents.END_CLIENT_TICK.register(ClientTickEvents.EndTick {
             try {
                 if (!ConfigManager.config.wizardCompleted) {
                     val mc = net.minecraft.client.MinecraftClient.getInstance()
                     if (mc.currentScreen == null && mc.world != null && mc.player != null) {
-                        ConfigManager.config.wizardCompleted = true
-                        try { ConfigManager.save() } catch (_: Throwable) {}
                         mc.execute { try { mc.setScreen(SetupWizardScreen(null)) } catch (_: Throwable) {} }
                     }
                 }

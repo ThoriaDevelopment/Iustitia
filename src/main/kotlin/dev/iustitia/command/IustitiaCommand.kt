@@ -1,5 +1,6 @@
 package dev.iustitia.command
 
+import dev.iustitia.NumFmt
 import com.mojang.brigadier.CommandDispatcher
 import com.mojang.brigadier.arguments.DoubleArgumentType
 import com.mojang.brigadier.arguments.IntegerArgumentType
@@ -80,6 +81,8 @@ object IustitiaCommand {
         "clips" to "open the clip manager screen: list saved .iusclip files, play or delete each",
         "deleteclip" to "delete a saved clip by name: /ius deleteclip <name>  (alias /ius delclip <name>)",
         "delclip" to "alias for /ius deleteclip",
+        "record" to "record the live scene for later export: /ius record  (start), /ius record stop [name]  (save as <name>.iusclip, capped at 10 min/segment)",
+        "chathist" to "chat history for tracked players: /ius chathist <username> [page], /ius chathist phrase <phrase> [page], /ius chathist target <username> <phrase> [page], /ius chathist panel user|phrase|target ...",
         "preset" to "apply a named config preset: /ius preset <name>  (bare = list; built-ins: standard; custom presets via /ius createpreset)",
         "presets" to "list all presets (built-in + custom): /ius presets",
         "createpreset" to "save the current config as a custom preset: /ius createpreset <name>",
@@ -174,7 +177,9 @@ object IustitiaCommand {
                 .then(ClientCommandManager.literal("pause").executes { replayPause(it) })
                 .then(ClientCommandManager.literal("resume").executes { replayResume(it) })
                 .then(ClientCommandManager.literal("seek")
-                    .then(ClientCommandManager.argument("seconds", DoubleArgumentType.doubleArg(0.0, 60.0))
+                    // negative = seek backward relative to now (same as the numpad -/+ seeks),
+                    // positive = absolute seek — see replaySeek.
+                    .then(ClientCommandManager.argument("seconds", DoubleArgumentType.doubleArg(-60.0, 60.0))
                         .executes { replaySeek(it) }))
                 .then(ClientCommandManager.literal("step")
                     .then(ClientCommandManager.literal("+").executes { replayStep(it, 1) })
@@ -813,7 +818,7 @@ object IustitiaCommand {
             sb.append("- $cid: $c flags, max vl ${fmt(mv)}\n")
         }
         sb.append("\n## Timeline (last 50)\n")
-        val flags = FlagHistory.flags(uuid)
+        val flags = FlagHistory.flags(uuid).takeLast(REPORT_TIMELINE_CAP)
         if (flags.isEmpty()) sb.append("(no flags recorded)\n")
         flags.forEach { f ->
             val ev = f.evidence
@@ -850,7 +855,7 @@ object IustitiaCommand {
             }
         }
         sb.append("  \"timeline\": [")
-        val flags = FlagHistory.flags(uuid)
+        val flags = FlagHistory.flags(uuid).takeLast(REPORT_TIMELINE_CAP)
         if (flags.isEmpty()) sb.append("]\n") else {
             sb.append("\n")
             flags.forEachIndexed { i, f ->
@@ -897,12 +902,10 @@ object IustitiaCommand {
         return "\"$escaped\""
     }
 
-    /** Locale-stable decimal formatting for clipboard/JSON/Markdown output. `"%.2f".format(x)`
-     *  uses the default locale and emits a comma decimal in e.g. de_DE / fr_FR, which breaks
-     *  JSON parsing (`"vl": 1,5` is two tokens) and corrupts the Markdown report. Force
-     *  [java.util.Locale.US] so the output is machine-stable on every client locale. */
-    private fun fmt(v: Double, digits: Int = 2): String =
-        String.format(java.util.Locale.US, "%.${digits}f", v)
+    /** Locale-stable decimal formatting for clipboard/JSON/Markdown output — delegates to
+     *  [dev.iustitia.NumFmt], which forces [java.util.Locale.US] (see its KDoc for why the
+     *  default locale breaks JSON parsing and Markdown reports on comma-decimal locales). */
+    private fun fmt(v: Double, digits: Int = 2): String = NumFmt.d(v, digits)
 
     // ---- shared resolver ----
     private fun resolveUuid(name: String): java.util.UUID? {
@@ -913,14 +916,10 @@ object IustitiaCommand {
         return uuid
     }
 
-    /** The other player currently under the crosshair (for snapshot/transcript/snapshot keybinds). */
-    private fun crosshairTarget(): Pair<java.util.UUID, String>? = try {
-        val client = MinecraftClient.getInstance()
-        val hit = client.crosshairTarget
-        val ent = (hit as? net.minecraft.util.hit.EntityHitResult)?.entity
-        val other = ent as? net.minecraft.client.network.OtherClientPlayerEntity
-        if (other != null) other.uuid to (other.name.string.ifEmpty { other.uuid.toString().take(8) }) else null
-    } catch (_: Throwable) { null }
+    /** The other player currently under the crosshair (for snapshot/transcript/snapshot keybinds).
+     *  Delegates to [dev.iustitia.Iustitia.currentTarget] — the byte-identical local copy this
+     *  previously duplicated is gone, so both resolvers can't drift apart. */
+    private fun crosshairTarget(): Pair<java.util.UUID, String>? = dev.iustitia.Iustitia.currentTarget()
 
     // ---- transcript (#4) — chat-print form of the report engine ----
     /** `/ius transcript <name>` — prints the [reportText] builder to chat (and saves it to an
@@ -969,7 +968,7 @@ object IustitiaCommand {
         NoteStore.get(uuid)?.let { n -> sb.append("note: ${n.category.name.lowercase()} (\"${n.text}\")\n") }
         // One flags snapshot (FlagHistory.flags locks + copies the deque) — reuse it for the header
         // count AND the iteration, instead of fetching it twice.
-        val flags = FlagHistory.flags(uuid)
+        val flags = FlagHistory.flags(uuid).takeLast(REPORT_TIMELINE_CAP)
         sb.append("timeline (last ${flags.size} flags):\n")
         if (flags.isEmpty()) sb.append("(no flags recorded)\n")
         flags.forEach { f ->
@@ -1184,8 +1183,15 @@ object IustitiaCommand {
     private fun replaySeek(ctx: CommandContext<FabricClientCommandSource>): Int {
         if (!replayActive(ctx)) return 1
         val secs = DoubleArgumentType.getDouble(ctx, "seconds").toFloat()
-        dev.iustitia.replay.ReplayState.seekTo(secs)
-        send(ctx, "$tag §7seeked to §f${"%.1f".format(secs)}s§7.")
+        // negative = relative scrub backward (same as the numpad − keybind), positive = absolute
+        // seek to that timestamp — matching the keybind capability the command previously lacked.
+        if (secs < 0) {
+            dev.iustitia.replay.ReplayState.seekBy(secs)
+            send(ctx, "$tag §7seeked §f${NumFmt.d(digits = 1, v = -secs)}s§7 back§7.")
+        } else {
+            dev.iustitia.replay.ReplayState.seekTo(secs)
+            send(ctx, "$tag §7seeked to §f${NumFmt.d(digits = 1, v = secs)}s§7.")
+        }
         return 1
     }
 
@@ -1206,7 +1212,7 @@ object IustitiaCommand {
             "0.5" -> dev.iustitia.replay.ReplayState.SPEED_HALF
             else -> { send(ctx, "$tag §7speed must be §f1§7/§f0.5§7/§f0.25§7."); return 0 } }
         dev.iustitia.replay.ReplayState.setSpeed(sp)
-        send(ctx, "$tag §7replay speed §f${"%.2f".format(sp)}×§7.")
+        send(ctx, "$tag §7replay speed §f${NumFmt.d(digits = 2, v = sp)}×§7.")
         return 1
     }
 
@@ -1256,6 +1262,10 @@ object IustitiaCommand {
     /** Default window (seconds) when none is given — bare `/ius replay` or `/ius replay <name>`. */
     private val DEFAULT_REPLAY_SECS: Int = 30
 
+    /** The report/transcript timeline promises "last 50" — enforce it on every surface (markdown,
+     *  JSON, text) so a heavy session can't bloat the clipboard copy or a chat dump. */
+    private const val REPORT_TIMELINE_CAP = 50
+
     /** `/ius replay [<target>] [<seconds>] [1|0.5|0.25]` — reconstruct an "instant replay" from the rolling
      *  capture buffer: ghosts of every tracked player at their buffered positions, played back at FULL
      *  speed by default (add 0.5 or 0.25 for slow-mo), with the live world hidden (rewind feel) by
@@ -1277,16 +1287,23 @@ object IustitiaCommand {
         }
         val speed = parseSpeed(ctx, speedArg) ?: return 0
         // Resolve focus + seconds from the overloaded <target>:
-        //   null → default window, no focus · a number → that many seconds, no focus · a name → focus
-        //   (if tracked) + the optional <seconds> arg (or default), no focus if the name is unknown.
+        //   null → default window, no focus · a number → that many seconds (fractional ok), no focus
+        //   · a name → focus (if tracked) + the optional <seconds> arg (or default), no focus if the
+        //   name is unknown.
         val focus: java.util.UUID?
         val secs: Int
         val focusTxt: String
         when {
             target == null -> { focus = null; secs = DEFAULT_REPLAY_SECS; focusTxt = "everyone" }
-            target.toIntOrNull() != null -> {
+            target.toDoubleOrNull() != null -> {
                 focus = null
-                secs = target.toInt().coerceIn(1, dev.iustitia.replay.ReplayBuffer.MAX_SECONDS)
+                // A trailing <seconds> arg wins over the target number (`/ius replay 60 0.5` parses
+                // "60" as <target> and "0.5" as <seconds> — without this read the trailing value was
+                // silently discarded and the target number used instead). A fractional <target>
+                // (`/ius replay 1.5`) resolves as seconds here, not as a player name.
+                val s = try { DoubleArgumentType.getDouble(ctx, "seconds") } catch (_: Throwable) { -1.0 }
+                secs = (if (s >= 1.0) s else target.toDouble()).toInt()
+                    .coerceIn(1, dev.iustitia.replay.ReplayBuffer.MAX_SECONDS)
                 focusTxt = "everyone"
             }
             else -> {
@@ -1313,7 +1330,7 @@ object IustitiaCommand {
         val started = try { dev.iustitia.replay.ReplayState.start(window, focus, speed, cfg.replayHideLive, relocate = false, legacy = false) } catch (_: Throwable) { false }
         if (!started) { send(ctx, "$tag §7couldn't start the replay (empty window)."); return 0 }
         val hideTxt = if (cfg.replayHideLive) " §7(live players hidden)" else ""
-        send(ctx, "$tag §7replaying last §f${secs}s §7for §f$focusTxt§7 at §f${"%.2f".format(speed)}×§7 — ghosts drawn in-world$hideTxt. Holds at the end (or §f/ius replay off§7).")
+        send(ctx, "$tag §7replaying last §f${secs}s §7for §f$focusTxt§7 at §f${NumFmt.d(digits = 2, v = speed)}×§7 — ghosts drawn in-world$hideTxt. Holds at the end (or §f/ius replay off§7).")
         return 1
     }
 
@@ -1478,7 +1495,7 @@ object IustitiaCommand {
         when (val r = ClipPlayback.start(nameArg, speed)) {
             is ClipPlayback.Result.Started -> {
                 val focusTxt = r.focus?.let { " §7focus §f${FlagHistory.nameOrShort(it)}" } ?: ""
-                send(ctx, "$tag §7playing clip §f$nameArg§7 at §f${"%.2f".format(speed)}×§7 — §f${r.frames}§7 frames$focusTxt. Holds at the end (or §f/ius playclip off§7).")
+                send(ctx, "$tag §7playing clip §f$nameArg§7 at §f${NumFmt.d(digits = 2, v = speed)}×§7 — §f${r.frames}§7 frames$focusTxt. Holds at the end (or §f/ius playclip off§7).")
                 return 1
             }
             ClipPlayback.Result.LoadFailed -> {

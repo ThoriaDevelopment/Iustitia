@@ -1,5 +1,6 @@
 package dev.iustitia.checks
 
+import dev.iustitia.NumFmt
 import dev.iustitia.VerboseLog
 import dev.iustitia.alert.AlertManager
 import dev.iustitia.config.ConfigManager
@@ -170,13 +171,13 @@ abstract class Check {
                 val why = evidence?.let { e ->
                     buildString {
                         e.subLabel?.let { append(" sub=").append(it) }
-                        e.measurement?.let { append(" m=").append("%.3f".format(it)) }
-                        e.threshold?.let { append(" t=").append("%.3f".format(it)) }
+                        e.measurement?.let { append(" m=").append(NumFmt.d(digits = 3, v = it)) }
+                        e.threshold?.let { append(" t=").append(NumFmt.d(digits = 3, v = it)) }
                         e.extra?.let { append(" (").append(it).append(')') }
                     }
                 } ?: ""
                 VerboseLog.log(
-                    "$id flag ${VerboseLog.nameOf(tp.username(), tp.uuid)} vl=${"%.2f".format(ctx.vl)} " +
+                    "$id flag ${VerboseLog.nameOf(tp.username(), tp.uuid)} vl=${NumFmt.d(digits = 2, v = ctx.vl)} " +
                         "(setback $setbackVL) [$label] @tick $tick$why"
                 )
             }

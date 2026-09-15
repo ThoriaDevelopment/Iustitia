@@ -1,5 +1,6 @@
 package dev.iustitia.checks.movement
 
+import dev.iustitia.NumFmt
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.history.Evidence
@@ -95,7 +96,7 @@ class SpiderCheck : Check() {
                         flag(tp, ctx, 1.0, "Spider(ConstantClimb)", tick, Evidence(
                             subLabel = "constant-yspeed", measurement = (mx - mn),
                             threshold = CLIMB_BAND, pos = tp.pos,
-                            extra = "min=${"%.4f".format(mn)} max=${"%.4f".format(mx)} n=${ctx.climbRing.size}"))
+                            extra = "min=${NumFmt.d(digits = 4, v = mn)} max=${NumFmt.d(digits = 4, v = mx)} n=${ctx.climbRing.size}"))
                     }
                 }
             } else {

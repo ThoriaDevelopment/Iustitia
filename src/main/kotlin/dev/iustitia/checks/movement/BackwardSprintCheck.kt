@@ -1,5 +1,6 @@
 package dev.iustitia.checks.movement
 
+import dev.iustitia.NumFmt
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
@@ -79,7 +80,7 @@ class BackwardSprintCheck : Check() {
                 ctx.strafeStreak = 0
                 if (ctx.streak >= BLATANT_SUSTAIN) flag(tp, ctx, 1.0, "BackwardSprint", tick, Evidence(
                     subLabel = "backward-sprint", measurement = angleDeg, threshold = 91.0,
-                    extra = "${"%.0f".format(angleDeg)}° off facing — sprinting backward"))
+                    extra = "${NumFmt.d(digits = 0, v = angleDeg)}° off facing — sprinting backward"))
             } else if (!tp.swimming &&
                 abs(dot) <= STRAFE_FORWARD_FRAC * horiz &&
                 abs(tp.delta.x * look.z - tp.delta.z * look.x) >= STRAFE_SIDEWAYS_FRAC * horiz
@@ -92,7 +93,7 @@ class BackwardSprintCheck : Check() {
                 ctx.streak = 0
                 if (ctx.strafeStreak >= STRAFE_SUSTAIN) flag(tp, ctx, 1.0, "BackwardSprint(strafe)", tick, Evidence(
                     subLabel = "strafe-sprint", measurement = angleDeg, threshold = 75.0,
-                    extra = "${"%.0f".format(angleDeg)}° off facing — Strafe-Sprinting"))
+                    extra = "${NumFmt.d(digits = 0, v = angleDeg)}° off facing — Strafe-Sprinting"))
             } else {
                 ctx.streak = 0
                 ctx.strafeStreak = 0

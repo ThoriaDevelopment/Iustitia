@@ -1,5 +1,6 @@
 package dev.iustitia.checks.movement
 
+import dev.iustitia.NumFmt
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
 import dev.iustitia.config.IustitiaConfig
@@ -279,7 +280,7 @@ class FlyEnvelopeCheck : Check() {
                             ctx.strafeHopActive = true
                             flag(tp, ctx, 1.0, "Fly(StrafeHop)", tick, Evidence(
                                 subLabel = "strafe-hop-impulse", measurement = dy, threshold = STRAFE_HOP_Y,
-                                pos = tp.pos, extra = "bandΔ=${"%.5f".format(abs(dy - STRAFE_HOP_Y))} hops=${ctx.strafeHops.size}"))
+                                pos = tp.pos, extra = "bandΔ=${NumFmt.d(digits = 5, v = abs(dy - STRAFE_HOP_Y))} hops=${ctx.strafeHops.size}"))
                         }
                     } else {
                         // a vanilla 0.42 / JB hop breaks the strafe-hop cluster → re-arm for a fresh episode.

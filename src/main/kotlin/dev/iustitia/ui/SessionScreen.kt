@@ -2,7 +2,6 @@ package dev.iustitia.ui
 
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
-import dev.iustitia.session.SessionStats
 import dev.iustitia.tracking.EntityTrackerManager
 import net.minecraft.client.gui.DrawContext
 import net.minecraft.client.gui.Click

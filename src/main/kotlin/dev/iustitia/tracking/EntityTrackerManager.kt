@@ -85,20 +85,6 @@ object EntityTrackerManager {
         }
     }
 
-    /** Mark a teleport detected by inference (e.g. chorus/pearl) — opens the reach/nofall
-     *  exemption. Also clears [TrackedPlayer.fallAccum]: a void-fall + respawn leaves a
-     *  huge stale fallAccum that would fire NoFall the moment the player lands at spawn,
-     *  even though the fall was voided by the teleport. */
-    fun markTeleport(uuid: UUID, tick: Int) {
-        try {
-            val tp = byUuid[uuid] ?: return
-            tp.lastTeleportTick = tick
-            tp.fallAccum = 0.0
-        } catch (_: Throwable) {
-            // ignore
-        }
-    }
-
     /** Mark a hurt signal received for this player — opens the knockback-exemption window
      *  (Speed/Fly). Knockback follows a hit, so a recent hurt flags the knockback peak we
      *  must not flag — this substitutes for the velocity window on servers that don't
@@ -313,8 +299,12 @@ object EntityTrackerManager {
         // spear ceiling. Fail-open to 3.0 (vanilla default) on any read error.
         try { tp.pushReach(tick, e.getEntityInteractionRange()) } catch (_: Throwable) { tp.pushReach(tick, 3.0) }
 
-        // teleport heuristic: a single-tick jump > 8 blocks is a server teleport.
-        // Also clears fallAccum (see markTeleport) so void-fall + respawn doesn't fire NoFall.
+        // teleport heuristic (the old public markTeleport() entrypoint had no callers — inference
+        // never detects a teleport client-side, so this position-delta poll is the only teleport
+        // signal): a single-tick jump > 8 blocks is a server teleport.
+        // Also clears fallAccum so void-fall + respawn doesn't fire NoFall (a void-fall leaves a
+        // huge stale fallAccum that would fire NoFall the moment the player lands at spawn, even
+        // though the fall was voided by the teleport).
         if (rawDelta.lengthSquared() > 64.0) {
             tp.lastTeleportTick = tick
             tp.fallAccum = 0.0

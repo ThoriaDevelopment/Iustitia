@@ -1,5 +1,6 @@
 package dev.iustitia.checks.movement
 
+import dev.iustitia.NumFmt
 import dev.iustitia.Iustitia
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
@@ -242,7 +243,7 @@ class ScaffoldRotationCheck : Check() {
                         flag(tp, ctx, 1.0, "Scaffold(Clutch)", tick, Evidence(
                             subLabel = "snap-back-round-trip", measurement = ad,
                             threshold = CLUTCH_SNAP, pos = tp.pos,
-                            extra = "returnΔ=${"%.3f".format(ret)} count=${ctx.clutchCount}"))
+                            extra = "returnΔ=${NumFmt.d(digits = 3, v = ret)} count=${ctx.clutchCount}"))
                     }
                 }
                 // round-trip consumed — clear the pending snap so the next out is fresh.

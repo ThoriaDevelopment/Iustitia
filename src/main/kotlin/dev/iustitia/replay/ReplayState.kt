@@ -73,6 +73,13 @@ object ReplayState {
      *  steady state (default ≈ 0.525 < 0.96 < 1.68), it's only a runaway guard. */
     private const val FC_FLY_MAX: Double = 1.68
 
+    // Threading note: on 1.21.11 the "client thread" and the render thread are the same physical
+    // thread, so these `@Volatile`s are not guarding true concurrent mutation — they guarantee the
+    // *happens-before* visibility of a state change (a start/stop/seek from a command or keybind)
+    // to the render callbacks that read the field later in the same tick/frame, without which the
+    // JIT would be free to hoist the read out of the render loop. They also document the
+    // cross-thread intent for anyone reordering this state. Kept deliberately — cheap, and the
+    // honest contract for the fields a mixin reads directly.
     @Volatile var active: Boolean = false
         private set
     @Volatile var focusUuid: UUID? = null

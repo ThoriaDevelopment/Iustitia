@@ -1,5 +1,6 @@
 package dev.iustitia.checks.combat
 
+import dev.iustitia.NumFmt
 import dev.iustitia.Iustitia
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
@@ -251,12 +252,12 @@ class NoKnockbackCheck : Check() {
         if (sustainedNow) {
             val captured = tick - ctx.kbTick <= 3 && ctx.kbImpulseH > 0.1
             val expected = if (captured)
-                "vs server impulse ${"%.3f".format(ctx.kbImpulseH)}"
+                "vs server impulse ${NumFmt.d(digits = 3, v = ctx.kbImpulseH)}"
             else "vs vanilla sprint-KB ~$ASSUMED_SPRINT_KB (assumed)"
             flagEpisode(tp, ctx, "NoKB", tick, Evidence(
                 subLabel = "kb-absorbed", measurement = ratio, threshold = cfg.threshold, pos = tp.pos,
-                extra = "took ${"%.0f".format(ratio * 100)}% of expected KB (absorbed " +
-                    "${"%.0f".format((1 - ratio) * 100)}%) on ≥$ABSORB_MIN of the last $ABSORB_WINDOW " +
+                extra = "took ${NumFmt.d(digits = 0, v = ratio * 100)}% of expected KB (absorbed " +
+                    "${NumFmt.d(digits = 0, v = (1 - ratio) * 100)}%) on ≥$ABSORB_MIN of the last $ABSORB_WINDOW " +
                     "hits — $expected"))
         } else {
             rearmEpisode(ctx, sustainedNow)
@@ -293,7 +294,7 @@ class NoKnockbackCheck : Check() {
                 flag(tp, ctx, VL_VELOCITYB, "NoKB(VelocityB)", tick, Evidence(
                     subLabel = "vertical-kb-ratio", measurement = ratio, threshold = VELOCITYB_RATIO,
                     pos = tp.pos,
-                    extra = "took ${"%.0f".format(ratio * 100)}% of upward KB (Δy ${"%.4f".format(ctx.firstAirborneDy)} vs kbVy ${"%.4f".format(ctx.kbVy)})"))
+                    extra = "took ${NumFmt.d(digits = 0, v = ratio * 100)}% of upward KB (Δy ${NumFmt.d(digits = 4, v = ctx.firstAirborneDy)} vs kbVy ${NumFmt.d(digits = 4, v = ctx.kbVy)})"))
             }
         }
         // KB-vector vs attacker-yaw mismatch (Axis C, plan §3/§8 step 11): the server applies KB
@@ -320,7 +321,7 @@ class NoKnockbackCheck : Check() {
                     flag(tp, ctx, VL_VECTOR, "NoKB(Vector)", tick, Evidence(
                         subLabel = "kb-vector-mismatch", measurement = mismatch,
                         threshold = VECTOR_MISMATCH, pos = tp.pos,
-                        extra = "preHitH=${"%.3f".format(preHitH)} dispH=${"%.3f".format(dispH)}"))
+                        extra = "preHitH=${NumFmt.d(digits = 3, v = preHitH)} dispH=${NumFmt.d(digits = 3, v = dispH)}"))
                 }
             }
         }

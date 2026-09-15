@@ -1,5 +1,6 @@
 package dev.iustitia.checks.combat
 
+import dev.iustitia.NumFmt
 import dev.iustitia.Iustitia
 import dev.iustitia.checks.Check
 import dev.iustitia.checks.CheckContext
@@ -145,7 +146,7 @@ class ReachCheck : Check() {
                     flagEpisode(attacker, ctx, "Reach", ev.tick, Evidence(
                         subLabel = "motionless", measurement = closest, threshold = maxReach + STATIC_HEADROOM,
                         pos = eye, victim = victim.uuid,
-                        extra = "hit from ${"%.2f".format(closest)} blocks while neither fighter had moved (vanilla max ${"%.1f".format(maxReach)})"))
+                        extra = "hit from ${NumFmt.d(digits = 2, v = closest)} blocks while neither fighter had moved (vanilla max ${NumFmt.d(digits = 1, v = maxReach)})"))
                     lagRangeAmplify(attacker, victim, ctx, eye, ev)
                 } else {
                     rearmEpisode(ctx, sustainedNow)
@@ -221,7 +222,7 @@ class ReachCheck : Check() {
                             flag(attacker, ctx, setbackVL + 1.0, "HitboxMiss", ev.tick, Evidence(
                                 subLabel = "miss", measurement = minAngle, threshold = HITBOX_MISS_ANGLE,
                                 pos = eye, victim = victim.uuid,
-                                extra = "looked ${"%.1f".format(minAngle)}° off a hittable victim (within reach, not facing them)"))
+                                extra = "looked ${NumFmt.d(digits = 1, v = minAngle)}° off a hittable victim (within reach, not facing them)"))
                         }
                     } else if (!miss) {
                         ctx.missEpisode = false
@@ -250,7 +251,7 @@ class ReachCheck : Check() {
                     flagEpisode(attacker, ctx, "Reach", ev.tick, Evidence(
                         subLabel = "face", measurement = nearestFace, threshold = maxReach + 0.8,
                         pos = eye, victim = victim.uuid,
-                        extra = "hit from ${"%.2f".format(nearestFace)} blocks (vanilla max ${"%.1f".format(maxReach)})"))
+                        extra = "hit from ${NumFmt.d(digits = 2, v = nearestFace)} blocks (vanilla max ${NumFmt.d(digits = 1, v = maxReach)})"))
                     lagRangeAmplify(attacker, victim, ctx, eye, ev)
                 } else {
                     rearmEpisode(ctx, sustainedFace)
@@ -274,7 +275,7 @@ class ReachCheck : Check() {
                 flagEpisode(attacker, ctx, "Reach", ev.tick, Evidence(
                     subLabel = "in-box", measurement = minDist, threshold = maxReach + 0.8,
                     pos = eye, victim = victim.uuid,
-                    extra = "hit from ${"%.2f".format(minDist)} blocks (vanilla max ${"%.1f".format(maxReach)})"))
+                    extra = "hit from ${NumFmt.d(digits = 2, v = minDist)} blocks (vanilla max ${NumFmt.d(digits = 1, v = maxReach)})"))
                 lagRangeAmplify(attacker, victim, ctx, eye, ev)
             } else {
                 rearmEpisode(ctx, sustainedInBox)

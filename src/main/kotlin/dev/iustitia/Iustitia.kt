@@ -344,7 +344,7 @@ object Iustitia {
                     val started = try { dev.iustitia.replay.ReplayState.start(window, null, speed, cfg.replayHideLive, relocate = false, legacy = false) } catch (_: Throwable) { false }
                     if (!started) { chat(mc, "§8[§diustitia§8] §7couldn't start the replay (empty window)."); return }
                     val hideTxt = if (cfg.replayHideLive) " §7(live players hidden)" else ""
-                    chat(mc, "§8[§diustitia§8] §7replaying last §f${secs}s§7 at §f${"%.2f".format(speed)}×§7 — ghosts drawn in-world$hideTxt. Press again (or §f/ius replay off§7) to stop.")
+                    chat(mc, "§8[§diustitia§8] §7replaying last §f${secs}s§7 at §f${NumFmt.d(digits = 2, v = speed)}×§7 — ghosts drawn in-world$hideTxt. Press again (or §f/ius replay off§7) to stop.")
                 }
                 else -> { /* unknown id: no-op */ }
             }

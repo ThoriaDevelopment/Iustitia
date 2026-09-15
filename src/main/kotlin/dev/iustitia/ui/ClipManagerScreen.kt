@@ -1,5 +1,6 @@
 package dev.iustitia.ui
 
+import dev.iustitia.NumFmt
 import dev.iustitia.replay.ClipCodec
 import dev.iustitia.replay.ClipPlayback
 import dev.iustitia.replay.ClipStore
@@ -116,7 +117,7 @@ class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
             when (val r = ClipPlayback.start(name, ReplayState.SPEED_FULL)) {
                 is ClipPlayback.Result.Started -> {
                     mc.setScreen(null)
-                    mc.player?.sendMessage(Text.literal("§8[§diustitia§8] §7playing clip §f$name§7 at §f${"%.2f".format(ReplayState.SPEED_FULL)}×§7 — §f${r.frames}§7 frames. Auto-stops at the end (or §f/ius playclip off§7)."), false)
+                    mc.player?.sendMessage(Text.literal("§8[§diustitia§8] §7playing clip §f$name§7 at §f${NumFmt.d(digits = 2, v = ReplayState.SPEED_FULL)}×§7 — §f${r.frames}§7 frames. Auto-stops at the end (or §f/ius playclip off§7)."), false)
                 }
                 ClipPlayback.Result.LoadFailed -> { status = "§c couldn't read §f$name" }
                 ClipPlayback.Result.StartFailed -> { status = "§c couldn't start §f$name" }
