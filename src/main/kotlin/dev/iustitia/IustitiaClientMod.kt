@@ -78,10 +78,6 @@ class IustitiaClientMod : ClientModInitializer {
         // player, drawn at WorldRenderEvents.AFTER_ENTITIES (depth-tested, no wallhack).
         try { dev.iustitia.render.TargetHighlightRenderer.register() } catch (_: Throwable) {}
 
-        // Phase B ghost trail: fading breadcrumb trail of recent positions for suspect players
-        // (sampled on END_CLIENT_TICK, drawn on AFTER_ENTITIES; depth-tested, no wallhack).
-        try { dev.iustitia.render.GhostTrailRenderer.register() } catch (_: Throwable) {}
-
         // Phase 2 instant-replay renderer: while a replay (/ius replay or /ius playclip) is active,
         // draws translucent ghost copies of every player at the playhead frame's buffered positions
         // (AFTER_ENTITIES, depth-tested) + a bottom-center progress HUD. The hide-live mixin (in
@@ -185,6 +181,7 @@ class IustitiaClientMod : ClientModInitializer {
         try {
             net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents.CLIENT_STOPPING.register(
                 net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents.ClientStopping {
+                    try { VerboseLog.flush() } catch (_: Throwable) {}
                     try { ConfigManager.flush() } catch (_: Throwable) {}
                     try { dev.iustitia.persistence.PersistenceManager.flush() } catch (_: Throwable) {}
                     try { dev.iustitia.chathist.ChatHistory.flush() } catch (_: Throwable) {}

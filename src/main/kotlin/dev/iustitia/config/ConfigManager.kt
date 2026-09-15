@@ -291,7 +291,6 @@ object ConfigManager {
         addProperty("lagHudIcon", c.lagHudIcon)
         addProperty("confidenceHud", c.confidenceHud)
         addProperty("targetHighlight", c.targetHighlight)
-        addProperty("ghostTrail", c.ghostTrail)
         addProperty("watchFollowCam", c.watchFollowCam)
         addProperty("burstSparks", c.burstSparks)
         addProperty("hoverTooltip", c.hoverTooltip)
@@ -389,7 +388,6 @@ object ConfigManager {
         if (o.has("lagHudIcon")) c.lagHudIcon = o.get("lagHudIcon").asBoolean
         if (o.has("confidenceHud")) c.confidenceHud = o.get("confidenceHud").asBoolean
         if (o.has("targetHighlight")) c.targetHighlight = o.get("targetHighlight").asBoolean
-        if (o.has("ghostTrail")) c.ghostTrail = o.get("ghostTrail").asBoolean
         if (o.has("watchFollowCam")) c.watchFollowCam = o.get("watchFollowCam").asBoolean
         if (o.has("burstSparks")) c.burstSparks = o.get("burstSparks").asBoolean
         if (o.has("hoverTooltip")) c.hoverTooltip = o.get("hoverTooltip").asBoolean

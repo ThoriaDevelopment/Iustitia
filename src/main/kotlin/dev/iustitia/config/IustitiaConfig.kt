@@ -118,12 +118,6 @@ data class IustitiaConfig(
      *  only when [nametagGreenEnabled] (so clean players aren't boxed unless you opted into green). */
     var targetHighlight: Boolean = true,
 
-    /** Ghost trail: draw a fading breadcrumb trail of recent positions for suspect (yellow/red)
-     *  OTHER players, so you can see where a cheater came from / is heading. Render-only,
-     *  depth-tested (no wallhack — occluded behind walls). Clean (green) players are never
-     *  trailed; a player that drops back to green has its trail cleared. */
-    var ghostTrail: Boolean = true,
-
     /** Watch follow-cam: pressing the `watch` keybind on a crosshair-targeted OTHER player starts a
      *  sustained slow auto-orbit third-person camera around them (a "spectate the cheater" view);
      *  press again to stop. Render-only — the camera auto-reverts to your view the instant you stop /

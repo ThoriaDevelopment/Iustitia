@@ -641,7 +641,7 @@ Useful narrower runs while working (each boots a client, so keep the filter tigh
 | `--tag combat\|movement\|rotation\|packet\|world\|guard\|replay` | one behaviour family |
 | `--legit-only` / `--cheat-only` | one pass |
 | `--fast` | everything except the replay pass |
-| `--verbose-log` | arm the mod's per-flag log (sub-flag label + measured value) |
+| `--verbose-log` | arm the mod's per-flag log (sub-flag label + measured value); written asynchronously, so read it after the client exits (the drain is flushed on shutdown) |
 | `--verbose` | print peak VL evidence for every scenario |
 | `--coverage` / `--matrix` / `--list` | offline: no client boot |
 | `--strict` | make documented findings fatal (use before a release) |

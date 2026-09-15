@@ -26,7 +26,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
  * - **Local-player exclusion:** `ClientPlayerEntity` is also a `PlayerListEntry` in the list; we
  *   skip the local player by uuid so your own row isn't badged.
  * - **GREEN gating:** clean players are only badged when `nametagGreenEnabled` is on (same rule as
- *   the nametag / target-highlight / ghost-trail — no `[+]` spam on every clean row by default).
+ *   the nametag / target-highlight — no `[+]` spam on every clean row by default).
  * - **Idempotent:** `getPlayerName` is called once per entry per render (row + width share the same
  *   returned `Text`); replacing the return value is idempotent — no `[X][X] Name` accumulation.
  * - **No burst-pulse:** the tab surface is secondary; the nametag carries the pulse. The badge here

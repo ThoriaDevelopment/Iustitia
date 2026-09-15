@@ -17,8 +17,8 @@ import java.util.UUID
  * fired, with evidence), plus the tier, confidence score, and any moderator note. Refreshed every
  * render; toggled by the transcript keybind, `/ius transcript panel`, or `cfg.transcriptPanel`.
  *
- * This is a non-fullscreen overlay Screen — build-verifiable. The world-visible ghost trail is the
- * deferred Phase B render piece. Whole body fail-open; a reader error shows "(unavailable)".
+ * This is a non-fullscreen overlay Screen — build-verifiable. Whole body fail-open; a reader error
+ * shows "(unavailable)".
  */
 class TranscriptPanelScreen(
     private val uuid: UUID,

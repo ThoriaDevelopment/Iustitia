@@ -70,7 +70,7 @@ import kotlin.math.sqrt
  * colors each ghost by that player's cheat tier (green / yellow / red), highlights the replay focus
  * in cyan with a thicker outline + a `▶` name marker, and floats a name tag above every ghost so you
  * can read who is who. The model is drawn with the same runtime-proven
- * [VertexRendering.drawOutline] path as the target-highlight / ghost-trail overlays (depth-tested →
+ * [VertexRendering.drawOutline] path as the target-highlight overlay (depth-tested →
  * occluded by walls, no wallhack); only the boxes+labels are new.
  *
  * ## In-world ghosts

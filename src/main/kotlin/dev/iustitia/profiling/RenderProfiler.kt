@@ -11,10 +11,11 @@ import java.util.concurrent.atomic.AtomicInteger
  * investigation (post pass #3: static analysis identified and fixed the most clearly wasteful
  * substrate, but the symptom persisted, so we now measure rather than guess).
  *
- * Gated on [dev.iustitia.VerboseLog] (the `/ius debugfps` command refuses to start unless verbose
- * is on, per the user's "implement that into verbose" framing) — a profiler is a verbose-mode
- * diagnostic, not a normal-play path. Sampling is opt-in and runs only between an explicit
- * `/ius debugfps` start and `/ius debugfps stop`; nothing runs otherwise.
+ * Started by `/ius debugfps` and stopped by `/ius debugfps stop`; nothing runs otherwise. It is
+ * deliberately **not** gated on [dev.iustitia.VerboseLog] — gating it there meant a profile could
+ * only ever be taken with verbose on, so the tool could not measure the verbose-off configuration
+ * at all (and the dense-player FPS bug only reproduced with verbose on, which is exactly the case
+ * a profiler must not perturb).
  *
  * ## How it works
  *

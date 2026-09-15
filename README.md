@@ -33,7 +33,7 @@ Iustitia is a Fabric client mod that watches every *other* player on your server
 - **Read-only on incoming packets.** A single mixin (`ClientPlayNetworkHandlerMixin`) observes server packets and feeds them into a tracking pipeline. It never sends anything to the server and never mutates the local player. The **watch follow-cam** (`/ius spectate`, see below) is the one deliberate exception: it overrides the *camera only*, while you're actively spectating, and auto-reverts the instant you stop, move, get hit, or the target leaves. Vanilla re-derives the camera every frame, so it can never get stuck.
 - **Other players only.** It builds a server-space model of every other client player (position, yaw/pitch, sprint/sneak, hurt ticks, vehicle, deltas) from rebroadcast state, then runs 36 detection checks against that model each tick.
 - **Fail-open everywhere.** Every check and mixin body is wrapped so a thrown exception is swallowed and skipped. A detection error never crashes your client and never produces a false positive. A chunk-unloaded player is a false *negative*, never a false *positive*.
-- **Two streams, kept separate.** *Chat alerts* fire only when a check's violation level crosses its setback threshold. *Verbose console logging* (every flag, a pipeline heartbeat) is opt-in via `/ius verbose` for validation/debugging and is **off by default**. The release build is silent in `latest.log` unless you turn it on.
+- **Two streams, kept separate.** *Chat alerts* fire only when a check's violation level crosses its setback threshold. *Verbose console logging* (every flag, a pipeline heartbeat) is opt-in via `/ius verbose` for validation/debugging and is **off by default**. The release build is silent in `latest.log` unless you turn it on. When it is on, each line is handed to a background writer rather than written on the tick thread, so a busy server's flag volume cannot cost you frames; the heartbeat reports `dropped=N` if the writer ever fell behind, which tells you a transcript is partial (detection data itself is never dropped — `/ius hist` is exact).
 
 It is a detection/inspection tool, not an enforcement tool: it tells *you* who looks like a cheater. It does not kick, ban, or report anyone, and it sends nothing anywhere.
 
@@ -268,7 +268,6 @@ All four instant-replay tools have toggles in `/ius config` (Replay capture buff
 
 ### World/HUD overlays (all render-only, depth-tested — no wallhack)
 - **Target highlight**. A tier-colored wireframe box around the player your crosshair is on.
-- **Ghost trail**: fading breadcrumb trail of recent positions for suspect (yellow/red) players.
 - **Burst sparks**: a brief tier-colored particle burst at a player's eye on a fresh tier-relevant alert.
 - **Hover tooltip**: after the crosshair rests on one player for ~1.5 s, an expanded top-center banner (tier + score + why-this-tier + FP hint + most-flagged checks). Suppresses the compact crosshair panel while up.
 - **Crosshair confidence HUD**. A compact panel near the crosshair with the looked-at player's tier glyph + score + why-this-tier + FP hint.

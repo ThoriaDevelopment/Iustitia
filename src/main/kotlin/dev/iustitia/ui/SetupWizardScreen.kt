@@ -38,7 +38,6 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
             val c = ConfigManager.config
             c.transcriptPanel = false
             c.targetHighlight = false
-            c.ghostTrail = false
             c.watchFollowCam = false
             c.burstSparks = false
             c.hoverTooltip = false

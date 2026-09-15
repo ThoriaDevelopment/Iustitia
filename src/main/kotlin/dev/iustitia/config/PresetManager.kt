@@ -133,7 +133,7 @@ object PresetManager {
         val base = IustitiaConfig()
         return when (name.lowercase()) {
             "standard" -> base.apply {
-                targetHighlight = false; ghostTrail = false; watchFollowCam = false; burstSparks = false
+                targetHighlight = false; watchFollowCam = false; burstSparks = false
                 hoverTooltip = false; tabListBadge = false; nametagBurstPulse = false
                 lagHudIcon = true   // the one light visual: explains WHY alerts soften during lag bursts
                 confidenceHud = false; transcriptPanel = false

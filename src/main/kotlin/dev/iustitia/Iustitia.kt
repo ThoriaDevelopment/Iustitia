@@ -66,14 +66,6 @@ object Iustitia {
         }
     }
 
-    /**
-     * Ghost-trail sample cadence in ticks. Sampling every tick would clump consecutive
-     * positions (a walking player moves <0.2 blocks/tick); every 3 ticks spreads the
-     * breadcrumbs enough to read as a trail (~0.6 blocks apart walking). Used by
-     * [dev.iustitia.render.GhostTrailRenderer].
-     */
-    const val SAMPLE_EVERY: Int = 3
-
     private val checks = mutableListOf<Check>()
 
     fun register(check: Check) {
@@ -442,9 +434,6 @@ object Iustitia {
             // pointing at a now-gone offender (the single-frame guarantee already bounds it, but
             // this keeps it tidy on disconnect).
             try { dev.iustitia.render.OffenderCapture.reset() } catch (_: Throwable) {}
-            // Clear ghost trails so a world/dimension change doesn't leave stale breadcrumbs
-            // pointing at world-coord positions from the previous dimension.
-            try { dev.iustitia.render.GhostTrailRenderer.reset() } catch (_: Throwable) {}
             // Stop any active watch follow-cam so a world change can't leave the camera orbiting a
             // player from the previous dimension (vanilla re-derives next frame, but this keeps it
             // tidy and clears the toggle state). disableNow restores the saved HUD/perspective state.

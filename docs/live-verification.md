@@ -39,6 +39,19 @@ For every runtime change:
 6. Confirm the feature is inert or unchanged when its toggle is off.
 7. Enable verbose logging only when needed, then turn it off after the test.
 
+Verbose output is written **asynchronously**: `/ius` hands each line to a background writer so
+logging can never stall the tick thread (a dense player fight produces flags far faster than the
+console appender can write them, and doing that on the tick thread froze the client). Two
+consequences for a validation pass:
+
+- Lines reach `latest.log` slightly behind the moment they were produced, and a backlog keeps
+  draining after you switch verbose off. The drain is flushed on client shutdown, so a full
+  session's transcript is on disk once the client has exited.
+- Under heavy load the bounded queue drops lines rather than blocking. The pipeline heartbeat
+  reports them as `dropped=N`; `dropped=0` is what tells you the transcript is complete. Drops are
+  transcript-only — `/ius hist` and the report timeline read the synchronously-written flag
+  history, so detection data is exact regardless.
+
 ## Detection changes
 
 For a changed check:

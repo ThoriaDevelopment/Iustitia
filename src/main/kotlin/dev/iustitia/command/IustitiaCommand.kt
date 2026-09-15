@@ -99,7 +99,7 @@ object IustitiaCommand {
         "reset" to "reset all tracker/check/alert/history state",
         "clear" to "reset one player's flags (tier→green) or everyone's: /ius clear <name|all>",
         "exempt" to "exempt a player from all checks: /ius exempt [name [on|off]]  (bare = list exempted)",
-        "debugfps" to "render-thread sampling profiler (verbose-gated): /ius debugfps  (start), /ius debugfps stop  (write a text report to %APPDATA%/.iustitia/debugfps/)",
+        "debugfps" to "render-thread sampling profiler: /ius debugfps  (start), /ius debugfps stop  (write a text report to %APPDATA%/.iustitia/debugfps/)",
     )
 
     fun register(dispatcher: CommandDispatcher<FabricClientCommandSource>) {
@@ -403,6 +403,20 @@ object IustitiaCommand {
         ConfigManager.config.verbose = !ConfigManager.config.verbose
         ConfigManager.save()
         send(ctx, "$tag §7verbose = ${ConfigManager.config.verbose}")
+        if (!ConfigManager.config.verbose) {
+            // Ending a capture. Backlog still writes itself — the drain thread keeps consuming
+            // after verbose is switched off, so there is nothing to flush here and no reason to
+            // block the client thread on I/O. What the operator needs to know is whether the
+            // transcript they are about to compare is complete.
+            val backlog = dev.iustitia.VerboseLog.backlog()
+            val dropped = dev.iustitia.VerboseLog.dropCount()
+            if (backlog > 0) {
+                send(ctx, " §7$backlog line(s) still queued — still writing to §flogs/latest.log§7 in the background.")
+            }
+            if (dropped > 0L) {
+                send(ctx, " §7note: §f$dropped§7 verbose line(s) were dropped this session (appender could not keep up), so the transcript is §fpartial§7. Detection data is unaffected — §f/ius hist§7 keeps the exact per-flag record.")
+            }
+        }
         return 1
     }
 
@@ -520,16 +534,14 @@ object IustitiaCommand {
         return 1
     }
 
-    // ---- debugfps (live render-thread sampler; verbose-gated diagnostic for the FPS investigation) ----
+    // ---- debugfps (live render-thread sampler; diagnostic for the FPS investigation) ----
     /** `/ius debugfps` (or `/ius debugfps start`) — start sampling the render thread every ~5ms.
-     *  Gated on verbose (the profiler is a verbose-mode diagnostic, not a normal-play path): if
-     *  verbose is off, refuse with a hint. MUST run on the render thread (the command handler does),
-     *  so [dev.iustitia.profiling.RenderProfiler.start] captures the render thread. Fail-open. */
+     *  Not gated on verbose: the profiler's purpose is to measure the configuration we actually
+     *  ship, and gating it on verbose meant every profile was taken with verbose on — i.e. it
+     *  could not measure the verbose-off case at all. Start/stop is the only gate. MUST run on the
+     *  render thread (the command handler does), so [dev.iustitia.profiling.RenderProfiler.start]
+     *  captures the render thread. Fail-open. */
     private fun profileStart(ctx: CommandContext<FabricClientCommandSource>): Int {
-        if (!dev.iustitia.VerboseLog.isEnabled()) {
-            send(ctx, "$tag §7profiler is gated on verbose — enable it first with §f/ius verbose§7, then §f/ius debugfps§7 to start, reproduce the lag, and §f/ius debugfps stop§7 to dump the report.")
-            return 0
-        }
         val err = dev.iustitia.profiling.RenderProfiler.start()
         if (err != null) { send(ctx, "$tag §7profiler §c$err§7."); return 0 }
         send(ctx, "$tag §aprofiler running§7 — sampling the render thread every 5ms. Reproduce the lag now (walk through the dense-player area). When done: §f/ius debugfps stop§7 → writes a text report to §f%APPDATA%/.iustitia/debugfps/§7.")

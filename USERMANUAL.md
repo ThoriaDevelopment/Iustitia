@@ -175,7 +175,6 @@ These are visual helpers drawn on top of the game. They're all **render-only** �
 - **Crosshair confidence panel**: a small panel near your crosshair showing the tier glyph, confidence score, *why* that tier, and a one-line false-positive hint for the player you're currently looking at.
 - **Hover tooltip**: if your crosshair rests on one player for about 1.5 seconds, a bigger banner appears at the top-center with the full breakdown (tier, score, why-this-tier, FP hint, most-flagged checks). It takes over from the compact panel while it's up.
 - **Target highlight**: a tier-colored wireframe box appears around the player your crosshair is on, so you don't lose track of who you're reading.
-- **Ghost trail**. Suspect (yellow/red) players leave a fading breadcrumb trail of their recent positions, so you can see where they came from.
 - **Burst sparks**: a brief colored particle puff at a player's eye the instant they get a fresh tier-relevant flag.
 - **Server-lag indicator**: a small ⚠ at the top-left appears for a moment after the server lags. It's there to tell you *why* alerts are being softened right now (see "lag-soften" below) — and it's a good reminder that lag itself can cause false flags, so don't over-trust alerts during a lag spike.
 - **Offender selfie**: when a player hits red, Iustitia can grab a single-frame third-person screenshot of them and (if persistence is on) save it to `%APPDATA%/.iustitia/snapshots`. It's a one-frame flicker by design — the camera reverts instantly.
