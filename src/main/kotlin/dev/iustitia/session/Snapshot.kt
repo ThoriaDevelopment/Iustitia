@@ -76,18 +76,26 @@ object Snapshot {
     } catch (_: Throwable) { "{}" }
 
     /** Full capture: chat line + clipboard + (if persistence on) json file + PNG screenshot.
-     *  Returns the summary. */
+     *  A json-file write failure is reported to chat (an unconditional-success message would
+     *  hide the one part that failed). Returns the summary. */
     fun capture(uuid: UUID, name: String): String {
         val summary = buildSummary(uuid, name)
         try {
             val client = MinecraftClient.getInstance()
+            // Honest save result: the json file is the only part that can silently fail —
+            // report it instead of letting "posted + copied to clipboard" imply everything landed.
+            var fileFailed = false
+            if (try { dev.iustitia.config.ConfigManager.config.persistenceEnabled } catch (_: Throwable) { false }) {
+                fileFailed = !try { PersistenceManager.saveSnapshot(name, buildJson(uuid, name)) } catch (_: Throwable) { false }
+            }
             client.execute {
                 try {
                     client.inGameHud?.chatHud?.addMessage(Text.literal(summary))
                     try { client.keyboard.setClipboard(summary) } catch (_: Throwable) {}
+                    if (fileFailed) client.inGameHud?.chatHud?.addMessage(Text.literal(
+                        "§8[§diustitia§8] §csnapshot file could not be written (disk error) — chat + clipboard still have the summary."))
                 } catch (_: Throwable) {}
             }
-            try { PersistenceManager.saveSnapshot(name, buildJson(uuid, name)) } catch (_: Throwable) {}
             try { captureScreenshot(name, uuid) } catch (_: Throwable) {}
         } catch (_: Throwable) {}
         return summary

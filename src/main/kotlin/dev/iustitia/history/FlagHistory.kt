@@ -197,8 +197,10 @@ object FlagHistory {
         val dq = flagsByUuid[uuid] ?: return null
         synchronized(dq) {
             if (dq.isEmpty()) return null
-            // newest-first deque: head = last flag, tail = first flag.
-            dq.first().tick to dq.last().tick
+            // newest-first deque: head = LAST flag, tail = FIRST flag — the doc contract is
+            // (first, last), and this used to return them swapped, so every consumer
+            // (report span labels, confidence windows) computed on a negative window.
+            dq.last().tick to dq.first().tick
         }
     } catch (_: Throwable) { null }
 

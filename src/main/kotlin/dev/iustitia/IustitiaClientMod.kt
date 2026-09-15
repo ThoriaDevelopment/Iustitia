@@ -173,5 +173,21 @@ class IustitiaClientMod : ClientModInitializer {
                 try { dev.iustitia.chathist.ChatHistory.onLeave() } catch (_: Throwable) {}
             }
         } catch (_: Throwable) {}
+
+        // Exit-path data integrity: flush every debounced writer synchronously on client stop
+        // so a config edit / note / flag-history write made right before quitting is not lost.
+        // The writers' own JVM shutdown hooks remain as the last-resort path (/kill, crash,
+        // launcher-kill) — this is the documented, normal-exit one (previously the docs
+        // claimed this wiring existed but nothing registered it). Order doesn't matter; all
+        // three are independent and fail-open.
+        try {
+            net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents.CLIENT_STOPPING.register(
+                net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents.ClientStopping {
+                    try { ConfigManager.flush() } catch (_: Throwable) {}
+                    try { dev.iustitia.persistence.PersistenceManager.flush() } catch (_: Throwable) {}
+                    try { dev.iustitia.chathist.ChatHistory.flush() } catch (_: Throwable) {}
+                }
+            )
+        } catch (_: Throwable) {}
     }
 }

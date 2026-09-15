@@ -48,7 +48,7 @@ class TranscriptPanelScreen(
             context.drawTextWithShadow(tr, Text.literal("§7tier §f${tier.name} §7[$score]"), x0 + 4, y, WHITE); y += 13
             // session taps
             val st = SessionStats.stats(uuid)
-            context.drawTextWithShadow(tr, Text.literal("§7swing §f${st.swings} §7hit §f${st.hits} §7vel §f${st.velocity}"), x0 + 4, y, WHITE); y += 11
+            context.drawTextWithShadow(tr, Text.literal("§7swing §f${st.swings.get()} §7hit §f${st.hits.get()} §7vel §f${st.velocity.get()}"), x0 + 4, y, WHITE); y += 11
             context.drawTextWithShadow(tr, Text.literal("§7alerts §f${FlagHistory.sessionAlertCount(uuid)} §7flags §f${FlagHistory.flagCounts(uuid).values.sum()}"), x0 + 4, y, WHITE); y += 13
             // note if any
             val note = NoteStore.get(uuid)

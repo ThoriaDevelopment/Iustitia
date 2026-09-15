@@ -136,6 +136,13 @@ object Iustitia {
         try {
             EntityTrackerManager.onDespawn { uuid ->
                 for (c in checks) { try { c.purge(uuid) } catch (_: Throwable) {} }
+                // Same purge path, second leaker: [dev.iustitia.alert.AlertManager] keeps a
+                // per-(player, check) throttle key FOREVER once a player alerts — despawned
+                // players never release theirs, so a hub session accumulates one map entry
+                // per (unique joiner × alerted check). clearPlayer drops the throttle keys +
+                // any in-flight batch, which is exactly the despawn semantics we want (a
+                // rejoining player starts fresh; join-grace re-applies anyway).
+                try { dev.iustitia.alert.AlertManager.clearPlayer(uuid) } catch (_: Throwable) {}
             }
         } catch (_: Throwable) {}
         // individual checks self-subscribe to the bus in their constructors.

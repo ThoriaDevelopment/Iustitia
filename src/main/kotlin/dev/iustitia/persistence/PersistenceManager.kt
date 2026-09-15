@@ -8,7 +8,6 @@ import com.google.gson.JsonParser
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
 import net.fabricmc.loader.api.FabricLoader
-import net.minecraft.client.MinecraftClient
 import net.minecraft.util.math.Vec3d
 import java.nio.file.Files
 import java.nio.file.Path
@@ -26,7 +25,8 @@ private const val DEBOUNCE_MS = 500L
  * Notes + history are saved through a debounced daemon writer (mirroring [ConfigManager]'s pattern):
  * a burst of edits coalesces into one write after a [DEBOUNCE_MS] quiet period, and a JVM shutdown
  * hook forces a final [flush] so a change made right before quit is not lost. Snapshots + exports
- * are tiny one-off files written immediately (off the tick thread via [MinecraftClient.execute]).
+ * are tiny one-off files written synchronously + atomically (staged temp + move) with an honest
+ * success result the command layer can report.
  * All paths fail-open: a corrupt file falls back to defaults and is overwritten on the next save;
  * a write error never crashes the client or the tick pipeline. **Local-only** — nothing is sent to
  * the server. See the plan's Part 0b.
@@ -245,30 +245,31 @@ object PersistenceManager {
         else { Files.createDirectories(snapshotsDir); snapshotsDir.toFile() }
     } catch (_: Throwable) { null }
 
-    /** Write `snapshots/<tick>_<name>.json`. Called from the client thread (snapshot keybind). */
-    fun saveSnapshot(name: String, json: String) {
-        if (!enabled) return
-        MinecraftClient.getInstance().execute {
-            try {
-                Files.createDirectories(snapshotsDir)
-                val tick = dev.iustitia.Iustitia.tickCounter
-                val safe = name.replace(Regex("[^A-Za-z0-9_.-]"), "_")
-                Files.writeString(snapshotsDir.resolve("${tick}_${safe}.json"), json)
-            } catch (_: Throwable) {}
-        }
+    /** Write `snapshots/<tick>_<name>.json` ATOMICALLY (staged temp + move — a crash can't leave a
+     *  half-written snapshot). Returns true iff the file landed, so the caller can report a disk
+     *  failure honestly instead of an unconditional success. The write is synchronous on the
+     *  caller's thread: these are tiny one-off JSON files (a few KB) called from command handlers
+     *  / the snapshot keybind, and the OLD `MinecraftClient.execute {}` ran inline on the client
+     *  thread anyway (execute on the owning thread is a no-hop direct call) — plus it silently
+     *  no-ops once the client executor shuts down at exit, which a direct write never does. */
+    fun saveSnapshot(name: String, json: String): Boolean {
+        if (!enabled) return false
+        return try {
+            val tick = dev.iustitia.Iustitia.tickCounter
+            val safe = name.replace(Regex("[^A-Za-z0-9_.-]"), "_")
+            dev.iustitia.util.AtomicFiles.write(snapshotsDir.resolve("${tick}_${safe}.json"), json)
+        } catch (_: Throwable) { false }
     }
 
-    /** Write `exports/<kind>_<tick>_<name>.txt`. Called from the client thread. */
-    fun saveExport(kind: String, name: String, text: String) {
-        if (!enabled) return
-        MinecraftClient.getInstance().execute {
-            try {
-                Files.createDirectories(exportsDir)
-                val tick = dev.iustitia.Iustitia.tickCounter
-                val safe = name.replace(Regex("[^A-Za-z0-9_.-]"), "_")
-                Files.writeString(exportsDir.resolve("${kind}_${tick}_${safe}.txt"), text)
-            } catch (_: Throwable) {}
-        }
+    /** Write `exports/<kind>_<tick>_<name>.txt` ATOMICALLY. Returns true iff the file landed (see
+     *  [saveSnapshot] for the synchronous-write rationale). */
+    fun saveExport(kind: String, name: String, text: String): Boolean {
+        if (!enabled) return false
+        return try {
+            val tick = dev.iustitia.Iustitia.tickCounter
+            val safe = name.replace(Regex("[^A-Za-z0-9_.-]"), "_")
+            dev.iustitia.util.AtomicFiles.write(exportsDir.resolve("${kind}_${tick}_${safe}.txt"), text)
+        } catch (_: Throwable) { false }
     }
 
     // ---- debounced writer plumbing ----
@@ -329,10 +330,8 @@ object PersistenceManager {
 
     private fun writeText(path: Path, text: String) {
         synchronized(dataDir) {
-            try {
-                Files.createDirectories(path.parent)
-                Files.writeString(path, text)
-            } catch (_: Throwable) {}
+            // Atomic (staged temp + move): a crash mid-write can't truncate notes/history.
+            dev.iustitia.util.AtomicFiles.write(path, text)
         }
     }
 }

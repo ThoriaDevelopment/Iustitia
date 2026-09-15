@@ -46,13 +46,18 @@ object ClipStore {
     }
 
     /**
-     * Write [window] (+ optional [focus]) to `<name>.iusclip` and return the display name, or null on
-     * any IO/codec error. Called on the client thread (command handler).
+     * Write [window] (+ optional [focus]) to `<name>.iusclip` — staged into `<name>.iusclip.tmp`
+     * first, then atomically moved into place, so a crash mid-write can't leave a corrupt clip
+     * (a `.iusclip` is the one file here big enough for a partial write to be plausible).
+     * Returns the display name, or null on any IO/codec error. Called on the client thread
+     * (command handler).
      */
     fun save(name: String, window: ReplayBuffer.Window, focus: java.util.UUID?): String? = try {
         Files.createDirectories(clipsDir)
         val path = pathFor(name)
-        Files.newOutputStream(path).use { out -> ClipCodec.write(out, window, focus) }
+        val tmp = dev.iustitia.util.AtomicFiles.tmpFor(path)
+        Files.newOutputStream(tmp).use { out -> ClipCodec.write(out, window, focus) }
+        if (!dev.iustitia.util.AtomicFiles.commit(tmp, path)) return null
         path.fileName.toString().removeSuffix(EXT)
     } catch (_: Throwable) { null }
 

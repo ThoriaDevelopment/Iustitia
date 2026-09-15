@@ -71,9 +71,8 @@ object PresetManager {
         if (isBuiltIn(safe)) return false
         return try {
             val p = customPath(safe) ?: return false
-            Files.createDirectories(p.parent)
-            Files.writeString(p, ConfigManager.presetContentJson(ConfigManager.config))
-            true
+            // Atomic (staged temp + move): a crash mid-write can't truncate a preset file.
+            dev.iustitia.util.AtomicFiles.write(p, ConfigManager.presetContentJson(ConfigManager.config))
         } catch (_: Throwable) {
             false
         }

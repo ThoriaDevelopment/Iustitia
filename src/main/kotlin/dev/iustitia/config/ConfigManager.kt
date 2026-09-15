@@ -28,9 +28,14 @@ private const val DEBOUNCE_MS = 350L
  * calls (e.g. dragging a YACL slider fires one per step, or toggling several mutes at
  * once) coalesces into a single write: the writer waits [DEBOUNCE_MS] after the last
  * [save] before flushing, so only the latest snapshot hits disk. [flush] forces any
- * pending write synchronously and is wired to the client-stopping lifecycle event so a
- * pending config change is never lost on exit. All of it is wrapped in try/catch — a
- * config write never crashes the client.
+ * pending write synchronously and is wired to BOTH the client-stopping lifecycle event
+ * ([IustitiaClientMod] registers it — the normal exit path) AND a JVM shutdown hook (the
+ * last-resort path: /kill, crash, launcher-kill — the writer is a daemon, so the JVM won't
+ * wait for it). Stale-write protection: every snapshot carries a monotonic id, and
+ * [writeNow] skips any write whose id is not newer than the last one that landed — so the
+ * writer thread holding an older snapshot can never clobber a [flush] that already wrote a
+ * newer one (see [writtenSeq]). All of it is wrapped in try/catch — a pending config
+ * change is never lost on exit, and a config write never crashes the client.
  */
 object ConfigManager {
 
@@ -51,6 +56,15 @@ object ConfigManager {
     private val queueLock = Object()
     @Volatile private var dirty: Boolean = false
     @Volatile private var pendingJson: String? = null
+    /** Monotonic id of the latest queued snapshot ([save] bumps it every call). Guarded by [queueLock]. */
+    private var saveSeq: Long = 0
+    /** Id of the snapshot currently queued in [pendingJson] (0 when none). Guarded by [queueLock]. */
+    private var pendingSeq: Long = 0
+    /** Id of the newest snapshot that has actually LANDED on disk. Guarded by [writeLock] —
+     *  [writeNow] skips any write whose id is not newer, so a writer thread holding an older
+     *  snapshot (taken before a [flush] grabbed a newer one) can never clobber the flush's
+     *  write after [flush] returned. */
+    @Volatile private var writtenSeq: Long = 0
     @Volatile private var writerStarted: Boolean = false
 
     private val writerThread: Thread by lazy {
@@ -89,6 +103,8 @@ object ConfigManager {
             val json = gson.toJson(toJson(config))
             synchronized(queueLock) {
                 pendingJson = json
+                saveSeq++
+                pendingSeq = saveSeq
                 dirty = true
                 if (!writerStarted) {
                     writerStarted = true
@@ -114,14 +130,16 @@ object ConfigManager {
     fun flush() {
         try {
             val snapshot: String?
+            var snapSeq = 0L
             synchronized(queueLock) {
                 snapshot = pendingJson
+                snapSeq = pendingSeq
                 if (snapshot != null) {
                     pendingJson = null
                     dirty = false
                 }
             }
-            if (snapshot != null) writeNow(snapshot)
+            if (snapshot != null) writeNow(snapshot, snapSeq)
         } catch (_: Throwable) {
             // best-effort
         }
@@ -142,29 +160,33 @@ object ConfigManager {
                 }
                 Thread.sleep(DEBOUNCE_MS)
                 val snapshot: String?
+                var snapSeq = 0L
                 synchronized(queueLock) {
                     snapshot = pendingJson
+                    snapSeq = pendingSeq
                     if (snapshot != null) {
                         pendingJson = null
                         dirty = false
                     }
                 }
-                if (snapshot != null) writeNow(snapshot)
+                if (snapshot != null) writeNow(snapshot, snapSeq)
             } catch (_: Throwable) {
                 // interrupted / etc — clear and continue; a daemon writer must never die
             }
         }
     }
 
-    /** Performs the actual file write, serialized on [writeLock] so [flush] + writer can't race. */
-    private fun writeNow(json: String) {
+    /** Performs the actual file write, serialized on [writeLock] so [flush] + writer can't
+     *  interleave. [seq] is the snapshot's monotonic id (see [saveSeq]) — a write whose id is
+     *  not newer than [writtenSeq] is SKIPPED: the caller holding that snapshot is stale
+     *  relative to one that already landed (the flush-after-writer-snapshot race), and
+     *  writing it would silently regress the file. */
+    private fun writeNow(json: String, seq: Long) {
         synchronized(writeLock) {
-            try {
-                Files.createDirectories(path.parent)
-                Files.writeString(path, json)
-            } catch (_: Throwable) {
-                // best-effort; never crash the writer thread over a config write
-            }
+            if (seq <= writtenSeq) return
+            // AtomicFiles.write stages <path>.tmp and atomically moves it into place (and
+            // creates parent dirs itself) — a crash mid-write can no longer truncate the config.
+            if (dev.iustitia.util.AtomicFiles.write(path, json)) writtenSeq = seq
         }
     }
 

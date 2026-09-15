@@ -182,7 +182,10 @@ object RenderProfiler {
         sb.appendLine()
         sb.appendLine("--- Top 40 pairs (iustitia_method -> current top frame) ---")
         appendTop(sb, pairs, 40, iustitiaSamples)
-        Files.writeString(path, sb.toString())
+        // Atomic (staged temp + move): a crash mid-write can't leave a half report; the
+        // previous report (if any) stays intact. Returns the path regardless so the caller
+        // can print it — a failed write logs through [dev.iustitia.util.AtomicFiles]'s false.
+        if (!dev.iustitia.util.AtomicFiles.write(path, sb.toString())) return "(write failed)"
         return path.toString()
     }
 

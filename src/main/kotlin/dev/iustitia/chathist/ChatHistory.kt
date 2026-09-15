@@ -179,15 +179,37 @@ object ChatHistory {
         } catch (_: Throwable) {}
     }
 
-    /** Flush (persist ON) or drop (persist OFF) the current server's history on disconnect. Fail-open. */
+    /** Flush (persist ON) or drop (persist OFF) the current server's history on disconnect, and
+     *  evict EVERY in-memory bucket — rows for other servers are unreachable until rejoin (all
+     *  read paths key off [currentKey], and onJoin reloads from disk), so keeping them is a
+     *  session-long leak for a server-hopper. With persist ON the current server's rows are
+     *  serialized HERE (client thread — [byServer] is about to be cleared) and the file write is
+     *  handed to the shared daemon IO thread ([dev.iustitia.util.AtomicFiles.io]) so a large
+     *  history (up to [MAX_ROWS] rows) never blocks the disconnect path. The redundant
+     *  debounced-writer poke the old code did after the synchronous write is gone — this write
+     *  already carries the newest rows. Fail-open. */
     fun onLeave() {
         try {
-            if (persist) { writeNow(currentKey); schedule() }
-            else synchronized(byServer) { byServer.remove(currentKey) }
+            if (persist) {
+                val key = currentKey
+                val text = synchronized(byServer) { byServer[key] }?.let { list ->
+                    synchronized(list) { list.joinToString("") { gson.toJson(toJson(it)) + "\n" } }
+                }
+                if (text != null) {
+                    val path = fileFor(key)
+                    dev.iustitia.util.AtomicFiles.io {
+                        // Atomic (staged temp + move): a crash mid-write can't truncate history.
+                        dev.iustitia.util.AtomicFiles.write(path, text)
+                    }
+                }
+            }
+            synchronized(byServer) { byServer.clear() }
         } catch (_: Throwable) {}
     }
 
-    /** Force any pending debounced write (shutdown hook). */
+    /** Force any pending debounced write (client-stopping hook / JVM shutdown hook). Synchronous
+     *  on purpose: the daemon writer + IO executor are killed at JVM exit, so the shutdown path
+     *  must write on the calling thread. */
     fun flush() {
         try {
             synchronized(queueLock) { if (!dirty) return }
@@ -252,10 +274,10 @@ object ChatHistory {
             val list = synchronized(byServer) { byServer[key] } ?: return
             val path = fileFor(key)
             synchronized(chathistDir) {
-                Files.createDirectories(path.parent)
                 val sb = StringBuilder()
                 synchronized(list) { list.forEach { sb.append(gson.toJson(toJson(it))).append('\n') } }
-                Files.writeString(path, sb.toString())
+                // Atomic (staged temp + move): a crash mid-write can't truncate history.jsonl.
+                dev.iustitia.util.AtomicFiles.write(path, sb.toString())
             }
         } catch (_: Throwable) {}
     }

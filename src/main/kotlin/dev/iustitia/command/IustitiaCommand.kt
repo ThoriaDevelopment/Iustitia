@@ -934,7 +934,13 @@ object IustitiaCommand {
         val text = try { reportText(uuid, name) } catch (_: Throwable) {
             send(ctx, "$tag §cfailed to build transcript for §f$name§7."); return 0 }
         send(ctx, text)
-        try { if (ConfigManager.config.persistenceEnabled) PersistenceManager.saveExport("transcript", name, text) } catch (_: Throwable) {}
+        // Honest save result: with persistence on, a disk error in the export write is
+        // reported instead of hiding behind the unconditional "printed" line (the export
+        // file is optional, but when it's promised it must land or say so).
+        if (try { ConfigManager.config.persistenceEnabled } catch (_: Throwable) { false }) {
+            val exported = try { PersistenceManager.saveExport("transcript", name, text) } catch (_: Throwable) { false }
+            if (!exported) send(ctx, "$tag §ctranscript export failed (disk error) — chat still has the full text.")
+        }
         send(ctx, "$tag §7transcript for §f$name§7 printed §8(paste into a report; same as §f/ius report $name text§7)")
         // If the transcript side panel is enabled in config, also pop it open for this player —
         // same surface the keybind / `/ius transcript panel` use, so the chat print + the live panel
@@ -956,7 +962,7 @@ object IustitiaCommand {
         val score = FlagHistory.confidenceScore(uuid)
         val st = SessionStats.stats(uuid)
         sb.append("=== Iustitia transcript: $name (tier ${tier.label} [$score]) ===\n")
-        sb.append("session: swings=${st.swings} hits=${st.hits} velocity=${st.velocity}\n")
+        sb.append("session: swings=${st.swings.get()} hits=${st.hits.get()} velocity=${st.velocity.get()}\n")
         sb.append("alerts=${FlagHistory.sessionAlertCount(uuid)} flags=${FlagHistory.flagCounts(uuid).values.sum()}")
         FlagHistory.topCheck(uuid)?.let { sb.append(" top=$it") }
         sb.append("\n")
@@ -1021,7 +1027,11 @@ object IustitiaCommand {
         val tier = FlagHistory.tierFor(uuid)
         val line = "$tag §f$name §7(last ${window / 20}s): §e${parts.joinToString(", ")} §7| Tier: §f${tier.label} §7[${FlagHistory.confidenceScore(uuid)}]"
         send(ctx, line)
-        try { if (ConfigManager.config.persistenceEnabled) PersistenceManager.saveExport("evidence", name, line) } catch (_: Throwable) {}
+        // Honest save result (mirrors the transcript export path).
+        if (try { ConfigManager.config.persistenceEnabled } catch (_: Throwable) { false }) {
+            val exported = try { PersistenceManager.saveExport("evidence", name, line) } catch (_: Throwable) { false }
+            if (!exported) send(ctx, "$tag §cevidence export failed (disk error) — chat still has the line.")
+        }
         return 1
     }
 
