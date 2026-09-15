@@ -186,9 +186,13 @@ abstract class Check {
             // fabric.selftest system property so this is a no-op read in normal play — the
             // property is only set by the gametest JVM. Fail-open, throws nothing, changes
             // no detection behavior.
+            //
+            // Carries `label` and `tick` as well as the id: the harness counts alert *episodes*
+            // per (check, label) so a scenario can assert a check re-armed and alerted a second
+            // time. Both are already in scope here — this is the one recordFlag call site.
             try {
                 if (SelfTestHooks.isEnabled()) {
-                    SelfTestHooks.recordFlag(tp.uuid, id, ctx.vl, ctx.vl > setbackVL)
+                    SelfTestHooks.recordFlag(tp.uuid, id, label, ctx.vl, ctx.vl > setbackVL, tick)
                 }
             } catch (_: Throwable) {}
             if (ctx.vl > setbackVL) {

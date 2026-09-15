@@ -317,6 +317,22 @@ object SelfTest {
         }
     }
 
+    /**
+     * A recurrence assertion: [checkId] must produce at least [atLeast] distinct alert **episodes**
+     * for [bot] under [label].
+     *
+     * Kept as its own type rather than a fourth element on the expectation triple because
+     * `expectations` is read positionally and serialized into the report as `Map<String, Boolean>`,
+     * which `scripts/live_selftest.py` consumes for `--coverage` and `--matrix`. Widening it would
+     * break a published JSON contract in three python paths for no gain.
+     */
+    internal data class AlertCountExpectation(
+        val bot: UUID,
+        val checkId: String,
+        val label: String,
+        val atLeast: Int,
+    )
+
     /** Builder DSL for a scenario body. */
     class ScenarioBuilder internal constructor(
         private val ctx: ClientGameTestContext,
@@ -324,6 +340,7 @@ object SelfTest {
         internal val bots = mutableListOf<BotHandle>()
         internal val tickActions = mutableListOf<Pair<Int, TickAction>>() // (everyN, action)
         internal val expectations = mutableListOf<Triple<UUID, String, Boolean>>() // bot, check, mustAlert
+        internal val alertCounts = mutableListOf<AlertCountExpectation>() // bot, check, label, atLeast
         internal val knownOpen = mutableListOf<Triple<UUID, String, String>>() // bot, check, note
         internal val documentedFp = mutableListOf<Triple<UUID, String, String>>() // bot, check, note
         internal val driveGaps = mutableListOf<Triple<UUID, String, String>>() // bot, check, note
@@ -390,6 +407,30 @@ object SelfTest {
         /** Declare that every check with an id in [checkIds] must stay silent for [bot]. */
         fun expectQuiet(bot: BotHandle, checkIds: Collection<String>) {
             for (c in checkIds) expect(bot, c, mustAlert = false)
+        }
+
+        /**
+         * Assert **recurrence**: [checkId] must cross its setback in at least [atLeast] distinct
+         * alert episodes under [label].
+         *
+         * The verdict assertions ([expect] / [expectQuiet]) only say *whether* a check ever fired, so
+         * they cannot see a check whose episode latch never re-arms — the first episode always
+         * satisfies them and the second is invisible. This is the assertion for that class of bug:
+         * drive the pattern, break it, drive it again, and require two.
+         *
+         * What it measures is the alert *event* recurring, not a VL number or a latch bit — a check
+         * is free to re-arm however it likes. Two crossings closer than
+         * [SelfTestHooks.SAME_EPISODE_TICKS] count as one, because a slow-decay VL rings above the
+         * setback for tens of ticks after a single `flagEpisode`. Drive the second episode far
+         * enough from the first that the gap exceeds that window.
+         *
+         * Also registers the plain `mustAlert` expectation, so `missed`, `--coverage` and `--matrix`
+         * keep working and a count failure is never mistaken for "check never fired".
+         */
+        fun expectAlertCount(bot: BotHandle, checkId: String, label: String, atLeast: Int) {
+            require(atLeast >= 2) { "use expect(bot, checkId, mustAlert = true) for a single alert" }
+            expectations.add(Triple(bot.uuid, checkId, true))
+            alertCounts.add(AlertCountExpectation(bot.uuid, checkId, label, atLeast))
         }
 
         /**
@@ -613,11 +654,14 @@ object SelfTest {
                     source = scenario.source,
                     tags = scenario.tags,
                     expectations = builder.expectations.associate { it.second to it.third },
-                    passed = error == null && result.missed.isEmpty() && result.falsePositives.isEmpty(),
+                    passed = error == null && result.missed.isEmpty() && result.falsePositives.isEmpty() &&
+                        result.alertCountMisses.isEmpty(),
                     vl = result.vl,
                     alertedChecks = result.alerted,
                     missedChecks = result.missed,
                     falsePositives = result.falsePositives,
+                    alertCounts = result.alertCounts,
+                    alertCountMisses = result.alertCountMisses,
                     knownOpen = result.knownOpen,
                     driveGaps = result.driveGaps,
                     durationMs = duration,
@@ -743,7 +787,28 @@ object SelfTest {
             val reached = if (peak > 0.0) "reacted (peakVL=${"%.2f".format(peak)})" else "never logged a flag"
             driveGaps.add("DRIVE GAP: '$checkId' $reached. Note: $note")
         }
-        return EvalResult(vl, alerted, missed.toSet(), fps.toSet(), knownOpen, driveGaps)
+        // Recurrence assertions: did the check alert MORE THAN ONCE? A check whose episode latch
+        // never re-arms passes every verdict assertion above (episode 1 satisfies them) while being
+        // effectively one-shot per session, so this bucket is what makes that visible. A miss here is
+        // a hard failure, like `missed` -- unlike knownOpen/documentedFp it is not a documented
+        // finding, it is a regression test that did not pass.
+        val countMisses = mutableListOf<String>()
+        val observedCounts = mutableMapOf<String, Int>()
+        for (e in builder.alertCounts) {
+            val observed = SelfTestHooks.alertCountFor(e.bot, e.checkId, e.label)
+            val peak = SelfTestHooks.peakVlFor(e.bot)[e.checkId] ?: 0.0
+            if (peak > (vl[e.checkId] ?: 0.0)) vl[e.checkId] = peak
+            observedCounts["${e.checkId}[${e.label}]"] = observed
+            if (observed < e.atLeast) {
+                countMisses.add(
+                    "ALERT COUNT: '${e.checkId}' [${e.label}] crossed its setback $observed time(s), " +
+                        "expected >= ${e.atLeast} (peakVL=${"%.2f".format(peak)}). " +
+                        "The check alerted but never RE-ARMED; the episode latch is still held from the first episode."
+                )
+            }
+        }
+
+        return EvalResult(vl, alerted, missed.toSet(), fps.toSet(), knownOpen, driveGaps, observedCounts, countMisses)
     }
 
     private data class EvalResult(
@@ -753,6 +818,10 @@ object SelfTest {
         val falsePositives: Set<String>,
         val knownOpen: List<String>,
         val driveGaps: List<String>,
+        /** Observed alert episodes, keyed `checkId[label]`. */
+        val alertCounts: Map<String, Int>,
+        /** Recurrence assertions that did not reach their required episode count. */
+        val alertCountMisses: List<String>,
     )
 
     /**
@@ -801,6 +870,7 @@ object SelfTest {
             reports.add(r)
             val tag = if (r.passed) "PASS" else "FAIL"
             println("[iustitia-selftest] $tag ${s.pass}/${s.name} missed=${r.missedChecks} fps=${r.falsePositives} err=${r.error}")
+            for (entry in r.alertCountMisses) println("[iustitia-selftest]   $entry")
             for (entry in r.knownOpen) println("[iustitia-selftest]   $entry")
             for (entry in r.driveGaps) println("[iustitia-selftest]   $entry")
             suiteFatal?.let { fatal ->

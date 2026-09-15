@@ -39,6 +39,19 @@ data class ScenarioReport(
     /** Check ids the scenario expected to stay silent that DID alert. */
     val falsePositives: Set<String>,
     /**
+     * Alert **episodes** observed per `checkId[label]` key. Records recurrence, which
+     * [alertedChecks] cannot: a check whose episode latch never re-arms still appears there once.
+     */
+    val alertCounts: Map<String, Int> = emptyMap(),
+    /**
+     * Recurrence assertions that did not reach their required episode count. A hard failure
+     * (these fold into [passed]), unlike [knownOpen] / [driveGaps] — a scenario declared that a
+     * check must re-arm, and it did not. Each line carries the observed count, the required count
+     * and the peak VL so a reviewer can tell an un-re-arming latch from an under-driven second
+     * episode.
+     */
+    val alertCountMisses: List<String> = emptyList(),
+    /**
      * Known-open findings: expectations that are deliberately not part of pass/fail because
      * the detector currently cannot satisfy them (a documented unreachable setback, a
      * sub-threshold tuning gap). Reported on EVERY run so the gap stays visible in pull
@@ -76,6 +89,8 @@ data class ScenarioReport(
         "alertedChecks" to alertedChecks.sorted(),
         "missedChecks" to missedChecks.sorted(),
         "falsePositives" to falsePositives.sorted(),
+        "alertCounts" to alertCounts,
+        "alertCountMisses" to alertCountMisses,
         "knownOpen" to knownOpen,
         "driveGaps" to driveGaps,
         "durationMs" to durationMs,
@@ -98,6 +113,10 @@ data class ScenarioReport(
             alertedChecks = (m["alertedChecks"] as? List<*>)?.filterIsInstance<String>()?.toSet() ?: emptySet(),
             missedChecks = (m["missedChecks"] as? List<*>)?.filterIsInstance<String>()?.toSet() ?: emptySet(),
             falsePositives = (m["falsePositives"] as? List<*>)?.filterIsInstance<String>()?.toSet() ?: emptySet(),
+            alertCounts = (m["alertCounts"] as? Map<*, *>)?.entries?.associate {
+                (it.key as? String ?: "?") to ((it.value as? Number)?.toInt() ?: 0)
+            } ?: emptyMap(),
+            alertCountMisses = (m["alertCountMisses"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
             knownOpen = (m["knownOpen"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
             driveGaps = (m["driveGaps"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
             durationMs = (m["durationMs"] as? Number)?.toLong() ?: 0L,

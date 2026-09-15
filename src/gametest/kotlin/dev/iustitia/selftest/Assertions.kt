@@ -70,4 +70,26 @@ class Assertions(private val scenarioName: String) {
             )
         }
     }
+
+    /**
+     * The bot must have alerted [checkId] at least [atLeast] **distinct episodes** under [label].
+     *
+     * The twin of `ScenarioBuilder.expectAlertCount` for scenarios that assert inside their own body
+     * rather than at the end. See that method for what separates two episodes and why recurrence
+     * needs its own verb: [expectAlert] cannot see a check whose episode latch never re-arms.
+     */
+    fun expectAlertCount(bot: BotHandle, checkId: String, label: String, atLeast: Int = 2) {
+        val observed = SelfTestHooks.alertCountFor(bot.uuid, checkId, label)
+        if (observed < atLeast) {
+            val peak = SelfTestHooks.peakVlFor(bot.uuid)[checkId]
+            throw ScenarioFailed(
+                "NO RE-ARM in $scenarioName: bot '${bot.name}' alerted '$checkId' [$label] " +
+                    "$observed time(s), expected >= $atLeast (peakVL=$peak).\n" +
+                    "  alerted: ${SelfTestHooks.alertedChecksFor(bot.uuid).sorted()}\n" +
+                    "  The check fired but never re-armed -- its episode latch is still held from the " +
+                    "first episode. If the second episode was under-driven, lengthen or strengthen it " +
+                    "before touching the detector."
+            )
+        }
+    }
 }

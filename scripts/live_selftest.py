@@ -260,6 +260,8 @@ def write_manifest(manifest: dict, reports: list[dict], replace: bool = False) -
         row["expectations"] = r.get("expectations", {})
         row["knownOpen"] = r.get("knownOpen", [])
         row["driveGaps"] = r.get("driveGaps", [])
+        row["alertCounts"] = r.get("alertCounts", {})
+        row["alertCountMisses"] = r.get("alertCountMisses", [])
         row["passed"] = r.get("passed")
 
     checks = manifest.get("checks") or prior.get("checks") or []
@@ -502,6 +504,14 @@ def summarise(reports: list[dict], require_multi_source: int, verbose: bool) -> 
     for r in reports:
         for line in r.get("driveGaps") or []:
             harness_gaps.append(f"[{r.get('scenario')}] {line}")
+    # Recurrence failures: a check alerted but never re-armed, so the second episode was swallowed.
+    # A REAL failure -- it folds into `passed`, so the exit code already reflects it -- but it gets
+    # its own section because a count-only failure leaves missedChecks empty, which would otherwise
+    # print a FAIL row with a blank detail column and no explanation anywhere.
+    recurrence: list[str] = []
+    for r in reports:
+        for line in r.get("alertCountMisses") or []:
+            recurrence.append(f"[{r.get('scenario')}] {line}")
 
     print()
     print("=" * 78)
@@ -516,6 +526,8 @@ def summarise(reports: list[dict], require_multi_source: int, verbose: bool) -> 
             detail = f" BYPASS={r['missedChecks']}"
         elif r.get("falsePositives"):
             detail = f" FALSE-POSITIVE={r['falsePositives']}"
+        elif r.get("alertCountMisses"):
+            detail = f" ALERT-COUNT={r.get('alertCounts')}"
         elif verbose and r.get("vl"):
             peaks = ", ".join(f"{k}={v:.1f}" for k, v in sorted(r["vl"].items())[:6])
             detail = f" peakVL({peaks})"
@@ -533,6 +545,11 @@ def summarise(reports: list[dict], require_multi_source: int, verbose: bool) -> 
         print(f"  harness gaps ({len(harness_gaps)}): the drive did not reach the check, so the")
         print("  alert assertion is not established either way (extend the drive; see the docs):")
         for line in harness_gaps:
+            print(f"    - {line}")
+    if recurrence:
+        print(f"  recurrence failures ({len(recurrence)}): the check alerted but never re-armed, so")
+        print("  its episode latch is still held from the first episode:")
+        for line in recurrence:
             print(f"    - {line}")
     if documented_fp:
         print()
@@ -557,6 +574,8 @@ def write_markdown(reports: list[dict], verdict: int, findings: list[str]) -> No
             notes = f"BYPASS: {', '.join(r['missedChecks'])}"
         elif r.get("falsePositives"):
             notes = f"FALSE POSITIVE: {', '.join(r['falsePositives'])}"
+        elif r.get("alertCountMisses"):
+            notes = "; ".join(r["alertCountMisses"])
         elif r.get("vl"):
             notes = ", ".join(f"{k}={v:.1f}" for k, v in sorted(r["vl"].items())[:5])
         lines.append(
@@ -621,6 +640,8 @@ def main() -> int:
                     "alertedChecks": [],
                     "missedChecks": [],
                     "falsePositives": [],
+                    "alertCounts": {},
+                    "alertCountMisses": [],
                     "knownOpen": [],
                     "durationMs": 0,
                     "error": None,
