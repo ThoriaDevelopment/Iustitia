@@ -24,12 +24,18 @@ import java.util.concurrent.ConcurrentHashMap
  * event; missed air-swings have no hurt → no event; legit single-target hits yield
  * exactly one event per (attacker, victim) thanks to the 2-tick dedup (the three hurt
  * channels — status/damage/tilt — all fire for one real hit). A correlated swing is
- * CONSUMED, so one swing correlates with at most one hurt — a single swing can never
- * forge events against several victims inside its window.
+ * SPENT: it can still correlate further hurts AT ITS OWN TICK (a multi-aura is one
+ * swing followed by several victims being hurt the same tick), but never a hurt on a
+ * later tick — so one swing can never forge a steady stream of events across its window.
  */
 object AttackInference {
 
-    private data class SwingSample(val tick: Int, val nano: Long)
+    private data class SwingSample(val tick: Int, val nano: Long) {
+        /** Tick this sample already correlated, or -1 while unspent. A spent sample can still
+         *  match hurts at [spentTick] itself (a multi-aura is ONE swing + N same-tick hurts)
+         *  but never another tick — cross-tick forging stays impossible. */
+        var spentTick: Int = -1
+    }
 
     private val pendingSwings = ConcurrentHashMap<UUID, MutableList<SwingSample>>()
     private val lastEmit = ConcurrentHashMap<UUID, MutableMap<UUID, Int>>() // attacker -> (victim -> tick)
@@ -89,11 +95,13 @@ object AttackInference {
             val tp = EntityTrackerManager.get(attacker) ?: continue
             val d = tp.pos.distanceTo(victimPos)
             if (d > 8.0) continue
-            // any swing within the window?
+            // any swing within the window, unspent or spent at this same tick?
             var matchedSample: SwingSample? = null
             synchronized(samples) {
                 for (s in samples) {
-                    if (s.tick in (h.tick - back)..(h.tick + fwd)) {
+                    if (s.tick in (h.tick - back)..(h.tick + fwd) &&
+                        (s.spentTick == -1 || s.spentTick == h.tick)
+                    ) {
                         matchedSample = s
                         break
                     }
@@ -104,15 +112,15 @@ object AttackInference {
         }
 
         val a = best ?: return
-        // Consume the matched swing: a swing correlates with at most ONE hurt, so a single
-        // swing can no longer forge AttackEvents against multiple victims inside its window
-        // (the dedup below is per-(attacker,victim), so without consumption one swing could
-        // attribute attacks the player never made to several bystanders). Losing candidates'
-        // swings are left in place — only the winning correlation spends its swing. Removal
-        // happens before the dedup return so a duplicate hurt channel (status/damage/tilt all
-        // fire for one real hit) doesn't double-spend on the second channel.
+        // Spend the matched swing: stamp it with this hurt's tick so it can still correlate
+        // further hurts AT THE SAME TICK (a multi-aura is one swing + N same-tick victims —
+        // removing the sample entirely would silence victims 2..N and break multiTarget) but
+        // never a hurt on a later tick (cross-tick forging stays impossible). Stamping happens
+        // before the dedup return so a duplicate hurt channel (status/damage/tilt all fire for
+        // one real hit) doesn't advance the spend on the second channel. Losing candidates'
+        // swings are left in place — only the winning correlation spends its swing.
         bestSample?.let { ms ->
-            pendingSwings[a]?.let { list -> synchronized(list) { list.remove(ms) } }
+            pendingSwings[a]?.let { list -> synchronized(list) { ms.spentTick = h.tick } }
         }
         // dedup: at most one AttackEvent per (attacker, victim) per 2 ticks. The watermark is
         // advanced ONLY when an event is actually emitted: the three hurt channels
