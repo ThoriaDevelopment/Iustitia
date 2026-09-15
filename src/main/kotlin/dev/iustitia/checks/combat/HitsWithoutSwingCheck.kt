@@ -72,23 +72,38 @@ class HitsWithoutSwingCheck : Check() {
             // allow a small either-side window for packet ordering.
             val swung = actx.lastSwingTick != Int.MIN_VALUE &&
                 tick - actx.lastSwingTick in -SWING_WINDOW..SWING_WINDOW
+            // A gap longer than EPISODE ends the episode and re-arms the latch. This MUST run
+            // first, and it is the only place the quiet period is observable: the check is
+            // event-driven off HurtSignal, so it never sees a quiet tick -- the re-arm has to
+            // happen on the next hurt.
+            //
+            // The previous form tested `tick - actx.lastNoSwingTick` AFTER writing
+            // `actx.lastNoSwingTick = tick` on the no-swing path, so on a no-swing hurt it
+            // evaluated `tick - tick > EPISODE` -- false, always. It was reachable only on a hurt
+            // that HAD a swing in the window (which skips the write). Combined with the old
+            // caller-side `active` flag never being cleared on that same path, the episode latch
+            // was permanent: one alert per session, and the first hit of every later episode
+            // swallowed.
+            if (tick - actx.lastNoSwingTick > EPISODE) {
+                actx.noSwingCount = 0
+                rearmEpisode(actx, false)
+            }
             if (!swung) {
                 actx.noSwingCount++
                 actx.lastNoSwingTick = tick
-                val need = cfg.threshold.toInt().coerceAtLeast(1)
-                if (actx.noSwingCount >= need && !actx.active) {
-                    actx.active = true
-                    flagEpisode(attacker, actx, "HitsWithoutSwing", tick, Evidence(
-                        subLabel = "no-swing-attack", measurement = actx.noSwingCount.toDouble(),
-                        threshold = need.toDouble(), pos = attacker.pos, victim = sig.victim,
-                        extra = "src=${sig.source}"))
-                }
             }
-            // Re-arm the transition gate + reset the episode after a quiet period.
-            if (actx.active && tick - actx.lastNoSwingTick > EPISODE) {
-                actx.active = false
-                actx.noSwingCount = 0
+            val need = cfg.threshold.toInt().coerceAtLeast(1)
+            val sustainedNow = actx.noSwingCount >= need
+            if (sustainedNow) {
+                // flagEpisode owns the one-per-episode latch (ctx.episodeActive) and sets it
+                // itself; setting any caller-side flag first would consume the episode with no
+                // flag -- see [Check.flagEpisode]'s KDoc.
+                flagEpisode(attacker, actx, "HitsWithoutSwing", tick, Evidence(
+                    subLabel = "no-swing-attack", measurement = actx.noSwingCount.toDouble(),
+                    threshold = need.toDouble(), pos = attacker.pos, victim = sig.victim,
+                    extra = "src=${sig.source}"))
             }
+            rearmEpisode(actx, sustainedNow)
         } catch (_: Throwable) {}
     }
 
@@ -128,10 +143,8 @@ class HitsWithoutSwingCheck : Check() {
         var lastSwingTick: Int = Int.MIN_VALUE
         /** No-swing hurts attributed to this attacker in the current episode. */
         var noSwingCount: Int = 0
-        /** Tick of the last no-swing hurt (transition-gate re-arm + episode reset). */
+        /** Tick of the last no-swing hurt (episode reset + re-arm, see [onHurt]). */
         var lastNoSwingTick: Int = -10000
-        /** Transition gate: true once [threshold] no-swing hurts fired this episode (one flag/episode). */
-        var active: Boolean = false
     }
 
     companion object {

@@ -177,6 +177,7 @@ class CheatReach : SelfTest.Scenario("cheat-reach", "CHEAT") {
 | `bot.velocity(vx, vy, vz)` | Knockback impulse |
 | `bot.speedEffect(added, amplifier)` | Speed effect add/remove (cap-raise path) |
 | `b.expect(bot, checkId, mustAlert)` | The pass expectation for a check |
+| `b.expectAlertCount(bot, checkId, label, atLeast)` | The **recurrence** expectation: the check must produce that many distinct alert **episodes** under `label`. Crossings less than 30 ticks apart count as one episode. This is the only assertion that can see an episode latch which never re-arms (see §4). |
 | `b.everyTick(everyN) { … }` | Per-tick (or every-N-tick) script |
 | `b.runFor(ticks)` | Advance the world; assertions evaluate afterwards |
 
@@ -203,6 +204,15 @@ or clips. It is part of the definition of done for those areas.
    change. Guards without a legit scenario are unverified guards.
 5. **Assert the verdict, not the internals.** `expect(bot, "reach", mustAlert = true)`
    is right; asserting a specific VL number is brittle and is not the contract.
+   The one part of the *latch* that is still a contract is **recurrence**: a check that
+   transition-gates one flag per episode (`flagEpisode`) must alert *again* when the
+   pattern genuinely breaks and returns, and `expectAlertCount(bot, checkId, label,
+   atLeast = 2)` asserts exactly that. It is not an internals assertion -- it counts
+   alert *events*, not a latch bit or a VL number -- and it is the only form that can
+   catch a latch which never re-arms, because `expect(mustAlert = true)` is already
+   satisfied by the first episode. Pair it with a drive that actually breaks the
+   pattern in between: a scenario whose two "episodes" are closer together than the
+   check's own episode gate will chain them into one and false-green.
 6. **Name the reference client.** Cheat scenarios pass a `source` (`"Meteor"`,
    `"LiquidBounce"`, …) that must match a real client under `References/Cheats`. An
    unattributed drive is an invented pattern, and `--matrix` labels its row with it.
@@ -257,11 +267,11 @@ two blocks of flag lines names the scenario they belong to.
 catch state) and `--list`. Read them before claiming a check is covered; they are generated from
 the run, this table is maintained by hand.
 
-Last full run: **78 scenarios** (13 legit incl. the smoke test, 57 cheat, 8 replay incl. the two preset gates), all green, run as three shards.
+Last full run: **80 scenarios** (13 legit incl. the smoke test, 59 cheat, 8 replay incl. the two preset gates), all green, run as three shards.
 
 | | count |
 |---|---|
-| cheat scenarios | 57 |
+| cheat scenarios | 59 |
 | distinct reference clients driven | **13** (AvA, Fusion, Grim, Itami, Koid, LionClient, LiquidBounce, Meteor, NCM, Rain-Anticheat, Raven, Slinky, Vape) |
 | checks with an established cheat gate (the drive alerts) | **27 / 36** |
 | checks driven by >=2 clients | 10 (`flyEnvelope` 4, `clickStatistics` 3, `killAura` 3, `reach` 3, `criticals` 2, `multiTarget` 2, `noFallDamage` 2, `speedEnvelope` 2, `sprintHack` 2, `autoBlock` 2) |
@@ -287,7 +297,7 @@ outcomes are deliberately distinct and the runner reports them in separate secti
 | `flyEnvelope` | Fusion, Itami, LiquidBounce, Meteor |
 | `clickStatistics` | Koid, LionClient, Meteor |
 | `speedEnvelope` | Koid, LiquidBounce |
-| `killAura` | LiquidBounce, Raven, Vape (snap, rate-capped drift, and on-target track) |
+| `killAura` | LiquidBounce, Raven, Vape (snap, rate-capped drift, and on-target track; the drift path also carries a **re-arm regression**, `cheat-killaura-drift-rearm-raven`) |
 | `reach` | Koid (3.6 ghost), LiquidBounce (4.2), Vape (6.0) |
 | `criticals` | Meteor, Slinky |
 | `maceSmash` | LiquidBounce |
@@ -305,7 +315,7 @@ outcomes are deliberately distinct and the runner reports them in separate secti
 | `wTap` | Vape |
 | `hitFlick` | Vape |
 | `triggerbot` | Vape |
-| `hitsWithoutSwing` | Slinky |
+| `hitsWithoutSwing` | Slinky (plus a **re-arm regression**, `cheat-hitsswing-rearm-slinky`) |
 | `jumpOnHurt` | Rain-Anticheat |
 | `autoBlock` | Grim, Rain-Anticheat |
 | `aimWrap` | LiquidBounce |
@@ -392,11 +402,11 @@ other flag, so the report stays intact.
 | `aimWrap` | a snap out of a near-still tick must be followed by a still tick to be judged again (0.5 vs 0.5) | **fixed** |
 | `backtrack` | the victim-freeze gate needs >=3 static samples before the snap (<=0.25 vs 0.25) | **fixed** |
 | `noKnockback` | one evaluation per hit, and a hit is at best every few ticks (<=0.25 vs 1.0) | **fixed** |
-| `hitsWithoutSwing` | transition-gated to one flag per 60-tick episode (~0.017 vs 0.5) | **fixed** |
+| `hitsWithoutSwing` | transition-gated to one flag per 60-tick episode (~0.017 vs 0.5) | **fixed**, re-arm regression in §5 |
 | `keepSprint` | one flag per attack, and the attack cadence is ~1 per 12 ticks | **fixed** |
 | `wTap` | per-attack cadence behind a 3-of-4 pattern gate | **fixed** |
 | `jumpOnHurt` | one flag per hurt/reset pair | **fixed** |
-| `killAura` (drift) | one flag per sustained episode by construction | **fixed** |
+| `killAura` (drift) | one flag per sustained episode by construction | **fixed**, re-arm regression in §5 |
 | `triggerbot` | one flag per observed hit behind a 4-of-5 consistency gate | **fixed** |
 | `reach` (ghost tier) | a sub-blatant hit is `ceil((3.3-3.0)*2) = 1.0` of level against 0.5/tick | **fixed** |
 | `stepHeight` | a step's flag needs the previous tick grounded, and a step tick is not grounded | open |

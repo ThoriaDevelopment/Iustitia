@@ -171,6 +171,17 @@ object LagCombatCorrelator {
         lastCombatHurt.remove(uuid)
     }
 
+    /**
+     * Drop every entity's correlation state. Called from [dev.iustitia.Iustitia.resetAll] on a
+     * world / dimension change: both maps are keyed by uuid, so without this a player uuid that
+     * also exists on the next server would inherit the previous server's freeze episode and hurt
+     * stamp, and could match a combat event it has nothing to do with.
+     */
+    fun reset() {
+        episodes.clear()
+        lastCombatHurt.clear()
+    }
+
     private const val FREEZE_MAG2 = 0.0001
     /** AFK guard — matches EntityTrackerManager's mass-freeze tally window. */
     private const val RECENT_MOVE = 20

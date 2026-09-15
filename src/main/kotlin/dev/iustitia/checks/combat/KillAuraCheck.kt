@@ -315,6 +315,11 @@ class KillAuraCheck : Check() {
                 ctx.gcdBuffer = 0
                 ctx.driftRing.clear()
                 ctx.driftActive = false
+                // A position snap snapped the observed rotation too, so this is not a drift
+                // episode. Release the latch as well: clearing only `driftActive` left
+                // `episodeActive` held, so one teleport could silence the drift component for the
+                // rest of the session.
+                rearmEpisode(ctx, false)
                 return
             }
 
@@ -667,8 +672,11 @@ class KillAuraCheck : Check() {
      * Only the *closing* phase is sampled: ticks where the yaw is already on the bearing
      * (|error| < [DRIFT_ON_TARGET_TOL]) are skipped — that's `silent(track)`'s on-target
      * lock-on case, not drift. Drift measures the approach while the target is still off-bore.
-     * Transition-gated (one-shot per drift episode via the [KillAuraContext.driftActive] latch
-     * with hysteresis) so it doesn't re-fire every tick the ratio lingers above 70%.
+     * One-shot per drift episode via [Check.flagEpisode] / [Check.rearmEpisode], with
+     * [KillAuraContext.driftActive] carrying the DRIFT_RATIO / DRIFT_RESET_RATIO hysteresis that
+     * decides when the episode has genuinely stopped. So it does not re-fire every tick the ratio
+     * lingers above 70%, and it can alert again on a later episode -- the latch releases when the
+     * ratio falls back through DRIFT_RESET_RATIO.
      */
     private fun driftComponent(tp: TrackedPlayer, ctx: KillAuraContext, tick: Int,
                                yawChange: Float, yaw: Float, targets: List<TrackedPlayer>) {
@@ -708,20 +716,25 @@ class KillAuraCheck : Check() {
 
         val matches = ctx.driftRing.count { it.second }
         val ratio = matches.toFloat() / ctx.driftRing.size.toFloat()
-        if (ratio >= DRIFT_RATIO) {
-            if (!ctx.driftActive) {
-                ctx.driftActive = true
-                // One-shot at a level that clears setbackVL (see [Check.flagEpisode]): a sustained
-                // combat-ward drift is a *confirmed episode*, and its cadence is one flag per
-                // episode by construction, so the old level-1.5 form sat at 1.5 of the 5.0 needed
-                // forever (measured live: 1 flag in 140 ticks of a constant-lag assist).
-                flagEpisode(tp, ctx, "drift", tick, Evidence(
-                    pos = tp.pos, measurement = ratio.toDouble(), threshold = DRIFT_RATIO.toDouble(),
-                    extra = "match=${matches}/${ctx.driftRing.size}"))
-            }
-        } else if (ratio < DRIFT_RESET_RATIO && ctx.driftActive) {
-            ctx.driftActive = false // hysteresis: re-arm once the drift genuinely stops
+        // Hysteresis: the ratio enters the episode at DRIFT_RATIO and leaves it only below the
+        // lower DRIFT_RESET_RATIO, so a ratio hovering on the boundary does not flap. That
+        // hysteresis verdict IS the "sustained?" input to the episode latch, which owns the
+        // re-arm -- ctx.episodeActive must not be shadowed by a caller-side flag.
+        val sustainedNow = when {
+            ratio >= DRIFT_RATIO -> { ctx.driftActive = true; true }
+            ratio < DRIFT_RESET_RATIO -> { ctx.driftActive = false; false }
+            else -> ctx.driftActive   // inside the band -- hold the previous verdict
         }
+        if (sustainedNow) {
+            // One-shot at a level that clears setbackVL (see [Check.flagEpisode]): a sustained
+            // combat-ward drift is a *confirmed episode*, and its cadence is one flag per
+            // episode by construction, so the old level-1.5 form sat at 1.5 of the 5.0 needed
+            // forever (measured live: 1 flag in 140 ticks of a constant-lag assist).
+            flagEpisode(tp, ctx, "drift", tick, Evidence(
+                pos = tp.pos, measurement = ratio.toDouble(), threshold = DRIFT_RATIO.toDouble(),
+                extra = "match=${matches}/${ctx.driftRing.size}"))
+        }
+        rearmEpisode(ctx, sustainedNow)
     }
 
     /** Distance (deg) from an angle to the nearest multiple of 45 — the legal strafe offsets. */
@@ -814,6 +827,7 @@ class KillAuraCheck : Check() {
         ctx.moveTickCounter = 0
         ctx.driftRing.clear()
         ctx.driftActive = false
+        rearmEpisode(ctx, false)
     }
 
     private fun wrapDegrees(angle: Float): Float {
@@ -883,6 +897,12 @@ class KillAuraCheck : Check() {
         var gcdBuffer: Int = 0
         // drift-direction correlation (Axis C §8 step 13): rolling (tick, signMatch) window
         val driftRing: ArrayDeque<Pair<Int, Boolean>> = ArrayDeque()
+        /**
+         * Hysteresis memory for the drift ratio: set at DRIFT_RATIO, cleared only below the lower
+         * DRIFT_RESET_RATIO. It is NOT the one-flag-per-episode latch -- that is
+         * [CheckContext.episodeActive], owned by [Check.flagEpisode] / [Check.rearmEpisode]. This
+         * flag exists only so a ratio hovering on the boundary holds its last verdict.
+         */
         var driftActive: Boolean = false
     }
 }

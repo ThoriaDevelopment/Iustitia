@@ -297,6 +297,87 @@ object CheatCombat {
         b.runFor(140)
     }
 
+    /**
+     * **Re-arm regression for `killAura`'s drift latch.** Same rate-capped assist as
+     * [killAuraDrift], driven as two episodes separated by a stretch where the drift genuinely
+     * stops, and asserted with `expectAlertCount(..., atLeast = 2)`.
+     *
+     * This is the only assertion that can see the bug it guards. The verdict assertion
+     * (`expect(mustAlert = true)`) is satisfied by episode 1 and says nothing about the second, so
+     * before this existed the check could alert once per session and still read green.
+     *
+     * Phase 2 is load-bearing, not decoration, and its shape is forced by two early returns in
+     * `driftComponent`. Simply *stopping* the drive fails twice over: the latch needs a ratio
+     * evaluation to release, so a quiet stretch only ages the ring out (`driftRing.size <
+     * DRIFT_MIN_SAMPLES` returns before the ratio is ever computed) and the latch stays held. And
+     * *freezing* the yaw does not work either -- `absYaw < DRIFT_MIN_DELTA` returns "neither drift
+     * match nor miss", so a still yaw adds NO samples at all and the ring keeps phase 1's matches
+     * forever. (Verified live: this scenario reported exactly 1 crossing with a frozen phase 2.)
+     * The bot therefore pins its yaw to a fixed 90 deg offset behind the bearing, so the yaw rides
+     * the bearing's own -8 deg/tick sweep while `error` holds at a constant +90 deg. The signs are
+     * opposed on every tick, so all 50 of phase 2's ticks are misses and the ratio goes to 0.0,
+     * well under `DRIFT_RESET_RATIO`.
+     *
+     * Both offset signs were tried and only this one works, which is worth recording: pinning on
+     * the *other* side (`bearing + 90`) makes `yawChange` and `error` agree in sign, so phase 2
+     * becomes 50 matches instead of 50 misses -- the ring never empties, the latch never releases,
+     * and the scenario reads 1 crossing exactly as it does against the unfixed check. The drive must
+     * oppose the signs, not merely hold an offset.
+     *
+     * The swing keeps `lastSwingTick` fresh -- rotation outside `COMBAT_WINDOW_TICKS` is ignored
+     * entirely, so a drive that stops swinging stops being observed at all.
+     */
+    fun killAuraDriftRearm(): Spec = Spec("cheat-killaura-drift-rearm-raven", Pass.CHEAT, "Raven", setOf(Tags.COMBAT, Tags.ROTATION)) { b ->
+        val bot = b.bot("Aura2", 0.0, 0.0)
+        val victim = b.bot("Orbit2", 0.0, 4.0)
+        b.expectAlertCount(bot, "killAura", "drift", atLeast = 2)
+        var t = 0
+        var yawNow = 0f
+        val wrap = { a: Float -> dev.iustitia.math.AimGeometry.wrapDegrees(a) }
+        b.everyTick {
+            val i = t++
+            // The victim orbits for the whole scenario, so the target never leaves range and the
+            // only thing changing between phases is the attacker's rotation.
+            val angle = Math.toRadians(i * 8.0)
+            val vx = 4.0 * Math.sin(angle)
+            val vz = 4.0 * Math.cos(angle)
+            victim.teleportTo(vx, b.groundY, vz)
+            victim.setOnGround(true)
+            val bearing = Math.toDegrees(Math.atan2(-vx, vz)).toFloat()
+            if (i >= 50 && i < 100) {
+                // Phase 2: pin the yaw to a fixed 90 deg offset *behind* the bearing and ride the
+                // bearing's sweep. Holding it still instead does not work -- `absYaw <
+                // DRIFT_MIN_DELTA` returns "neither drift match nor miss", so a frozen yaw
+                // contributes NO samples and the ring keeps phase 1's matches. What makes a sample
+                // a miss is `sign(yawChange) != sign(error)`, and this offset produces exactly that,
+                // every tick: the bearing sweeps at -8 deg/tick (the victim orbits counter-
+                // clockwise), so the pinned yaw sweeps with it at yawChange = -8, while
+                // `error = bearing - yaw` sits at a constant +90 -- both magnitudes far above their
+                // floors, both signs permanently opposed. Both earlier attempts got this wrong by
+                // pinning the offset on the *other* side (`bearing + 90`), which makes yawChange and
+                // error agree in sign and turns phase 2 into matches -- verified live: the ring
+                // never emptied and the latch never released.
+                yawNow = wrap(bearing - 90f)
+                bot.look(yawNow, 0f)
+            } else {
+                // Phases 1 and 3: the rate-capped closing assist (8 deg/tick orbit against a
+                // 4 deg/tick cap), so it is always behind the bearing and always turning toward it.
+                // The release happened back in phase 2, so `episodeActive` is clear and this second
+                // episode can flag. The 50-tick window must climb back to DRIFT_RATIO (0.70), i.e.
+                // 35 of its samples back on-bore -- ~35 ticks from tick 100 -- so the second
+                // episode lands around tick 137, with ~40 ticks of margin left in the run.
+                val err = wrap(bearing - yawNow)
+                yawNow = wrap(yawNow + err.coerceIn(-4f, 4f))
+                bot.look(yawNow, 0f)
+            }
+            if (i % 10 == 0) {
+                bot.swing()
+                victim.hurt(attackerEntityId = bot.entityId)
+            }
+        }
+        b.runFor(180)
+    }
+
     // ------------------------------------------------------------------
     // throughWalls
     // ------------------------------------------------------------------
@@ -604,6 +685,47 @@ object CheatCombat {
             }
         }
         b.runFor(300)
+    }
+
+    /**
+     * **Re-arm regression for `hitsWithoutSwing`'s episode latch.** Two no-swing episodes separated
+     * by a genuine break in the pattern, asserted with `expectAlertCount(..., atLeast = 2)`.
+     *
+     * The hurt at tick 80 that **carries a swing** is the load-bearing beat, and it is there for a
+     * reason that is easy to miss: the check's re-arm test is
+     * `if (actx.active && tick - actx.lastNoSwingTick > EPISODE)`, and `lastNoSwingTick` is written
+     * on the no-swing path *before* that test runs. So on a no-swing hurt the test evaluates
+     * `tick - tick > 60` -- false, always. It can only ever fire on a hurt that HAD a swing in the
+     * window, because that path skips the write and leaves `lastNoSwingTick` at the previous
+     * episode's tick. A drive that only ever withholds swings never reaches the reset at all.
+     *
+     * Phases: 4 no-swing hurts by tick 9 (threshold 3) -> episode 1; a swing-accompanied hurt at
+     * tick 80, 71 ticks later (> EPISODE = 60) -> pattern broken; 5 more no-swing hurts from tick
+     * 151 -> episode 2. The 151-tick spread is far past `SAME_EPISODE_TICKS`, so the counter reads
+     * two episodes rather than one long one.
+     */
+    fun hitsWithoutSwingRearm(): Spec = Spec("cheat-hitsswing-rearm-slinky", Pass.CHEAT, "Slinky", setOf(Tags.COMBAT)) { b ->
+        val bot = b.bot("Silent2", 0.0, 0.0)
+        val victim = b.bot("Victim2", 0.0, 2.0)
+        // The check flags the ATTACKER (the swing-suppressing bot), not the victim.
+        b.expectAlertCount(bot, "hitsWithoutSwing", "HitsWithoutSwing", atLeast = 2)
+        var t = 0
+        b.everyTick {
+            val i = t++
+            if (i <= 9) {
+                // Phase 1: no swing at all, attributed directly to the attacker. 4 hurts by tick 9.
+                if (i % 3 == 0) victim.hurt(attackerEntityId = bot.entityId)
+            } else if (i == 80) {
+                // Phase 2: the one hurt that carries a swing -- the only path on which the reset
+                // branch is reachable. 71 ticks of silence before it breaks the episode.
+                bot.swing()
+                victim.hurt(attackerEntityId = bot.entityId)
+            } else if (i in 151..163) {
+                // Phase 3: the pattern resumes. Alert #2 only if the latch re-armed.
+                if (i % 3 == 0) victim.hurt(attackerEntityId = bot.entityId)
+            }
+        }
+        b.runFor(180)
     }
 
     // ------------------------------------------------------------------

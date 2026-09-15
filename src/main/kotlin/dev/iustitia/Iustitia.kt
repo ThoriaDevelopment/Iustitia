@@ -10,6 +10,7 @@ import dev.iustitia.inference.AttackInference
 import dev.iustitia.persistence.NoteStore
 import dev.iustitia.session.Snapshot
 import dev.iustitia.tracking.EntityTrackerManager
+import dev.iustitia.tracking.LagCombatCorrelator
 import dev.iustitia.ui.KeybindHubScreen
 import dev.iustitia.ui.SessionScreen
 import dev.iustitia.ui.TranscriptPanelScreen
@@ -127,6 +128,11 @@ object Iustitia {
         // No-op when off (session is in-memory only as before).
         try { dev.iustitia.persistence.PersistenceManager.loadOnStartup() } catch (_: Throwable) {}
         AttackInference.bind(bus)
+        // Axis B (plan §2.2/§6) lag-vs-combat correlator: binds the hurt + despawn subscriptions
+        // its per-entity episode tracking needs. It was never bound, so all five of its consumers
+        // (reach/backtrack/criticals/noKnockback/packetGap) read 0/false forever and their
+        // lag-correlation amplifier silently contributed nothing. Driven from onClientTick below.
+        try { LagCombatCorrelator.bind() } catch (_: Throwable) {}
         // Per-player swing/hit/velocity counters for the transcript feature (read-only taps).
         try { dev.iustitia.session.SessionStats.bind(bus) } catch (_: Throwable) {}
         // Centralized hurt → knockback-exemption timestamp. Subscribed here (not in any
@@ -181,6 +187,12 @@ object Iustitia {
             val client = MinecraftClient.getInstance()
             val world = client.world
             val tracked = EntityTrackerManager.poll(world, tick)
+
+            // Axis B: refresh each entity's local-freeze episode from THIS tick's deltas. After
+            // the poll (so delta / lastMoveTick and the global-lag signals are fresh) and before
+            // the checks (so a combat event or a check's process this tick sees the current
+            // episode) -- the ordering [LagCombatCorrelator.update] documents. Fail-open.
+            try { LagCombatCorrelator.update(tracked, tick) } catch (_: Throwable) {}
 
             AttackInference.tick(tick)
 
@@ -427,6 +439,7 @@ object Iustitia {
             checks.forEach { it.resetAll() }
             EntityTrackerManager.reset()
             AttackInference.reset()
+            LagCombatCorrelator.reset()
             AlertManager.reset()
             dev.iustitia.session.SessionStats.reset()
             dev.iustitia.history.FlagHistory.reset()
