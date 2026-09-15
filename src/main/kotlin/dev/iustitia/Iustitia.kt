@@ -62,7 +62,7 @@ object Iustitia {
     private fun drainDeferred() {
         while (true) {
             val block = deferred.poll() ?: return
-            try { block() } catch (_: Throwable) {}
+            try { block() } catch (e: Throwable) { warnChokepoint("deferred event", e) }
         }
     }
 
@@ -83,6 +83,27 @@ object Iustitia {
     val allChecks: List<Check> get() = checks
 
     private val logger = org.slf4j.LoggerFactory.getLogger("Iustitia")
+
+    /** Last wall-clock ms a [warnChokepoint] was emitted per subsystem key (10s rate limit). */
+    private val lastChokeWarnMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /**
+     * Chokepoint failure warn: the tick driver swallows every per-check/per-subsystem throwable
+     * (fail-open — one broken check must never crash the client), but a check that throws on
+     * real server data was otherwise indistinguishable from a quiet server. The FIRST failure
+     * per subsystem logs at warn WITH the stack; repeats within 10s are counted silently (the
+     * VerboseLog heartbeat's exc=N shows them under verbose) so a persistently-broken subsystem
+     * can't spam latest.log. Fail-open itself — the warn must never throw into the driver.
+     */
+    internal fun warnChokepoint(where: String, e: Throwable) {
+        try {
+            VerboseLog.countException()
+            val now = System.currentTimeMillis()
+            if (now - (lastChokeWarnMs[where] ?: 0L) < 10_000L) return
+            lastChokeWarnMs[where] = now
+            logger.warn("[Iustitia] $where threw (fail-open, rate-limited 10s): $e", e)
+        } catch (_: Throwable) {}
+    }
 
     /** Self-check: registered check ids == config slice ids. Catches a forgotten [dev.iustitia.config.IustitiaConfig.slice]
      *  branch (which would otherwise fall to slice()'s silent safe-default) or an orphan config slice
@@ -172,7 +193,7 @@ object Iustitia {
             AttackInference.tick(tick)
 
             // decay every check's per-player VL by one tick (clean-tick drift to 0)
-            for (c in checks) { try { c.decayAll() } catch (_: Throwable) {} }
+            for (c in checks) { try { c.decayAll() } catch (e: Throwable) { warnChokepoint("decayAll(${c.id})", e) } }
 
             // Phase 2 instant-replay capture: record one tick of the scene into the rolling buffer
             // (gated by config.replayCapture inside). Runs before the replay playhead advance so a
@@ -207,7 +228,7 @@ object Iustitia {
             for (tp in tracked) {
                 for (c in checks) {
                     if (!c.enabled) continue
-                    try { c.process(tp, tick) } catch (_: Throwable) {}
+                    try { c.process(tp, tick) } catch (e: Throwable) { warnChokepoint("process(${c.id})", e) }
                 }
             }
             // Phase 2: flush any alert batches whose quiet window / max age elapsed (smart batching).
@@ -221,8 +242,9 @@ object Iustitia {
                 val exitReason = dev.iustitia.render.WatchState.tickSafety()
                 if (exitReason != null) chat(client, "§8[§diustitia§8] §7watch follow-cam §c$exitReason§7 — view restored.")
             } catch (_: Throwable) {}
-        } catch (_: Throwable) {
-            // the driver itself must never crash the client
+        } catch (e: Throwable) {
+            // the driver itself must never crash the client — but the failure must be visible
+            warnChokepoint("tick driver", e)
         }
     }
 

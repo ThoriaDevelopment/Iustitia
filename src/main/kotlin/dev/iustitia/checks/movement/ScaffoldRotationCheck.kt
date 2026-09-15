@@ -17,6 +17,7 @@ import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.round
+import dev.iustitia.checks.LagWindows
 
 /**
  * Scaffold / BridgeAssist detector with two complementary paths sharing one VL pool:
@@ -107,8 +108,8 @@ class ScaffoldRotationCheck : Check() {
             // Server-lag exemption: a server-wide hitch / catch-up burst injects a position/
             // rotation jump that would trip the rotation-snap and legit-scaffold signatures.
             // Skip both sub-paths for the window so lag never poisons either streak/history.
-            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             ) return
             val ctx = contextOf(tp.uuid) as ScaffoldContext
 
@@ -299,10 +300,6 @@ class ScaffoldRotationCheck : Check() {
         // Strict-gate constants (only applied when config.legitScaffoldStrictGates is on).
         private const val STRICT_MOTION_MIN = 0.03
         private const val STRICT_CADENCE_SPAN = 40
-        /** Window (ticks) after a server-wide freeze within which scaffold samples are skipped. */
-        private const val LAG_WINDOW = 8
-        /** Window (ticks) after a batched catch-up burst within which scaffold samples are skipped. */
-        private const val BURST_WINDOW = 3
 
         // -- Scaffold(Clutch) snap-back round-trip (Slinky, plan §3/§8 step 10) --
         /** Min single-tick yaw excursion (°) to start a clutch round-trip — a meaningful rotation

@@ -8,6 +8,7 @@ import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.hypot
+import dev.iustitia.checks.LagWindows
 
 /**
  * ElytraFly detector (ElytraSpeed). Vanilla elytra level flight caps ~1.5 blocks/tick (30
@@ -47,8 +48,8 @@ class ElytraSpeedCheck : Check() {
             // Server-lag exemption: a server-wide hitch / catch-up burst injects a large
             // horizontal Δ that would trip the blatant/anomaly gate. Pause the streak (don't
             // reset — lag doesn't clear a cheater's glide state) and skip the sample.
-            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             ) return
             val bps = hypot(tp.delta.x, tp.delta.z) * 20.0
             val blatant = bps > cfg.threshold
@@ -84,9 +85,5 @@ class ElytraSpeedCheck : Check() {
         const val ANOMALY_FACTOR = 0.85
         /** Max |pitch| (deg) considered "near level" for the anomaly. */
         const val LEVEL_PITCH = 8.0
-        /** Window (ticks) after a server-wide freeze within which elytra-speed samples are skipped. */
-        private const val LAG_WINDOW = 8
-        /** Window (ticks) after a batched catch-up burst within which elytra-speed samples are skipped. */
-        private const val BURST_WINDOW = 3
     }
 }

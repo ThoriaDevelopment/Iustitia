@@ -5,6 +5,7 @@ import dev.iustitia.event.HurtSignal
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
+import dev.iustitia.checks.LagWindows
 
 /**
  * Axis B — lag-vs-combat-state correlation (plan §2.2 / §6). The hardest evasion
@@ -98,8 +99,8 @@ object LagCombatCorrelator {
         // (lastLagBurstTick). During a global-lag window this entity's near-zero Δ is the
         // server's freeze, not a self-induced one → do NOT stamp (this is the negative
         // control that separates real lag from cheat lag). Same windows the checks exempt.
-        val globalLag = tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-            tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+        val globalLag = tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+            tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
         val dx = tp.delta.x
         val dy = tp.delta.y
         val dz = tp.delta.z
@@ -173,9 +174,6 @@ object LagCombatCorrelator {
     private const val FREEZE_MAG2 = 0.0001
     /** AFK guard — matches EntityTrackerManager's mass-freeze tally window. */
     private const val RECENT_MOVE = 20
-    /** Global-lag exemption windows — a local freeze during these is the server's, not a cheat's. */
-    private const val LAG_WINDOW = 8
-    private const val BURST_WINDOW = 3
     /** Ticks after an episode ends before it's pruned (kept queryable so a freeze that ended
      *  right before a combat event still matches). */
     private const val EPISODE_PRUNE = 40

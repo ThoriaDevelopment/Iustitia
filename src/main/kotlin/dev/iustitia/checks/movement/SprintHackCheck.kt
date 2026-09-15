@@ -10,6 +10,7 @@ import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
 import net.minecraft.client.MinecraftClient
 import java.util.UUID
+import dev.iustitia.checks.LagWindows
 
 /**
  * SprintHack — three sprint-metadata-should-be-canceled sub-flags that share the
@@ -62,8 +63,8 @@ class SprintHackCheck : Check() {
             if (tick - tp.lastTeleportTick < 10) { ctx.streak = 0; return }
             // Server-lag pause: a catch-up snap can hold the sprint flag through a state the
             // server already canceled. Pause (don't reset — lag doesn't clear the cheat state).
-            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             ) return
             // Distant-player skip: beyond the observation range the water-sprint signal isn't
             // usefully observable. Reset (like the other no-signal branches) so a stale streak
@@ -117,9 +118,5 @@ class SprintHackCheck : Check() {
     }
 
     private companion object {
-        /** Window (ticks) after a server-wide freeze within which sprint-hack samples are skipped. */
-        private const val LAG_WINDOW = 8
-        /** Window (ticks) after a batched catch-up burst within which sprint-hack samples are skipped. */
-        private const val BURST_WINDOW = 3
     }
 }

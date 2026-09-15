@@ -16,6 +16,7 @@ import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.sqrt
+import dev.iustitia.checks.LagWindows
 
 /**
  * Silent-aim / AimAssist detector (RotationTracking). The cheat silently rotates to face a
@@ -140,8 +141,8 @@ class RotationTrackingCheck : Check() {
             ctx.hasChange = false; ctx.pitchGcdVl = 0.0; return
         }
         // lag gate: catch-up snaps distort deltas → don't pair a stale predecessor.
-        if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-            tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+        if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+            tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
         ) {
             ctx.hasChange = false; return
         }
@@ -210,8 +211,5 @@ class RotationTrackingCheck : Check() {
         const val YAW_CHANGE_MIN = 3.0f
         const val PITCH_CHANGE_MAX = 10.0f
         const val ACCEL_MIN = 2.0f
-        /** Standard lag gate (§1.8 posture + step-1 sensitivity feed). */
-        const val LAG_WINDOW = 8
-        const val BURST_WINDOW = 3
     }
 }

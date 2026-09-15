@@ -8,6 +8,7 @@ import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.hypot
+import dev.iustitia.checks.LagWindows
 
 /**
  * VClip / SlyPort / InfiniteAura detector (Teleport). A single-tick vertical clip |Δy| >
@@ -43,9 +44,9 @@ class TeleportCheck : Check() {
             // Server lag burst: ≥3 players snapped >2b in the same tick (batched catch-up
             // after a hitch). A single-player clip never sets this. Exempt so a server
             // hitch doesn't VClip/SlyPort-flag every player's catch-up movement. Same
-            // BURST_WINDOW (3) the other movement checks use — the old `<= 1` left 2 ticks
+            // LagWindows.BURST_WINDOW (3) the other movement checks use — the old `<= 1` left 2 ticks
             // of post-burst catch-up snaps unexempted.
-            if (tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW) return
+            if (tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW) return
             val ctx = contextOf(tp.uuid) as TeleportContext
             val dy = abs(tp.deltaY)
             val horiz = hypot(tp.delta.x, tp.delta.z)
@@ -74,8 +75,6 @@ class TeleportCheck : Check() {
     private class TeleportContext : CheckContext()
 
     private companion object {
-        /** Window (ticks) after a batched catch-up burst within which clip samples are skipped. */
-        private const val BURST_WINDOW = 3
         /** Rolling window (ticks) of clip samples the teleport episode is judged over. */
         private const val CLIP_WINDOW = 20
         /** Clips required inside the window to confirm a VClip/SlyPort episode. */

@@ -14,6 +14,7 @@ import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
+import dev.iustitia.checks.LagWindows
 
 /**
  * Flight envelope, ported from AvA `checkFlight` + Nemesis `FlyB`. Seven airborne
@@ -86,8 +87,8 @@ class FlyEnvelopeCheck : Check() {
             // Server-lag exemption: a server-wide hitch / catch-up burst injects a large Δy
             // sample that trips the physics-breach and ascend flags. Skip the sample (the
             // descend window is not pushed this tick, so lag never poisons the ≥2-of-5 gate).
-            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             ) return
             if (tp.groundedProxy) {
                 ctx.hoverTicks = 0
@@ -385,10 +386,6 @@ class FlyEnvelopeCheck : Check() {
         const val LEV_RISE = 0.2
         /** Airborne small-drift ticks required to arm the sustained-levitation guard (1s). */
         const val LEV_GUARD_TICKS = 20
-        /** Window (ticks) after a server-wide freeze within which fly samples are skipped. */
-        private const val LAG_WINDOW = 8
-        /** Window (ticks) after a batched catch-up burst within which fly samples are skipped. */
-        private const val BURST_WINDOW = 3
 
         // -- §8 step 8 sub-signals (plan §3, "Meteor Flight anti-kick + Strafe-hop/blink +
         // Nemesis FlyB 0.005 vertical-friction kernel"). All share `flyEnvelope`'s VL pool;

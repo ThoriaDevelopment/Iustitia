@@ -11,6 +11,7 @@ import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.hypot
+import dev.iustitia.checks.LagWindows
 
 /**
  * BackwardSprint / OmniSprint detector. Vanilla cannot sprint backward — the game blocks
@@ -61,8 +62,8 @@ class BackwardSprintCheck : Check() {
             // Server-lag exemption: a server-wide hitch / catch-up burst injects a horizontal
             // impulse that can push a sprinting player backward-of-facing / sideways for a few
             // ticks. Pause the streaks (don't reset — lag doesn't clear a cheater's sprint state).
-            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             ) return
             val horiz = hypot(tp.delta.x, tp.delta.z)
             if (horiz * 20.0 < cfg.threshold) { ctx.streak = 0; ctx.strafeStreak = 0; return }
@@ -119,9 +120,5 @@ class BackwardSprintCheck : Check() {
         /** Min sideways component (as a fraction of horiz) for "strafe" — sin(75°) ≈ 0.966. Ensures
          *  the motion is dominated by the sideways axis, not a forward/sideways diagonal sprint. */
         private const val STRAFE_SIDEWAYS_FRAC = 0.966
-        /** Window (ticks) after a server-wide freeze within which omnisprint samples are skipped. */
-        private const val LAG_WINDOW = 8
-        /** Window (ticks) after a batched catch-up burst within which omnisprint samples are skipped. */
-        private const val BURST_WINDOW = 3
     }
 }

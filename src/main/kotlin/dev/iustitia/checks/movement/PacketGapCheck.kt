@@ -11,6 +11,7 @@ import dev.iustitia.tracking.TrackedPlayer
 import java.util.ArrayDeque
 import java.util.UUID
 import kotlin.math.sqrt
+import dev.iustitia.checks.LagWindows
 
 /**
  * Blink / FakeLag / ScaffoldBlink / LagRange detector (PacketGap). The cheat cancels +
@@ -61,8 +62,8 @@ class PacketGapCheck : Check() {
             // first post-lag move; skip the snap. (Consulting lastLagBurstTick matches the
             // sibling SpeedEnvelope/PhaseClip checks, which a lag manifested as a burst only
             // would otherwise evade.)
-            val serverLag = tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            val serverLag = tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             if (serverLag) {
                 ctx.freeze = 0
                 return
@@ -162,10 +163,6 @@ class PacketGapCheck : Check() {
     }
 
     companion object {
-        /** Ticks after a server-wide freeze during which freezes/snaps are exempt. */
-        private const val LAG_WINDOW = 8
-        /** Ticks after a batched catch-up burst during which freezes/snaps are exempt. */
-        private const val BURST_WINDOW = 3
         // -- Combat-correlation amplifier (Axis B, plan §3/§8 step 6) --
         /** Window (ticks) around the snap within which a combat hurt on the frozen entity makes
          *  the blink a FakeLag-Dynamic flush. The flush is tight (~80–150ms ≈ 4–7 ticks). Tuned

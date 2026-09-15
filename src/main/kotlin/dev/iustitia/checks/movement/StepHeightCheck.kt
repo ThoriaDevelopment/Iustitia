@@ -13,6 +13,7 @@ import net.minecraft.entity.effect.StatusEffects
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.min
+import dev.iustitia.checks.LagWindows
 
 /**
  * Step detector (StepHeight). The Step cheat raises step height beyond vanilla 0.6 and
@@ -34,8 +35,8 @@ class StepHeightCheck : Check() {
             if (tick - tp.hurtTick < 3) return // vertical knockback can mimic a step
             // Server-lag exemption: a server-wide hitch / catch-up burst injects a large Δy
             // sample that would trip the step gate. Skip the sample (see SpeedEnvelopeCheck).
-            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             ) return
             val ctx = contextOf(tp.uuid) as StepContext
             val dy = tp.deltaY
@@ -88,10 +89,6 @@ class StepHeightCheck : Check() {
         /** Margin above the jump-impulse ceiling before a Δy is treated as a step, absorbing
          *  client-side interpolation noise on the takeoff tick. */
         const val JUMP_MARGIN = 0.15
-        /** Window (ticks) after a server-wide freeze within which step samples are skipped. */
-        private const val LAG_WINDOW = 8
-        /** Window (ticks) after a batched catch-up burst within which step samples are skipped. */
-        private const val BURST_WINDOW = 3
     }
 
     private class StepContext : CheckContext() {

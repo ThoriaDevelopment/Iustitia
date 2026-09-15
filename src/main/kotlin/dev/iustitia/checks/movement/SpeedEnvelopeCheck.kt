@@ -16,6 +16,7 @@ import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import dev.iustitia.checks.LagWindows
 
 /**
  * Horizontal-speed envelope, ported from AvA `checkSpeed` + hardened with the Nemesis
@@ -117,8 +118,8 @@ class SpeedEnvelopeCheck : Check() {
             // ≥3-of-6 gate) but is not cleared either (pre-exempt samples age out naturally).
             val skipFlag = tick - tp.velocityTick < 20 ||
                 tick - tp.hurtTick < 3 ||
-                tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+                tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
 
             val offsetH = hypot(tp.delta.x, tp.delta.z)
 
@@ -228,10 +229,6 @@ class SpeedEnvelopeCheck : Check() {
     }
 
     companion object {
-        /** Window (ticks) after a server-wide freeze within which speed samples are skipped. */
-        private const val LAG_WINDOW = 8
-        /** Window (ticks) after a batched catch-up burst within which speed samples are skipped. */
-        private const val BURST_WINDOW = 3
 
         // -- Nemesis momentum/friction model (plan §3/§8 step 9) --
         /** Vanilla generic.movement_speed attribute default (walkSpeed). The speedup ratio

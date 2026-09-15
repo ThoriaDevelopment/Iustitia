@@ -32,6 +32,11 @@ object VerboseLog {
     private val hurts = AtomicLong(0)
     private val attacks = AtomicLong(0)
     private val flags = AtomicLong(0)
+    /** Swallowed exceptions at the driver/bus chokepoints ([Iustitia.warnChokepoint],
+     *  [dev.iustitia.event.EventBus] dispatch) — a check or handler that throws on real
+     *  server data is otherwise indistinguishable from a quiet server (fail-open means
+     *  silent). Surfaced as exc=N in the heartbeat line. */
+    private val exc = AtomicLong(0)
 
     fun isEnabled(): Boolean = try { ConfigManager.config.verbose } catch (_: Throwable) { false }
 
@@ -48,6 +53,10 @@ object VerboseLog {
     fun countHurt() { if (isEnabled()) hurts.incrementAndGet() }
     fun countAttack() { if (isEnabled()) attacks.incrementAndGet() }
     fun countFlag() { if (isEnabled()) flags.incrementAndGet() }
+    /** Count a swallowed exception at a driver/bus chokepoint. Called unconditionally by the
+     *  chokepoints themselves, but only counted while verbose is on — same contract as the
+     *  other counters (the heartbeat only exists under verbose anyway). */
+    fun countException() { if (isEnabled()) exc.incrementAndGet() }
 
     /**
      * Periodic heartbeat: every [HEARTBEAT_TICKS] dump and reset the per-interval counters.
@@ -63,9 +72,10 @@ object VerboseLog {
             val h = hurts.getAndSet(0)
             val a = attacks.getAndSet(0)
             val f = flags.getAndSet(0)
+            val e = exc.getAndSet(0)
             log(
                 "pipeline @tick $tick (last ${HEARTBEAT_TICKS}t): tracking=$trackedPlayers " +
-                    "swings=$s hurts=$h attacks=$a flags=$f"
+                    "swings=$s hurts=$h attacks=$a flags=$f exc=$e"
             )
         } catch (_: Throwable) {}
     }

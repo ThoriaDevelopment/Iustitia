@@ -13,6 +13,7 @@ import net.minecraft.util.math.Vec3d
 import java.util.ArrayDeque
 import java.util.UUID
 import kotlin.math.abs
+import dev.iustitia.checks.LagWindows
 
 /**
  * MaceSmash detector (LiquidBounce `ModuleMaceKill` family), observable-only. A mace's
@@ -96,8 +97,8 @@ class MaceSmashCheck : Check() {
         // Lag gate (standard §8 step-0 posture): a batched catch-up snap is a large Δy
         // with no fall lead-in — precisely the false signature. This is NOT the >8b
         // teleport exemption (we deliberately never read lastTeleportTick — see class doc).
-        if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-            tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+        if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+            tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
         ) return
         if (ctx.lastFlaggedAttack == at) return  // dedup: one flag per attack
         // ring ≈ at-3..at+2 (6 entries pushed each tick)
@@ -149,8 +150,5 @@ class MaceSmashCheck : Check() {
         const val OVERSHOOT_GRACE = 1
         /** Genuine-fall lead-in floor: a descent is Δy ≤ this (≤ -0.5/tick). */
         const val LEAD_IN_DESCEND = -0.5
-        /** Standard lag gate (§8 step-0 posture). */
-        const val LAG_WINDOW = 8
-        const val BURST_WINDOW = 3
     }
 }

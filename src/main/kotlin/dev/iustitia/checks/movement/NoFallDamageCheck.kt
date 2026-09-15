@@ -18,6 +18,7 @@ import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
+import dev.iustitia.checks.LagWindows
 
 /**
  * NoFall detector, observable-only. Accumulates downward distance while airborne and
@@ -125,8 +126,8 @@ class NoFallDamageCheck : Check() {
             // Server-lag exemption: a server-wide hitch / catch-up burst injects a large Δy
             // sample that would inflate fallAccum (the stair-step spoof also keys on a big
             // negative Δy). Skip the sample so lag never poisons the fall accumulator.
-            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             ) return
             val world = MinecraftClient.getInstance().world ?: return
             val ctx = contextOf(tp.uuid) as NoFallContext
@@ -278,10 +279,6 @@ class NoFallDamageCheck : Check() {
          * from ever arming the re-base.
          */
         private const val SMASH_MIN_FALL = 1.5
-        /** Window (ticks) after a server-wide freeze within which fall samples are skipped. */
-        private const val LAG_WINDOW = 8
-        /** Window (ticks) after a batched catch-up burst within which fall samples are skipped. */
-        private const val BURST_WINDOW = 3
         /**
          * Quiet ticks after the last conforming stair-step sample before the stair episode
          * latch re-arms (the pattern has genuinely stopped).

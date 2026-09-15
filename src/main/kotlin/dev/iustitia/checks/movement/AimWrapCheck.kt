@@ -8,6 +8,7 @@ import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
 import kotlin.math.abs
+import dev.iustitia.checks.LagWindows
 
 /**
  * Max-rotation-rate / snap detector. Flags a single-tick yaw rotation larger than
@@ -37,8 +38,8 @@ class AimWrapCheck : Check() {
             // immediately-prior tick, not a stale pre-teleport value.
             val exempt = tick - tp.lastTeleportTick < 5 ||
                 tick - tp.hurtTick < 3 ||
-                tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+                tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             if (!exempt && abs(ctx.lastWrappedDelta) < 30.0) {
                 // A snap opportunity: the previous tick was near-still, so this tick's rotation is
                 // judged on its own. Ticks that follow a large rotation are not opportunities --
@@ -70,10 +71,6 @@ class AimWrapCheck : Check() {
     }
 
     private companion object {
-        /** Window (ticks) after a server-wide freeze within which rotation snaps are exempt. */
-        private const val LAG_WINDOW = 8
-        /** Window (ticks) after a batched catch-up burst within which rotation snaps are exempt. */
-        private const val BURST_WINDOW = 3
         /** Rolling window of snap opportunities the episode is judged over. */
         private const val WINDOW = 8
         /** Snaps required in the window. The per-event rotation (>=150 deg in one tick) is already

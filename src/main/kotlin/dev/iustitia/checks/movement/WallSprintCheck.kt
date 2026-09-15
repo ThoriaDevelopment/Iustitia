@@ -11,6 +11,7 @@ import net.minecraft.client.MinecraftClient
 import net.minecraft.client.world.ClientWorld
 import java.util.UUID
 import kotlin.math.hypot
+import dev.iustitia.checks.LagWindows
 
 /**
  * WallSprint detector (Grim `SprintE` / OmniSprint wall-sprint, plan §4 #3 / §8 step 12).
@@ -53,8 +54,8 @@ class WallSprintCheck : Check() {
             if (tick - tp.lastTeleportTick < 10) { ctx.streak = 0; return }
             // Server-lag pause: a catch-up snap against a wall is not a sustained wall-sprint.
             // Pause (don't reset — lag doesn't clear the cheat's sprint state).
-            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             ) return
             // Distant-player skip: beyond the observation range the wall-sprint signal isn't
             // usefully observable. Reset (like the chunk-unloaded branch) so a stale streak
@@ -122,9 +123,5 @@ class WallSprintCheck : Check() {
         private const val FORWARD_MAX = 0.05
         /** Exempt this many ticks after a hurt — knockback pins a sprinter against a wall. */
         private const val HURT_EXEMPT_TICKS = 5
-        /** Window (ticks) after a server-wide freeze within which wall-sprint samples are skipped. */
-        private const val LAG_WINDOW = 8
-        /** Window (ticks) after a batched catch-up burst within which wall-sprint samples are skipped. */
-        private const val BURST_WINDOW = 3
     }
 }

@@ -9,6 +9,7 @@ import dev.iustitia.world.WorldQueries
 import net.minecraft.client.MinecraftClient
 import java.util.UUID
 import kotlin.math.hypot
+import dev.iustitia.checks.LagWindows
 
 /**
  * Phase / no-clip detector (PhaseClip). The Phase cheat moves through solid blocks. We
@@ -57,8 +58,8 @@ class PhaseClipCheck : Check() {
             // Server-lag exemption: a frozen rebroadcast position in a wall corner must not
             // accumulate. Skip without touching the streak (see class doc). Matches the shared
             // signal every other movement check already consults.
-            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             ) return
             val world = MinecraftClient.getInstance().world
             val ctx = contextOf(tp.uuid) as PhaseContext
@@ -95,7 +96,5 @@ class PhaseClipCheck : Check() {
     private companion object {
         // Mirrors SpeedEnvelope's windows: a lag tick within the last 8 ticks (or a catch-up
         // burst within 3) means positions are unreliable — skip phase evaluation.
-        const val LAG_WINDOW = 8
-        const val BURST_WINDOW = 3
     }
 }

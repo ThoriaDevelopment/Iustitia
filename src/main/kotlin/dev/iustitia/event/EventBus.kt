@@ -38,8 +38,16 @@ class EventBus {
         for (h in list) {
             try {
                 h(event)
-            } catch (_: Throwable) {
-                // fail-open: a single subscriber exception must not break dispatch
+            } catch (e: Throwable) {
+                // fail-open: a single subscriber exception must not break dispatch. Previously
+                // fully silent — a handler throwing on real server data looked identical to a
+                // quiet bus. Verbose surfaces which event broke (the count also feeds the
+                // heartbeat's exc=N); the rate-limited driver warns cover the tick-side
+                // chokepoints, so this stays cheap and verbose-only.
+                dev.iustitia.VerboseLog.countException()
+                dev.iustitia.VerboseLog.log(
+                    "event bus: subscriber threw on ${event.javaClass.simpleName}: $e"
+                )
             }
         }
     }

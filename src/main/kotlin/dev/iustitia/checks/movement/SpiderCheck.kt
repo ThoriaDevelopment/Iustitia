@@ -11,6 +11,7 @@ import net.minecraft.client.MinecraftClient
 import net.minecraft.client.world.ClientWorld
 import java.util.ArrayDeque
 import java.util.UUID
+import dev.iustitia.checks.LagWindows
 
 /**
  * Spider / wall-climb detector (AvA `Spider` + NCM `ConstantClimb`, plan §4 #6 / §8 step 12).
@@ -52,8 +53,8 @@ class SpiderCheck : Check() {
             if (tick - tp.lastTeleportTick < 10) { reset(ctx); return }
             // Server-lag pause: a catch-up snap can inject a few ascending Δy ticks against a
             // wall — not a cheat. Pause both sub-flags (don't reset — lag doesn't clear state).
-            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             ) return
             // Distant-player skip: beyond the observation range the fine wall-climb signal isn't
             // usefully observable and the per-tick block lookups are not worth it. Reset (like the
@@ -174,9 +175,5 @@ class SpiderCheck : Check() {
         const val CLIMB_WINDOW = 8
         /** Max (max-min) Δy spread across the window to be "constant" — a jump arc spans ~0.15. */
         const val CLIMB_BAND = 0.08
-        /** Window (ticks) after a server-wide freeze within which spider samples are skipped. */
-        const val LAG_WINDOW = 8
-        /** Window (ticks) after a batched catch-up burst within which spider samples are skipped. */
-        const val BURST_WINDOW = 3
     }
 }

@@ -10,6 +10,7 @@ import net.minecraft.client.MinecraftClient
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.hypot
+import dev.iustitia.checks.LagWindows
 
 /**
  * LiquidWalk / Jesus detector (WaterWalk). The cheat rewrites liquid bounding boxes to
@@ -39,8 +40,8 @@ class WaterWalkCheck : Check() {
             if (tick - tp.lastTeleportTick < 5) return
             // Server-lag exemption: a server-wide hitch / catch-up burst injects a horizontal
             // Δ (and a Δy jitter) that would trip the surface-walk signature. Skip the sample.
-            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             ) return
             val horiz = hypot(tp.delta.x, tp.delta.z) * 20.0
             val ctx = contextOf(tp.uuid) as WaterWalkContext
@@ -91,10 +92,6 @@ class WaterWalkCheck : Check() {
     }
 
     private companion object {
-        /** Window (ticks) after a server-wide freeze within which water-walk samples are skipped. */
-        private const val LAG_WINDOW = 8
-        /** Window (ticks) after a batched catch-up burst within which water-walk samples are skipped. */
-        private const val BURST_WINDOW = 3
         /** Margin (blocks) by which the feet must sit below the liquid's top face to count as "the
          *  body is in the water" rather than "standing on it". Well above position-interpolation
          *  noise (~1e-3) and well below the ~0.4 a floating swimmer sits at, so neither a legit

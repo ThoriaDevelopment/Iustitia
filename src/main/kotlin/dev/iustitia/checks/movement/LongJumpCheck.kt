@@ -9,6 +9,7 @@ import dev.iustitia.world.WorldQueries
 import net.minecraft.client.MinecraftClient
 import java.util.UUID
 import kotlin.math.hypot
+import dev.iustitia.checks.LagWindows
 
 /**
  * LongJump detector. A legit sprint-jump's first airborne tick moves ~0.31 horizontally; a
@@ -44,8 +45,8 @@ class LongJumpCheck : Check() {
             if (tick - tp.burstLaunchTick < 20) return
             // Server-lag exemption: a server-wide hitch / catch-up burst injects a large
             // horizontal Δ that would trip the boosted-launch gate. Skip the sample.
-            if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
-                tick - EntityTrackerManager.lastLagBurstTick <= BURST_WINDOW
+            if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
+                tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             ) return
             val ctx = contextOf(tp.uuid) as LongJumpContext
             // a real jump impulse starts the air phase. Arm on the 2nd airborne tick of ANY
@@ -89,9 +90,5 @@ class LongJumpCheck : Check() {
     }
 
     private companion object {
-        /** Window (ticks) after a server-wide freeze within which long-jump samples are skipped. */
-        private const val LAG_WINDOW = 8
-        /** Window (ticks) after a batched catch-up burst within which long-jump samples are skipped. */
-        private const val BURST_WINDOW = 3
     }
 }

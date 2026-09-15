@@ -23,11 +23,8 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object EntityTrackerManager {
 
-    /** Window (ticks) after a server-wide freeze within which sensitivity samples are skipped
-     *  (catch-up snap distorts the pitch-delta GCD). Matches the lag gate the movement checks use. */
-    private const val LAG_FEED_WINDOW = 8
-    /** Window (ticks) after a batched catch-up burst within which sensitivity samples are skipped. */
-    private const val BURST_FEED_WINDOW = 3
+    // Sensitivity-feed lag gates: the same shared lag posture every check uses
+    // ([dev.iustitia.checks.LagWindows]) — catch-up snap distorts the pitch-delta GCD.
     /** Combat-relevance window: feed a player's [SensitivityProcessor] only while they attacked
      *  within this many ticks. Generous enough (4s) that any real combat (killaura/aimbot fires
      *  far faster) keeps the feed continuous so the GCD path's 40 samples (≈2s) converge mid-fight,
@@ -240,8 +237,8 @@ object EntityTrackerManager {
             val sinceTp = tick - tp.lastTeleportTick
             val combatRelevant = tick - tp.lastAttackTick <= SENS_COMBAT_WINDOW
             if (sinceTp >= 3 &&
-                tick - lastServerLagTick > LAG_FEED_WINDOW &&
-                tick - lastLagBurstTick > BURST_FEED_WINDOW &&
+                tick - lastServerLagTick > dev.iustitia.checks.LagWindows.LAG_WINDOW &&
+                tick - lastLagBurstTick > dev.iustitia.checks.LagWindows.BURST_WINDOW &&
                 combatRelevant
             ) {
                 tp.sensitivity.process((tp.pitch - tp.lastPitch).toDouble())
