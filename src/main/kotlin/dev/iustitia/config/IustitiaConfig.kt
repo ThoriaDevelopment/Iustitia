@@ -322,6 +322,13 @@ data class IustitiaConfig(
     // --- movement ---
     var speedEnvelope: CheckConfig = CheckConfig(true, 5.0, 1.0, 10.0),
     var flyEnvelope: CheckConfig = CheckConfig(true, 5.0, 0.5, 0.1),
+    /** Fly(Blink) sub-signal: sustained airborne full-freeze ticks before the episode flag.
+     *  A PURE midair freeze is 1v1-unobservable from a player-specific lag stall (there is no
+     *  second observed player to corroborate server-wide lag), so the default (30 = 1.5s) is
+     *  deliberately longer than the old hardcoded 20 and config-exposed — raise it on a
+     *  1v1-heavy server, lower it where Blink holds are blatant. Additive — no CONFIG_VERSION
+     *  bump; a pre-field config keeps the default. Clamped 5..200 at use. */
+    var blinkFreezeTicks: Int = 30,
     /** Spider (AvA wall-climb) — consecutive ascending-ticks against a non-climbable wall to
      *  flag the Spider sub-flag (ConstantClimb uses fixed bands). decay 0.5. Tuned in step 14. */
     var spider: CheckConfig = CheckConfig(true, 5.0, 0.5, 10.0),

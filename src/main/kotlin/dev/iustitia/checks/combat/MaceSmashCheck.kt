@@ -73,10 +73,19 @@ class MaceSmashCheck : Check() {
             while (ctx.ring.size > RING_SIZE) ctx.ring.removeLast()
             if (ctx.pendingAttack == Int.MIN_VALUE) return
             val at = ctx.pendingAttack
-            // wait for the full forward window; clear + fail-open if we overshot (gap/despawn)
+            // Wait for the full forward window. The old code cleared [MaceContext.pendingAttack]
+            // BEFORE the overshoot guard, so a skipped eval tick (despawn gap, lag frame,
+            // dimension switch) silently dropped the attack — a 1-frame hitch at the eval tick
+            // let a MaceKill warp go unjudged. Now a 1-tick overshoot still evaluates: the Δy
+            // ring is pushed once per process tick and holds 6 entries, so at attack+3 it still
+            // covers the full attack±2 window (a genuinely missing at+2 push just scans as a
+            // gap). Beyond the grace, fail open (long despawn/desync) and clear.
             if (tick < at + EVAL_DELAY) return
+            if (tick > at + EVAL_DELAY + OVERSHOOT_GRACE) {
+                ctx.pendingAttack = Int.MIN_VALUE
+                return
+            }
             ctx.pendingAttack = Int.MIN_VALUE
-            if (tick > at + EVAL_DELAY) return
             evaluate(tp, ctx, tick, at)
         } catch (_: Throwable) {}
     }
@@ -136,6 +145,8 @@ class MaceSmashCheck : Check() {
         const val RING_SIZE = 6
         /** Deferred-evaluation delay: decide at attack+2 so the full ±2 window is in the ring. */
         const val EVAL_DELAY = 2
+        /** Ticks past [EVAL_DELAY] the eval still runs (ring still covers the window; see process). */
+        const val OVERSHOOT_GRACE = 1
         /** Genuine-fall lead-in floor: a descent is Δy ≤ this (≤ -0.5/tick). */
         const val LEAD_IN_DESCEND = -0.5
         /** Standard lag gate (§8 step-0 posture). */

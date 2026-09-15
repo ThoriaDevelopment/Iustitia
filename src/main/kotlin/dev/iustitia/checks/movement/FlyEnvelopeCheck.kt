@@ -39,8 +39,11 @@ import kotlin.math.max
  *    tighter tolerance — owns the [0.05, cfg.threshold] band the 0.1 physics breach misses (a
  *    slow 0.05–0.1 sustained upward drift = hover/float), sustained ≥4 ticks. Nemesis
  *    server-side uses 0.005 (ground truth); relaxed to 0.05 (no ground truth). Same guards.
- *  - **Fly(Blink)**: a pure midair full-freeze (|Δ|²<0.0001) ≥20 ticks — the Blink / fly-hold
- *    the existing horiz>0.1 hover misses; packetGap flags the eventual snap, not the hold.
+ *  - **Fly(Blink)**: a pure midair full-freeze (|Δ|²<0.0001) ≥ the config window
+ *    ([dev.iustitia.config.IustitiaConfig.blinkFreezeTicks], default 30 — a PURE freeze is
+ *    1v1-unobservable from a player-specific lag stall, hence the conservative window) —
+ *    the Blink / fly-hold the existing horiz>0.1 hover misses; packetGap flags the eventual
+ *    snap, not the hold.
  *  - **Fly(AntiKick)**: Y held within ±0.05 of a hover point ≥40 ticks with periodic ~20t
  *    downward dips (≤0.04) — Meteor AntiKick dips 0.0313 every delay=20 to reset the 80-tick
  *    floating counter; the micro-dip cadence while hovering is the fingerprint.
@@ -173,20 +176,34 @@ class FlyEnvelopeCheck : Check() {
             }
 
             // 2b) Fly(Blink) — Meteor Blink hold (plan §3/§8 step 8): a PURE midair freeze
-            //   (|Δ|² < BLINK_FREEZE_MAG2 — no horiz, no vert) sustained ≥ BLINK_FREEZE ticks while
-            //   airborne. The existing hover needs horiz>0.1, so a perfectly-still midair hold (the
-            //   Blink / fly-hold) is missed; packetGap flags the eventual snap (after freeze≥5),
-            //   not the hold itself. A 20-tick airborne full freeze is a blatant fly-hold (a legit
-            //   jump apex freezes ~1 tick; an AFK player is grounded → groundedProxy early-return).
-            //   Transition-gated: one flag per hold.
+            //   (|Δ|² < BLINK_FREEZE_MAG2 — no horiz, no vert) sustained ≥ [freezeWindow] ticks
+            //   while airborne. The existing hover needs horiz>0.1, so a perfectly-still midair
+            //   hold (the Blink / fly-hold) is missed; packetGap flags the eventual snap (after
+            //   freeze≥5), not the hold itself. CONCESSION: a PURE freeze is 1v1-unobservable
+            //   from a player-specific lag stall (the server just stops sending that player's
+            //   movement) — the server-wide burst exemption can't catch a single-player stall —
+            //   so the default window (30 = 1.5s, config-exposed as
+            //   [dev.iustitia.config.IustitiaConfig.blinkFreezeTicks], clamped 5..200) is
+            //   deliberately longer than the old hardcoded 20 and we do NOT alert on a single
+            //   brief freeze. A legit jump apex freezes ~1 tick; an AFK player is grounded →
+            //   groundedProxy early-return. Transition-gated: one flag per hold.
+            val freezeWindow = try {
+                dev.iustitia.config.ConfigManager.config.blinkFreezeTicks.coerceIn(5, 200)
+            } catch (_: Throwable) {
+                BLINK_FREEZE // fail-open to the built-in default (headless tests / early boot)
+            }
             val mag2 = tp.delta.x * tp.delta.x + dy * dy + tp.delta.z * tp.delta.z
             if (mag2 < BLINK_FREEZE_MAG2) {
                 ctx.blinkFreezeTicks++
-                if (ctx.blinkFreezeTicks >= BLINK_FREEZE && !ctx.blinkActive) {
+                if (ctx.blinkFreezeTicks >= freezeWindow && !ctx.blinkActive) {
                     ctx.blinkActive = true
-                    flag(tp, ctx, 1.0, "Fly(Blink)", tick, Evidence(
+                    // Level = setbackVL + 1.0: the flat 1.0 the old code used broke even against
+                    // this check's 0.5/tick decay (a single-hold blink could never alert — a
+                    // dead detector). blinkActive is already the one-flag-per-hold latch; the
+                    // episode-level flag clears setbackVL in the one flag this gate allows.
+                    flag(tp, ctx, setbackVL + 1.0, "Fly(Blink)", tick, Evidence(
                         subLabel = "freeze-hold", measurement = ctx.blinkFreezeTicks.toDouble(),
-                        threshold = BLINK_FREEZE.toDouble(), pos = tp.pos,
+                        threshold = freezeWindow.toDouble(), pos = tp.pos,
                         extra = "mag²=$mag2 airborne full-freeze hold"))
                 }
             } else {
@@ -410,9 +427,10 @@ class FlyEnvelopeCheck : Check() {
         /** Fly(StrafeHop): in-band hops required to flag — a consistent strafe-hopper; a hand mixing
          *  in a vanilla jump resets the cluster. */
         const val STRAFE_HOP_MIN = 5
-        /** Fly(Blink): sustained full-freeze ticks while airborne (a blatant fly-hold; a legit apex
-         *  freeze is ~1 tick). */
-        const val BLINK_FREEZE = 20
+        /** Fly(Blink): built-in fallback for the freeze window when the config value is
+         *  unreadable (headless tests / early boot). The live window is
+         *  [dev.iustitia.config.IustitiaConfig.blinkFreezeTicks] (default 30), clamped 5..200. */
+        const val BLINK_FREEZE = 30
         /** Fly(Blink): |Δ|² below which a tick counts as a full freeze (|Δ| < 0.01 in each axis). */
         const val BLINK_FREEZE_MAG2 = 0.0001
     }

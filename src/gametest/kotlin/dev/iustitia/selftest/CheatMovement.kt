@@ -109,18 +109,14 @@ object CheatMovement {
      * repeated with a settle tick in between (the continuity gate requires the *previous* tick
      * to have been level, which is exactly why a clipper alternates warp and hold).
      *
-     * Recorded: the gate caps the flag rate at one per two ticks = exactly the decay of a
-     * level-1.0 flag, so the VL oscillates near 1.0 and cannot reach `setbackVL 5.0`.
+     * Since the episode-gate fix, ≥2 clips inside a 20-tick window alert once at
+     * `setbackVL + 1.0` — a repeated clipper (5 clips / 20 ticks here) is reported, while a
+     * one-off ender-pearl / catch-up snap stays sub-setback.
      */
     fun verticalClip(): Spec = Spec("cheat-teleport-vclip-koid", Pass.CHEAT, "Koid", setOf(Tags.MOVEMENT, Tags.PACKET)) { b ->
         val ground = b.groundY
         val bot = b.bot("Clipper", 0.0, 0.0)
-        b.expectKnownOpen(
-            bot, "teleport",
-            note = "continuity gate (|prevdy| < 0.5) means a clip can only flag on the tick after a level " +
-                "tick: maximum 0.5 flags/tick against decay 0.5 at level 1.0 -- the VL hovers around 1.0 " +
-                "and VClip/SlyPort can never alert at default tuning",
-        )
+        b.expect(bot, "teleport", mustAlert = true)
         var t = 0
         b.everyTick {
             val i = t++
@@ -133,16 +129,12 @@ object CheatMovement {
 
     /**
      * Horizontal teleport (SlyPort): a 4.5-block sideways jump from a level tick, repeated.
-     * Same rate cap as [VerticalClip], same recorded finding.
+     * Episode-gated like [VerticalClip] — the repeated port sustains the clip pattern and alerts.
      */
     fun horizontalClipper(): Spec = Spec("cheat-teleport-slyport-koid", Pass.CHEAT, "Koid", setOf(Tags.MOVEMENT, Tags.PACKET)) { b ->
         val ground = b.groundY
         val bot = b.bot("Clipper", 0.0, 0.0)
-        b.expectKnownOpen(
-            bot, "teleport",
-            note = "same continuity gate as VClip: at most 0.5 flags/tick against decay 0.5 at level 1.0, " +
-                "so a repeated horizontal port never accumulates past ~1.0 of the 5.0 needed",
-        )
+        b.expect(bot, "teleport", mustAlert = true)
         var t = 0
         b.everyTick {
             val i = t++
@@ -252,27 +244,27 @@ object CheatMovement {
     }
 
     /**
-     * Ground-spoof variant (Meteor `NoFall` NoGround packet mode): the server-reported
-     * on-ground bit is flipped to true while the player is still in the air.
+     * Ground-spoof variant (Meteor `NoFall` Ground packet mode): the server-reported
+     * on-ground bit is claimed **true** while the player is still in the air — the vanilla
+     * server resets its fall-distance accumulator on that report, so the landing never
+     * accumulates damage. Observable as `onGroundPacket` true with provably no solid below
+     * while a real fall accrues.
      *
-     * Recorded: the spoof sub-flag is level 1.0 with decay 1.0, which needs a flag on *more*
-     * than every tick -- unreachable -- so the spoof is driven at full intensity and the finding
-     * stands on the record. (The landed-no-hurt branch above does alert, so no-fall detection
-     * is not blind overall; only this sub-signal is.)
+     * Since the episode-gate fix, ≥3 consecutive spoof ticks with >4 blocks accrued alert
+     * once at `setbackVL + 1.0` (the old flat 1.0/tick flag exactly met the 1.0/tick decay
+     * and could never cross the setback). The drive used to assert this as known-open —
+     * and, unnoticed, its old form set the ground bit FALSE, so it never exercised the
+     * spoof path at all.
      */
     fun noFallSpoof(): Spec = Spec("cheat-nofall-spoof-meteor", Pass.CHEAT, "Meteor", setOf(Tags.MOVEMENT)) { b ->
         val ground = b.groundY
         val bot = b.bot("Spoofer", 0.0, ground + 22.0, 0.0)
-        b.expectKnownOpen(
-            bot, "noFallDamage",
-            note = "the ground-spoof sub-flag is level 1.0 with decay 1.0/tick, so it can only alert with " +
-                "more than one flag per tick -- structurally unreachable; the landed-no-hurt branch is the " +
-                "one that can alert (covered by cheat-nofall-vape)",
-        )
+        b.expect(bot, "noFallDamage", mustAlert = true)
         var t = 0
         b.everyTick {
             val i = t++
-            bot.setOnGround(false)
+            // physically airborne and descending, but the reported ground bit says landed
+            bot.setOnGround(true)
             bot.teleportTo(0.0, ground + 22.0 - 0.35 * i, 0.0)
         }
         b.runFor(80)
@@ -610,17 +602,13 @@ object CheatMovement {
      * ElytraFly (LiquidBounce `ElytraFly`): a deployed glide sustained at 48 b/s -- well past
      * the 40 bps blatant cap and far past what a level glide can produce.
      *
-     * Recorded with the arithmetic: the flag is level 1.0 and the decay is 1.0/tick, which
-     * requires *more* than one flag per tick. The check can flag every tick and still never
-     * accumulate, so ElytraFly is structurally undetectable by this check at its defaults.
+     * Since the episode-gate fix, the sustained over-cap glide alerts once at `setbackVL + 1.0`
+     * per episode (the old flat 1.0/tick exactly met the 1.0/tick decay and could never
+     * accumulate).
      */
     fun elytraFly(): Spec = Spec("cheat-elytra-fly-liquidbounce", Pass.CHEAT, "LiquidBounce", setOf(Tags.MOVEMENT)) { b ->
         val bot = b.bot("Elytra", 0.0, b.groundY + 60.0, 0.0)
-        b.expectKnownOpen(
-            bot, "elytraSpeed",
-            note = "elytraSpeed's flag is level 1.0 with decay 1.0/tick: even flagging on every single tick " +
-                "nets exactly zero, so a 48 b/s ElytraFly cannot accumulate any VL at default tuning",
-        )
+        b.expect(bot, "elytraSpeed", mustAlert = true)
         var t = 0
         b.everyTick {
             val i = t++

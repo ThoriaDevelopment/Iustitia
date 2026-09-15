@@ -50,7 +50,16 @@ class KeepSprintCheck : Check() {
     override fun process(tp: TrackedPlayer, tick: Int) {
         try {
             val ctx = contextOf(tp.uuid) as KeepSprintContext
-            if (tick - ctx.lastAttackTick != 1) return
+            // Eval window 1..2, not just 1: an [AttackEvent] stamped on the netty thread can
+            // drain a client tick late (defer queue), and the old `!= 1` then silently dropped
+            // the sample — the hit went unjudged and a KeepSprinter whose evals kept slipping
+            // stayed under the sustained gate. Evaluate on the FIRST process tick inside the
+            // window for each attack ([evaluatedAttackTick]) so one hit still feeds at most
+            // one ring sample — without it, delta 1 and 2 would both judge the same attack.
+            val delta = tick - ctx.lastAttackTick
+            if (delta !in 1..2) return
+            if (ctx.evaluatedAttackTick == ctx.lastAttackTick) return
+            ctx.evaluatedAttackTick = ctx.lastAttackTick
             if (ctx.preAttackSpeed < 0.2) return // wasn't moving — nothing to decay
             if (!ctx.preSprinting) return // only meaningful if they were sprinting
             // Hurt exemption: knockback the attacker just took can keep sprint on / preserve
@@ -77,6 +86,8 @@ class KeepSprintCheck : Check() {
         var lastAttackTick: Int = -10000
         var preAttackSpeed: Double = 0.0
         var preSprinting: Boolean = false
+        /** [lastAttackTick] of the attack already judged — one ring sample per attack (see process). */
+        var evaluatedAttackTick: Int = Int.MIN_VALUE
     }
 
     private companion object {

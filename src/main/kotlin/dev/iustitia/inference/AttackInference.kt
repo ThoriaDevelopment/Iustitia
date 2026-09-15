@@ -23,7 +23,9 @@ import java.util.concurrent.ConcurrentHashMap
  * Natural filters keep it honest: projectile/potion hurts have no attacker swing → no
  * event; missed air-swings have no hurt → no event; legit single-target hits yield
  * exactly one event per (attacker, victim) thanks to the 2-tick dedup (the three hurt
- * channels — status/damage/tilt — all fire for one real hit).
+ * channels — status/damage/tilt — all fire for one real hit). A correlated swing is
+ * CONSUMED, so one swing correlates with at most one hurt — a single swing can never
+ * forge events against several victims inside its window.
  */
 object AttackInference {
 
@@ -81,28 +83,37 @@ object AttackInference {
         var bestDist = Double.MAX_VALUE
         var bestNano = 0L
         var bestTp: TrackedPlayer? = null
+        var bestSample: SwingSample? = null
         for ((attacker, samples) in pendingSwings) {
             if (attacker == h.victim) continue
             val tp = EntityTrackerManager.get(attacker) ?: continue
             val d = tp.pos.distanceTo(victimPos)
             if (d > 8.0) continue
             // any swing within the window?
-            var matchedNano = 0L
-            var matched = false
+            var matchedSample: SwingSample? = null
             synchronized(samples) {
                 for (s in samples) {
                     if (s.tick in (h.tick - back)..(h.tick + fwd)) {
-                        matched = true
-                        matchedNano = s.nano
+                        matchedSample = s
                         break
                     }
                 }
             }
-            if (!matched) continue
-            if (d < bestDist) { bestDist = d; best = attacker; bestNano = matchedNano; bestTp = tp }
+            val ms = matchedSample ?: continue
+            if (d < bestDist) { bestDist = d; best = attacker; bestNano = ms.nano; bestTp = tp; bestSample = ms }
         }
 
         val a = best ?: return
+        // Consume the matched swing: a swing correlates with at most ONE hurt, so a single
+        // swing can no longer forge AttackEvents against multiple victims inside its window
+        // (the dedup below is per-(attacker,victim), so without consumption one swing could
+        // attribute attacks the player never made to several bystanders). Losing candidates'
+        // swings are left in place — only the winning correlation spends its swing. Removal
+        // happens before the dedup return so a duplicate hurt channel (status/damage/tilt all
+        // fire for one real hit) doesn't double-spend on the second channel.
+        bestSample?.let { ms ->
+            pendingSwings[a]?.let { list -> synchronized(list) { list.remove(ms) } }
+        }
         // dedup: at most one AttackEvent per (attacker, victim) per 2 ticks. The watermark is
         // advanced ONLY when an event is actually emitted: the three hurt channels
         // (status/damage/tilt) all fire for one real hit at the SAME tick, and that is what this

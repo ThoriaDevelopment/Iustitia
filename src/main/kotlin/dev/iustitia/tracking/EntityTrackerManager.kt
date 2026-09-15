@@ -334,6 +334,11 @@ object EntityTrackerManager {
             ((tp.deltaY > 0.8 && tp.prevDeltaY < 0.15) || kotlin.math.hypot(tp.delta.x, tp.delta.z) > 0.5)
         ) {
             tp.burstTick = tick
+            // The vertical launch impulse (wind-charge/TNT pop) gets its own one-shot stamp:
+            // the horizontal arm above refreshes burstTick every tick while the player keeps
+            // moving >10 bps, so an exemption keyed on burstTick alone would exempt any
+            // sustained-fast player. burstLaunchTick fires once per burst (see TrackedPlayer).
+            if (tp.deltaY > 0.8 && tp.prevDeltaY < 0.15) tp.burstLaunchTick = tick
         }
 
         // onGround proxy: small vertical movement + solid block just below feet.

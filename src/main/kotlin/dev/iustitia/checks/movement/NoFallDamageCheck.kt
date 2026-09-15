@@ -69,7 +69,10 @@ import kotlin.math.max
  *    (Same precedent as CriticalsCheck's mace exemption; isMaceHeld is auto-fail-open pre-1.21.)
  *
  * A hurt signal (any channel) resets that player's fallAccum and records the tick,
- * exempting the next landing. Chunk not loaded → skip. setbackVL 4, decay 1/tick.
+ * exempting the next landing. Chunk not loaded → skip. setbackVL 4, decay 1/tick; the
+ * landed-no-hurt branch keeps its scaled level (live), the stair-step and ground-spoof
+ * branches are episode-gated (one alert per sustained pattern at setbackVL+1.0 — their
+ * old flat 1.0 flags exactly offset the decay and could never alert on their own).
  */
 class NoFallDamageCheck : Check() {
 
@@ -185,19 +188,31 @@ class NoFallDamageCheck : Check() {
                     if (floor == null || tp.pos.y < floor) tp.fallAccum += -dy
                 }
 
-                // stair-step spoof: big negative step followed by a near-zero step
+                // stair-step spoof: big negative step followed by a near-zero step. Episode-gated
+                // (own latch — two sub-detectors must not starve each other's one alert per
+                // episode through the shared CheckContext latch): a flat 1.0 per ≥6-tick cycle
+                // confirmation exactly loses to the 1.0/tick decay, so the old per-cycle flag
+                // could never cross setbackVL. One episode alert at setbackVL+1.0; the latch
+                // re-arms once the stair-step pattern has stopped for [STAIR_REARM_TICKS].
                 if (ctx.stairPhase == 0 && dy < -1.5) {
                     ctx.stairPhase = 1
+                    ctx.lastStairTick = tick
                 } else if (ctx.stairPhase == 1 && abs(dy) < 0.05) {
                     ctx.stairCycle++
                     ctx.stairPhase = 0
+                    ctx.lastStairTick = tick
                     if (ctx.stairCycle >= 3) {
-                        flag(tp, ctx, 1.0, "NoFall(Stair)", tick, Evidence(
-                            subLabel = "stair-step", measurement = ctx.stairCycle.toDouble(), threshold = 3.0,
-                            extra = "packet-level fall reset (${ctx.stairCycle} ≈-2.0/0 Δy cycles)"))
+                        val cycles = ctx.stairCycle
+                        if (!ctx.stairEpisode) {
+                            ctx.stairEpisode = true
+                            flag(tp, ctx, setbackVL + 1.0, "NoFall(Stair)", tick, Evidence(
+                                subLabel = "stair-step", measurement = cycles.toDouble(), threshold = 3.0,
+                                extra = "packet-level fall reset ($cycles ≈-2.0/0 Δy cycles)"))
+                        }
                         ctx.stairCycle = 0
                     }
                 }
+                if (tick - ctx.lastStairTick > STAIR_REARM_TICKS) ctx.stairEpisode = false
             }
 
             // ground-spoof-over-air: onGround claimed but nothing solid below + a real fall
@@ -207,12 +222,23 @@ class NoFallDamageCheck : Check() {
             // the shorter ground-spooofs Polar flagged (Ground Spoof) that 8.0 missed. The
             // landed-no-hurt branch above keeps cfg.threshold (8.0) to protect against
             // unobservable feather-falling.
-            if (tp.onGroundPacket && tp.fallAccum > 4.0 &&
+            // Episode-gated (own latch, same rationale as the stair-step detector): the old
+            // flat 1.0 flag per spoof tick exactly equaled the 1.0/tick decay and could never
+            // cross setbackVL — sustained spoofing now requires ≥3 consecutive spoof ticks for
+            // one alert at setbackVL+1.0, re-armed once the spoof stops.
+            val spoofNow = tp.onGroundPacket && tp.fallAccum > 4.0 &&
                 !WorldQueries.isSolidBelow(world, tp.pos.x, tp.pos.y, tp.pos.z, 0.5)
-            ) {
-                flag(tp, ctx, 1.0, "NoFall(Spoof)", tick, Evidence(
-                    subLabel = "ground-spoof-over-air", measurement = tp.fallAccum, threshold = 4.0,
-                    extra = "onGround spoofed over air — Δy ${"%.3f".format(dy)}, fell ${"%.1f".format(tp.fallAccum)} blocks"))
+            if (spoofNow) {
+                ctx.spoofStreak++
+                if (ctx.spoofStreak >= SPOOF_CONFIRM_TICKS && !ctx.spoofEpisode) {
+                    ctx.spoofEpisode = true
+                    flag(tp, ctx, setbackVL + 1.0, "NoFall(Spoof)", tick, Evidence(
+                        subLabel = "ground-spoof-over-air", measurement = tp.fallAccum, threshold = 4.0,
+                        extra = "onGround spoofed over air — Δy ${"%.3f".format(dy)}, fell ${"%.1f".format(tp.fallAccum)} blocks"))
+                }
+            } else {
+                ctx.spoofStreak = 0
+                ctx.spoofEpisode = false
             }
         } catch (_: Throwable) {}
     }
@@ -229,6 +255,12 @@ class NoFallDamageCheck : Check() {
         var lastHurtTick = -10000
         var stairPhase = 0
         var stairCycle = 0
+        /** Latch + recency stamp for the stair-step episode (one alert per sustained pattern). */
+        var stairEpisode = false
+        var lastStairTick = -10000
+        /** Consecutive-tick streak + latch for the ground-spoof-over-air episode. */
+        var spoofStreak = 0
+        var spoofEpisode = false
         /**
          * Y (blocks) of the highest no-damage-burst start seen in the current airborne period, or
          * null when the flight had no burst. Only the descent below it is damage-relevant
@@ -249,6 +281,13 @@ class NoFallDamageCheck : Check() {
         private const val LAG_WINDOW = 8
         /** Window (ticks) after a batched catch-up burst within which fall samples are skipped. */
         private const val BURST_WINDOW = 3
+        /**
+         * Quiet ticks after the last conforming stair-step sample before the stair episode
+         * latch re-arms (the pattern has genuinely stopped).
+         */
+        private const val STAIR_REARM_TICKS = 10
+        /** Consecutive ground-spoof-over-air ticks required to confirm an episode. */
+        private const val SPOOF_CONFIRM_TICKS = 3
         /**
          * Ticks after a no-damage-burst onset within which the launch point is captured. Wider
          * than 1 only so the capture does not depend on the tracker arming `burstTick` on the

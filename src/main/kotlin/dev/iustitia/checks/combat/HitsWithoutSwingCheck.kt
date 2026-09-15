@@ -95,7 +95,8 @@ class HitsWithoutSwingCheck : Check() {
     /**
      * Resolve the attacker: the tracked player matching [HurtSignal.attackerEntityId] when
      * the channel provides one, else the nearest tracked player within [MELEE_RANGE] of
-     * the victim. Returns null (fail-open) when no tracked player is close enough — the
+     * the victim — with the proximity fallback gated on recent swing activity (see
+     * [SWING_RECENCY]). Returns null (fail-open) when no tracked player qualifies — the
      * hurt is then attributable to an unseen attacker / environment, not a no-swing cheat.
      */
     private fun inferAttacker(sig: HurtSignal, victim: TrackedPlayer): TrackedPlayer? {
@@ -107,6 +108,15 @@ class HitsWithoutSwingCheck : Check() {
         var nearestSq = MELEE_RANGE_SQ
         for (cand in EntityTrackerManager.all()) {
             if (cand.uuid == victim.uuid) continue
+            // The -1-attacker channels (STATUS / DAMAGE_TILT) also carry lava / fall / mob
+            // damage, all with no attacker id. Only attribute such a hurt to a candidate with
+            // recent swing activity: a bystander never swung because they never attacked —
+            // without this gate, environmental damage next to them charged their no-swing
+            // episode (audit FP). A real hit-select attacker still swings in normal play (the
+            // cheat skips only the attack swings), so the fallback keeps its signal; a fully
+            // swing-suppressing disabler is caught via the direct channel and other checks.
+            val cctx = contextOf(cand.uuid) as HitsWithoutSwingContext
+            if (cctx.lastSwingTick == Int.MIN_VALUE || sig.tick - cctx.lastSwingTick > SWING_RECENCY) continue
             val dsq = cand.pos.squaredDistanceTo(victim.pos)
             if (dsq < nearestSq) { nearestSq = dsq; nearest = cand }
         }
@@ -129,6 +139,8 @@ class HitsWithoutSwingCheck : Check() {
         const val SWING_WINDOW = 2
         /** Max squared distance (blocks²) for the proximity-attacker fallback — melee reach ~4. */
         const val MELEE_RANGE_SQ = 16.0
+        /** Max tick age of a candidate's last swing for the -1-attacker proximity fallback. */
+        const val SWING_RECENCY = 60
         /** Episode window (ticks) for the no-swing count + the transition-gate re-arm. */
         const val EPISODE = 60
     }

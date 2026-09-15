@@ -98,6 +98,17 @@ class TrackedPlayer(val uuid: UUID, var entityId: Int, val joinTick: Int) {
      *  Default -10000 so a player never bursted is never exempt. */
     @Volatile var burstTick: Int = -10000
 
+    /** Tick of the last detected no-damage burst **launch impulse** — the vertical arm only
+     *  (`Δy > 0.8` from a level tick, the wind-charge/TNT pop). Unlike [burstTick] this is
+     *  one-shot: the horizontal arm (`> 0.5 b/t`) refreshes [burstTick] every tick while the
+     *  player keeps moving fast, so a burst-window exemption keyed on it would exempt any
+     *  sustained-fast player from the exempting check entirely. A launch impulse, by
+     *  contrast, happens once per burst, so an exemption keyed on THIS stamp covers the
+     *  launch arc only. Consumed by the LongJump boost gate (a burst launch legitimately
+     *  carries horizontal momentum for its first airborne ticks; the cheat's boost does not
+     *  arm the vertical arm). Default -10000 = never burst-launched. */
+    @Volatile var burstLaunchTick: Int = -10000
+
     /** Last client-ticked hand-swing phase for this player (vanilla `LivingEntity.handSwingTicks`,
      *  0 when not mid-swing; advanced client-side in `OtherClientPlayerEntity.tickMovement`). Captured
      *  into the replay/clip buffer so a replay ghost's arm swings when the player attacked/mined. */

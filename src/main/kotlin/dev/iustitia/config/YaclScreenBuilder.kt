@@ -162,16 +162,23 @@ object YaclScreenBuilder {
             .generateScreen(parent)
     }
 
-    private fun checkGroup(id: String, cc: IustitiaConfig.CheckConfig) = OptionGroup.createBuilder()
-        .name(Text.literal(id))
-        .option(bool("Enabled", "Toggle the $id check.", { cc.enabled }) { cc.enabled = it })
-        .option(double("Setback VL", "Alert only when VL exceeds this.", { cc.setbackVL }, 0.0, 100.0) { cc.setbackVL = it })
-        .option(double("Decay / tick", "VL reduced per clean tick.", { cc.decay }, 0.0, 5.0) { cc.decay = it })
-        // Threshold max 200 covers the largest default (aimWrap 165) with headroom; the range
-        // is now actually applied to the controller, so the field is slider/keyboard-bounded
-        // instead of accepting any double (the previous helper ignored its min/max args).
-        .option(double("Threshold", "Primary numeric threshold (check-specific meaning).", { cc.threshold }, 0.0, 200.0) { cc.threshold = it })
-        .build()
+    private fun checkGroup(id: String, cc: IustitiaConfig.CheckConfig): OptionGroup {
+        val b = OptionGroup.createBuilder()
+            .name(Text.literal(id))
+            .option(bool("Enabled", "Toggle the $id check.", { cc.enabled }) { cc.enabled = it })
+            .option(double("Setback VL", "Alert only when VL exceeds this.", { cc.setbackVL }, 0.0, 100.0) { cc.setbackVL = it })
+            .option(double("Decay / tick", "VL reduced per clean tick.", { cc.decay }, 0.0, 5.0) { cc.decay = it })
+            // Threshold max 200 covers the largest default (aimWrap 165) with headroom; the range
+            // is now actually applied to the controller, so the field is slider/keyboard-bounded
+            // instead of accepting any double (the previous helper ignored its min/max args).
+            .option(double("Threshold", "Primary numeric threshold (check-specific meaning).", { cc.threshold }, 0.0, 200.0) { cc.threshold = it })
+        // The fly group also carries the Fly(Blink) sub-signal's freeze window (additive field —
+        // see [IustitiaConfig.blinkFreezeTicks]). Clamped to the same 5..200 range at use.
+        if (id == "flyEnvelope") {
+            b.option(int("Blink freeze ticks", "Sustained airborne full-freeze ticks before a Fly(Blink) episode flag. A PURE midair freeze is 1v1-unobservable from a player-specific lag stall (that's what the server-lag burst exemption is for), so the default (30 = 1.5s) is deliberately conservative. Higher = fewer lag FPs, lower = faster blink detection.", { ConfigManager.config.blinkFreezeTicks }, 5, 200) { ConfigManager.config.blinkFreezeTicks = it })
+        }
+        return b.build()
+    }
 
     private fun bool(name: String, desc: String, getter: () -> Boolean, setter: (Boolean) -> Unit): Option<Boolean> =
         Option.createBuilder<Boolean>()

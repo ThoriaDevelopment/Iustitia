@@ -295,6 +295,7 @@ object ConfigManager {
         addProperty("chathistEnabled", c.chathistEnabled)
         addProperty("chathistCaptureUnknown", c.chathistCaptureUnknown)
         for ((key, cc) in c.checks()) add(key, checkToJson(cc))
+        addProperty("blinkFreezeTicks", c.blinkFreezeTicks)
     }
 
     private fun checkToJson(cc: IustitiaConfig.CheckConfig): JsonObject = JsonObject().apply {
@@ -400,6 +401,9 @@ object ConfigManager {
         if (o.has("chathistEnabled")) c.chathistEnabled = o.get("chathistEnabled").asBoolean
         // chathistCaptureUnknown: additive — a pre-field config keeps the default (off). No CONFIG_VERSION bump.
         if (o.has("chathistCaptureUnknown")) c.chathistCaptureUnknown = o.get("chathistCaptureUnknown").asBoolean
+        // blinkFreezeTicks: additive (Fly(Blink) 1v1 window) — a pre-field config keeps the
+        // default (30). No CONFIG_VERSION bump.
+        if (o.has("blinkFreezeTicks")) c.blinkFreezeTicks = o.get("blinkFreezeTicks").asInt
         for ((key, cc) in c.checks()) {
             if (o.has(key)) readCheck(o.getAsJsonObject(key), cc, resetCalibration)
         }

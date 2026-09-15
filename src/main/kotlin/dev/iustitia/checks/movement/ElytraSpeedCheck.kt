@@ -27,7 +27,10 @@ import kotlin.math.hypot
  *    and the 3-tick sustain absorbs any metadata-lag edge. Shares `elytraSpeed`'s VL pool
  *    (no new check id); the label distinguishes the sprint sub-flag from the speed tiers.
  *
- * The 3-tick sustain gate absorbs momentary firework-boost spikes. setbackVL 5, decay 1/tick.
+ * The 3-tick sustain gate absorbs momentary firework-boost spikes. Episode-gated: one
+ * alert per sustained violating glide at setbackVL+1.0 (setbackVL 5), re-armed when the
+ * violating glide stops — the old flat 1.0/tick flag was exactly offset by the 1.0/tick
+ * decay and could never cross setbackVL.
  */
 class ElytraSpeedCheck : Check() {
 
@@ -39,8 +42,8 @@ class ElytraSpeedCheck : Check() {
         try {
             if (tp.inVehicle) return
             val ctx = contextOf(tp.uuid) as ElytraContext
-            if (!tp.gliding) { ctx.streak = 0; return }
-            if (tick - tp.lastTeleportTick < 5) { ctx.streak = 0; return }
+            if (!tp.gliding) { ctx.streak = 0; rearmEpisode(ctx, false); return }
+            if (tick - tp.lastTeleportTick < 5) { ctx.streak = 0; rearmEpisode(ctx, false); return }
             // Server-lag exemption: a server-wide hitch / catch-up burst injects a large
             // horizontal Δ that would trip the blatant/anomaly gate. Pause the streak (don't
             // reset — lag doesn't clear a cheater's glide state) and skip the sample.
@@ -58,10 +61,15 @@ class ElytraSpeedCheck : Check() {
                     // when it's the only active condition (or alongside — sprint is the cheat
                     // signature the speed tiers don't capture), else the speed label.
                     val label = if (sprintGliding) "ElytraSpeed(Sprint)" else "ElytraSpeed"
-                    flag(tp, ctx, 1.0, label, tick)
+                    // Episode-gated, not per-tick: a flat 1.0 flag per tick exactly equals the
+                    // 1.0/tick decay, so the old per-tick form could pin VL at ~1 forever and
+                    // never cross setbackVL 5 (a mathematically dead detector). One episode
+                    // alert at setbackVL+1.0, re-armed once the violating glide stops.
+                    flagEpisode(tp, ctx, label, tick)
                 }
             } else {
                 ctx.streak = 0
+                rearmEpisode(ctx, false)
             }
         } catch (_: Throwable) {}
     }

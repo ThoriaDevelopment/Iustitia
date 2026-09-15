@@ -17,8 +17,6 @@ import dev.iustitia.tracking.TrackedPlayer
 import net.minecraft.util.math.Vec3d
 import java.util.UUID
 import kotlin.math.acos
-import kotlin.math.ceil
-import kotlin.math.max
 import kotlin.math.sqrt
 
 /**
@@ -110,7 +108,9 @@ class ReachCheck : Check() {
             positions.add(victim.pos)
             for (p in victim.ring.getPositions(3, ev.tick)) positions.add(p)
 
-            val ctx = contextOf(attacker.uuid)
+            // ReachContext (not just the base CheckContext): the hitboxMiss episode keeps its
+            // own ring + latch on the context (see ReachContext below).
+            val ctx = contextOf(attacker.uuid) as ReachContext
 
             // ---------------------------------------------------------------
             // Exact-geometry path (motionless pair) -- ghost-tier reach.
@@ -196,19 +196,35 @@ class ReachCheck : Check() {
                     val center = bestVp.add(0.0, vh.height / 2.0, 0.0)
                     val dir = center.subtract(eye)
                     val dirLen = dir.length()
+                    var minAngle = Double.MAX_VALUE
                     if (dirLen > 0.01) {
-                        var minAngle = Double.MAX_VALUE
                         for (look in looks) {
                             val cosA = look.dotProduct(dir) / (look.length() * dirLen)
                             val angle = Math.toDegrees(acos(maxOf(-1.0, minOf(1.0, cosA))))
                             if (angle < minAngle) minAngle = angle
                         }
-                        if (minAngle > HITBOX_MISS_ANGLE) {
-                            flag(attacker, ctx, VL_HITBOX_MISS, "HitboxMiss", ev.tick, Evidence(
+                    }
+                    val miss = dirLen > 0.01 && minAngle > HITBOX_MISS_ANGLE
+                    // Episode-gated with its own ring + latch (an angular tell, not a distance
+                    // violation — it must not mix labels into the distance episode ring): the
+                    // old flat 2.0 per clear miss roughly broke even against the 0.25/tick decay
+                    // at combat cadence, so a silent-aimmer could flag forever without ever
+                    // alerting. ≥[MISS_MIN] clear misses in the last [MISS_WINDOW] hits → one
+                    // episode alert at setbackVL+1.0; a facing hit releases the latch.
+                    ctx.missRing.addFirst(miss)
+                    while (ctx.missRing.size > MISS_WINDOW) ctx.missRing.pollLast()
+                    var missCount = 0
+                    for (v in ctx.missRing) if (v) missCount++
+                    if (ctx.missRing.size >= MISS_WINDOW && missCount >= MISS_MIN) {
+                        if (!ctx.missEpisode) {
+                            ctx.missEpisode = true
+                            flag(attacker, ctx, setbackVL + 1.0, "HitboxMiss", ev.tick, Evidence(
                                 subLabel = "miss", measurement = minAngle, threshold = HITBOX_MISS_ANGLE,
                                 pos = eye, victim = victim.uuid,
                                 extra = "looked ${"%.1f".format(minAngle)}° off a hittable victim (within reach, not facing them)"))
                         }
+                    } else if (!miss) {
+                        ctx.missEpisode = false
                     }
                     // within reach but the angular miss wasn't clear → interpolation, fail-open
                     return
@@ -222,13 +238,22 @@ class ReachCheck : Check() {
                 // still clear it. The IN-BOX path below (look caught the hitbox → facing the
                 // victim) keeps the tight 0.4, so a facing reach hacker at 3.4+ (tatortot9yr's
                 // tier) is still caught there.
-                if (nearestFace > maxReach + 0.8) {
-                    val level = max(1.0, ceil((nearestFace - maxReach) * 2.0))
-                    flag(attacker, ctx, level, "Reach", ev.tick, Evidence(
+                // Sustained-episode gate, same economy as the motionless path: the sub-blatant
+                // edge level (~1.0/hit) roughly breaks even against the 0.25/tick decay at
+                // combat cadence, so the old per-hit flag could pin VL forever without ever
+                // alerting. Shares the motionless path's ring — both record "a recent hit
+                // measured out of range" — so a mixed-pattern reach cheater is judged on one
+                // coherent window. lagRangeAmplify rides the episode alert as before.
+                val overFace = nearestFace > maxReach + 0.8
+                val sustainedFace = sustained(ctx, overFace, STILL_WINDOW, STILL_MIN)
+                if (sustainedFace) {
+                    flagEpisode(attacker, ctx, "Reach", ev.tick, Evidence(
                         subLabel = "face", measurement = nearestFace, threshold = maxReach + 0.8,
                         pos = eye, victim = victim.uuid,
                         extra = "hit from ${"%.2f".format(nearestFace)} blocks (vanilla max ${"%.1f".format(maxReach)})"))
                     lagRangeAmplify(attacker, victim, ctx, eye, ev)
+                } else {
+                    rearmEpisode(ctx, sustainedFace)
                 }
                 return
             }
@@ -242,13 +267,17 @@ class ReachCheck : Check() {
             // 0.8 (flag past 3.8) makes reach a blatant-only detector: vanilla 3.0 + the 0.1
             // hitbox margin = 3.1 legit ceiling, so 3.8+ is unambiguously beyond reach even with
             // dash-lag noise. A real 3.8+ reach aura still clears it; legit dash-combat does not.
-            if (minDist > maxReach + 0.8) {
-                val level = max(1.0, ceil((minDist - maxReach) * 2.0))
-                flag(attacker, ctx, level, "Reach", ev.tick, Evidence(
+            // Episode-gated like the face path (same decay-break-even rationale).
+            val overInBox = minDist > maxReach + 0.8
+            val sustainedInBox = sustained(ctx, overInBox, STILL_WINDOW, STILL_MIN)
+            if (sustainedInBox) {
+                flagEpisode(attacker, ctx, "Reach", ev.tick, Evidence(
                     subLabel = "in-box", measurement = minDist, threshold = maxReach + 0.8,
                     pos = eye, victim = victim.uuid,
                     extra = "hit from ${"%.2f".format(minDist)} blocks (vanilla max ${"%.1f".format(maxReach)})"))
                 lagRangeAmplify(attacker, victim, ctx, eye, ev)
+            } else {
+                rearmEpisode(ctx, sustainedInBox)
             }
         } catch (_: Throwable) {
             // fail-open
@@ -310,17 +339,24 @@ class ReachCheck : Check() {
         return (maxX - minX) < STILL_EPS && (maxZ - minZ) < STILL_EPS && (maxY - minY) < STILL_EPS
     }
 
-    private class ReachContext : CheckContext()
+    private class ReachContext : CheckContext() {
+        /** Rolling clear-miss verdicts (hitboxMiss episode window) + its own latch, separate
+         *  from the shared distance episode ring/latch. */
+        val missRing = java.util.concurrent.ConcurrentLinkedDeque<Boolean>()
+        var missEpisode = false
+    }
 
     private companion object {
-        // -- hitboxMiss sub-flag (HITBOX-vs-REACH split, plan §3/§8 step 4) --
-        /** Flag level for the hitbox-miss sub-flag — "stronger than a distance flag" (§3); the
-         *  distance flag's level is `max(1.0, ceil((d-maxReach)*2))` (scales 1.0+). Tuned in step 14. */
+        // -- hitboxMiss sub-flag (HITBOX-vs-REACH split, plan §3/§8 step 4): episode-gated, one
+        //    alert at setbackVL+1.0 per sustained clear-miss pattern (see MISS_WINDOW/MISS_MIN). --
         /** Lag-comp window (ticks) for the attacker's interaction-range ring — covers the
          *  swing→hurt gap (`ProtocolDetector.hurtLookback` = 2 on 1.21) so a spear→sword swap
          *  between the swing and the (later) hurt tick keeps the spear's reach ceiling. */
         const val REACH_LAG_WINDOW = 3
-        const val VL_HITBOX_MISS = 2.0
+        /** Rolling window of clear hitbox misses the silent-aim episode is judged over. */
+        const val MISS_WINDOW = 4
+        /** Clear hitbox misses required in the window to confirm a silent-aim episode. */
+        const val MISS_MIN = 2
         /** Headroom (blocks) over the vanilla interaction range on the **motionless-pair** path,
          *  where interpolation error is provably absent. The vanilla reach check allows
          *  `range + hitboxMargin` = 3.1 for a player target, so 3.2 leaves 0.1 of headroom above the

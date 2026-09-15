@@ -34,6 +34,15 @@ class LongJumpCheck : Check() {
             if (tick - tp.lastTeleportTick < 5) return
             if (tick - tp.hurtTick < 5) return
             if (tick - tp.velocityTick < 40) return
+            // No-damage burst LAUNCH (wind charge / TNT pop): the vertical impulse carries
+            // horizontal momentum through its first airborne ticks, which would trip the
+            // boosted-launch gate. [hurtTick]/[velocityTick] never fire for a wind charge, so
+            // without this a wind-charge launch false-flags. Keyed on [TrackedPlayer.burstLaunchTick]
+            // (the one-shot vertical arm), NOT [TrackedPlayer.burstTick]: the horizontal arm
+            // refreshes burstTick every tick while the player keeps moving >10 bps, so a
+            // burstTick-keyed exemption would exempt a LongJump cheat's own boosted arc and
+            // blind this check.
+            if (tick - tp.burstLaunchTick < 20) return
             // Server-lag exemption: a server-wide hitch / catch-up burst injects a large
             // horizontal Δ that would trip the boosted-launch gate. Skip the sample.
             if (tick - EntityTrackerManager.lastServerLagTick <= LAG_WINDOW ||
