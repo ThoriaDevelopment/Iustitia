@@ -79,7 +79,7 @@
       "Chunk-gated — a 'blocked' verdict trusted only when both endpoint chunks are loaded",
       "Non-opaque blocks (glass/leaves/ice/fences/panes/iron-bars) treated as line-of-sight"
     ],
-    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.5, "threshold": 1.0 },
+    "defaults": { "enabled": true, "setbackVL": 8.0, "decay": 0.5, "threshold": 0.5 },
     "constants": [
       { "k": "ray", "v": "attacker eye -> victim eye" },
       { "k": "level", "v": "1.0" }
@@ -194,7 +194,7 @@
       "Only meaningful if preSprinting was true",
       "Hurt-window exempt (tick - hurtTick < 2) — knockback the attacker just took can preserve speed/sprint"
     ],
-    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.5, "threshold": 0.5 },
+    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.5, "threshold": 0.8 },
     "constants": [
       { "k": "ratio bar", "v": "> 0.8" },
       { "k": "pre-attack speed floor", "v": "0.2" },
@@ -237,7 +237,7 @@
       "KB-induced-hop exempt — if a velocity update arrived within 3 ticks the deltaY is server-induced, not counted",
       "Higher bar (5 hits / 90%) above the legit anti-KB-hop ceiling (~80%)"
     ],
-    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.2, "threshold": 0.4 },
+    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.2, "threshold": 0.3 },
     "constants": [
       { "k": "min hits", "v": "5" },
       { "k": "coincidence", "v": "0.9" },
@@ -286,7 +286,7 @@
       "Movement component requires flat ground, speed 0.15-0.45, not in hurt window, not on ice, chunk-unloaded fails negative",
       "Trails pruned (>80 entries -> remove tick - 200 stale)"
     ],
-    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.05, "threshold": 0.0 },
+    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.1, "threshold": 0.0 },
     "constants": [
       { "k": "combat window", "v": "70 ticks" },
       { "k": "rotation window", "v": "10" },
@@ -413,7 +413,7 @@
       "Solid block within 2 above head suppresses ascend (chunk unloaded -> treated as blocked)",
       "Sustained-levitation guard infers Levitation (LEV_GUARD_TICKS=20) and stops accumulating"
     ],
-    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 1.0, "threshold": 0.1 },
+    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.5, "threshold": 0.1 },
     "constants": [
       { "k": "breach sustain", "v": ">=2 ticks" },
       { "k": "hover", "v": "|dy|<0.01, horiz>0.1, 3 ticks" },
@@ -719,7 +719,7 @@
       "horiz < 0.3 pushes false",
       "Distance floor: tighter +/-3deg/+/-4deg inside 2 blocks vs +/-8deg/+/-10deg outside"
     ],
-    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.05, "threshold": 0.92 },
+    "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.1, "threshold": 0.92 },
     "constants": [
       { "k": "window", "v": "60" },
       { "k": "min samples", "v": "60" },

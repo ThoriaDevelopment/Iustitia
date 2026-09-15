@@ -149,6 +149,35 @@ def find_ids(pattern: str, text: str) -> set[str]:
     return set(re.findall(pattern, text, flags=re.MULTILINE))
 
 
+def find_check_defaults(config_text: str) -> dict[str, dict[str, object]]:
+    """Scrape `var <id>: CheckConfig = CheckConfig(enabled, setbackVL, decay, threshold)`.
+
+    Kotlin is the source of truth for detector defaults; `scripts/checks.json` only feeds the
+    docs generator. The two drifted apart silently -- six checks were retuned in Kotlin while the
+    JSON kept the old numbers -- so the generated pages published defaults no build had ever used.
+    An id-only comparison cannot catch that: the ids all still matched. The values have to be
+    compared too.
+
+    A parse miss is deliberately not silent. The caller reports an empty result as an error rather
+    than skipping the comparison, so a future refactor that changes the declaration shape fails
+    loudly instead of quietly retiring the guard.
+    """
+    out: dict[str, dict[str, object]] = {}
+    pattern = re.compile(
+        r"var\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*CheckConfig\s*=\s*CheckConfig\(\s*"
+        r"(true|false)\s*,\s*(-?[\d.]+(?:[eE][-+]?\d+)?)\s*,\s*(-?[\d.]+(?:[eE][-+]?\d+)?)"
+        r"\s*,\s*(-?[\d.]+(?:[eE][-+]?\d+)?)\s*\)"
+    )
+    for m in pattern.finditer(config_text):
+        out[m.group(1)] = {
+            "enabled": m.group(2) == "true",
+            "setbackVL": float(m.group(3)),
+            "decay": float(m.group(4)),
+            "threshold": float(m.group(5)),
+        }
+    return out
+
+
 def check_check_registry(errors: list[str], warnings: list[str]) -> None:
     entrypoint = SRC / "IustitiaClientMod.kt"
     config = SRC / "config" / "IustitiaConfig.kt"
@@ -187,6 +216,38 @@ def check_check_registry(errors: list[str], warnings: list[str]) -> None:
                 issue(errors, "scripts/checks.json contains an entry without an id")
             if list_ids and doc_ids != list_ids:
                 issue(errors, "scripts/checks.json IDs do not match IustitiaConfig.checks() IDs")
+
+            # Value drift, the failure ids cannot catch -- see [find_check_defaults].
+            kotlin_defaults = find_check_defaults(config_text)
+            if len(kotlin_defaults) != len(list_ids or kotlin_defaults):
+                issue(errors,
+                      f"parsed {len(kotlin_defaults)} CheckConfig(...) defaults from IustitiaConfig.kt, "
+                      f"expected {len(list_ids) if list_ids else '?'} -- the defaults guard cannot run")
+            for item in docs:
+                if not isinstance(item, dict):
+                    continue
+                cid = item.get("id")
+                source = kotlin_defaults.get(cid)
+                if source is None:
+                    # Unknown ids are already a hard error above; do not double-report here.
+                    continue
+                declared = item.get("defaults")
+                if not isinstance(declared, dict):
+                    issue(errors, f"scripts/checks.json entry '{cid}' has no defaults object")
+                    continue
+                for field, expected in source.items():
+                    actual = declared.get(field)
+                    if isinstance(actual, bool) or isinstance(expected, bool):
+                        if actual != expected:
+                            issue(errors, f"scripts/checks.json '{cid}' defaults.{field} is {actual!r}, "
+                                          f"but IustitiaConfig declares {expected!r}")
+                    elif isinstance(actual, (int, float)) and isinstance(expected, (int, float)):
+                        if abs(float(actual) - float(expected)) > 1e-9:
+                            issue(errors, f"scripts/checks.json '{cid}' defaults.{field} is {actual}, "
+                                          f"but IustitiaConfig declares {expected}")
+                    elif actual != expected:
+                        issue(errors, f"scripts/checks.json '{cid}' defaults.{field} is {actual!r}, "
+                                      f"but IustitiaConfig declares {expected!r}")
         except Exception as exc:
             issue(errors, f"scripts/checks.json is not valid JSON: {exc}")
     else:
