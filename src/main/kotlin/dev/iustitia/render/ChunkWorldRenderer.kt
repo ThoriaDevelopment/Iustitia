@@ -102,6 +102,11 @@ object ChunkWorldRenderer {
     private val passName: java.util.function.Supplier<String> =
         java.util.function.Supplier<String> { "iustitia-chunkworld" }
 
+    /** Reused per-frame collections — render thread only ([render]/[drawStaticAll] run there and both
+     *  are cleared at frame start, so leftovers from a failed frame can't leak into the next one). */
+    private val collectedChunks = ArrayList<ChunkMesher.ChunkBlocks>()
+    private val staticByLayer = HashMap<RenderLayer, ArrayList<ChunkMesher.StaticChunkLayer>>()
+
     // Reused joml args for the per-frame DynamicTransforms uniform write (DynamicUniforms.write copies
     // the values synchronously, so reuse is safe — no per-frame allocation).
     private val COLOR_MOD = Vector4f(1f, 1f, 1f, 1f)
@@ -149,29 +154,30 @@ object ChunkWorldRenderer {
 
             // Collect the in-range, not-behind-camera, baked chunks (the behind-camera cull + lazy bake
             // happen in [processChunk]; it returns the chunk to draw via [drawStaticAll] / [emitQuads]).
-            val collected = ArrayList<ChunkMesher.ChunkBlocks>()
+            // [collectedChunks] is a reused field — render-thread-only, cleared at frame start.
+            collectedChunks.clear()
             var budget = LAZY_BAKE_BLOCK_BUDGET
             for (d in 0..dist) {
                 if (d == 0) {
-                    budget -= processChunk(camChunkX, camChunkZ, 0, snap, collected, budget, rdx, rdy, rdz, fwd)
+                    budget -= processChunk(camChunkX, camChunkZ, 0, snap, collectedChunks, budget, rdx, rdy, rdz, fwd)
                     continue
                 }
                 for (cx in (camChunkX - d)..(camChunkX + d)) {
-                    budget -= processChunk(cx, camChunkZ - d, d, snap, collected, budget, rdx, rdy, rdz, fwd)
-                    budget -= processChunk(cx, camChunkZ + d, d, snap, collected, budget, rdx, rdy, rdz, fwd)
+                    budget -= processChunk(cx, camChunkZ - d, d, snap, collectedChunks, budget, rdx, rdy, rdz, fwd)
+                    budget -= processChunk(cx, camChunkZ + d, d, snap, collectedChunks, budget, rdx, rdy, rdz, fwd)
                 }
                 for (cz in (camChunkZ - d + 1)..(camChunkZ + d - 1)) {
-                    budget -= processChunk(camChunkX - d, cz, d, snap, collected, budget, rdx, rdy, rdz, fwd)
-                    budget -= processChunk(camChunkX + d, cz, d, snap, collected, budget, rdx, rdy, rdz, fwd)
+                    budget -= processChunk(camChunkX - d, cz, d, snap, collectedChunks, budget, rdx, rdy, rdz, fwd)
+                    budget -= processChunk(camChunkX + d, cz, d, snap, collectedChunks, budget, rdx, rdy, rdz, fwd)
                 }
             }
-            if (collected.isEmpty()) return
+            if (collectedChunks.isEmpty()) return
             // C2: try the batched static-GPU-mesh draw; on any throw fall back to the per-block vc.quad
             // emit for every collected chunk (the fail-open path — correct rendering, no FPS win).
             try {
-                drawStaticAll(collected, matrices)
+                drawStaticAll(collectedChunks, matrices)
             } catch (_: Throwable) {
-                for (cb in collected) {
+                for (cb in collectedChunks) {
                     try { emitQuads(cb, matrices, vcp) } catch (_: Throwable) {}
                 }
             }
@@ -294,15 +300,17 @@ object ChunkWorldRenderer {
         val enc = dev.createCommandEncoder()
 
         // Group the collected chunks by RenderLayer (at most entityCutout + blockTranslucentCull) so
-        // each layer is one RenderPass with the pipeline + textures + uniform bound once.
-        val byLayer = HashMap<RenderLayer, ArrayList<ChunkMesher.StaticChunkLayer>>()
+        // each layer is one RenderPass with the pipeline + textures + uniform bound once. Reused
+        // per-frame map (render thread only); the inner lists are reused too — cleared, not re-alloc'd.
+        for (list in staticByLayer.values) list.clear()
+        staticByLayer.clear()
         for (cb in chunks) {
             for ((layer, st) in cb.staticByLayer) {
                 if (st.vertexCount == 0) continue
-                byLayer.getOrPut(layer) { ArrayList() }.add(st)
+                staticByLayer.getOrPut(layer) { ArrayList() }.add(st)
             }
         }
-        if (byLayer.isEmpty()) throw IllegalStateException("no static layers")
+        if (staticByLayer.isEmpty()) throw IllegalStateException("no static layers")
 
         // Two operations map a GPU buffer and are ILLEGAL while a RenderPass is open ("Close the
         // existing render pass before performing additional commands"), so they MUST run before any
@@ -313,11 +321,11 @@ object ChunkWorldRenderer {
         // setIndexBuffer / setVertexBuffer / bindTexture / drawIndexed are pass-safe — they bind, not map).
         val mv = dynUniforms.write(modelView, COLOR_MOD, MODEL_OFFSET, TEX_IDENTITY)
         var globalMaxIdx = 0
-        for ((_, list) in byLayer) for (st in list) if (st.indexCount > globalMaxIdx) globalMaxIdx = st.indexCount
+        for ((_, list) in staticByLayer) for (st in list) if (st.indexCount > globalMaxIdx) globalMaxIdx = st.indexCount
         val idxBuffer = seq.getIndexBuffer(globalMaxIdx)
         val idxType = seq.getIndexType()
 
-        for ((layer, list) in byLayer) {
+        for ((layer, list) in staticByLayer) {
             var pass: com.mojang.blaze3d.systems.RenderPass? = null
             try {
                 pass = enc.createRenderPass(passName, colorView, OptionalInt.empty(), depthView, OptionalDouble.empty())

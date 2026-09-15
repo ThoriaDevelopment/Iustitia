@@ -368,10 +368,19 @@ object ChunkMesher {
                             GpuBuffer.USAGE_VERTEX or GpuBuffer.USAGE_COPY_DST,
                             bytes,
                         )
-                        val vertexCount = built.getDrawParameters().vertexCount()
-                        // DrawMode.QUADS: 4 verts/quad → 6 indices/quad (triangulated at draw by the
-                        // shared sequential quad index buffer).
-                        out[layer] = StaticChunkLayer(vb, vertexCount, vertexCount / 4 * 6)
+                        try {
+                            val vertexCount = built.getDrawParameters().vertexCount()
+                            // DrawMode.QUADS: 4 verts/quad → 6 indices/quad (triangulated at draw by the
+                            // shared sequential quad index buffer).
+                            out[layer] = StaticChunkLayer(vb, vertexCount, vertexCount / 4 * 6)
+                        } catch (t: Throwable) {
+                            // vb is ours until the [out] assignment hands ownership to the layer —
+                            // a throw in between (getDrawParameters, HashMap put) leaked the GPU
+                            // buffer: nothing owned it, so nothing closed it on teardown. Close it
+                            // here and rethrow into the per-layer fail-open catch below.
+                            try { vb.close() } catch (_: Throwable) {}
+                            throw t
+                        }
                     } finally {
                         try { built.close() } catch (_: Throwable) {}
                     }

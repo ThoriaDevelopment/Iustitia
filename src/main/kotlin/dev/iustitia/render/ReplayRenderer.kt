@@ -1116,18 +1116,45 @@ object ReplayRenderer {
         matrices.push()
         try {
             matrices.translate(e.x.toDouble(), e.y.toDouble(), e.z.toDouble())
-            r.render(state, matrices, ImmediateRenderQueue(vcp), CameraRenderState())
+            r.render(state, matrices, immediateQueue(vcp), cameraState)
         } catch (_: Throwable) {
         } finally {
             matrices.pop()
         }
     }
 
-    /** Drop the per-uuid walk/health ghost caches (called from [ReplayState.stop]). Idempotent. */
+    /** Reused per-frame render helpers — render thread only (everything [drawGhosts] calls runs
+     *  there). The queue is re-bound to the frame's vcp each call; the [CameraRenderState] is
+     *  read-only input to entity renderers (vanilla shares one per frame across all entities too). */
+    private var reusedQueue: ImmediateRenderQueue? = null
+    private val cameraState = CameraRenderState()
+
+    private fun immediateQueue(vcp: VertexConsumerProvider): ImmediateRenderQueue {
+        val q = reusedQueue
+        if (q != null) { q.bind(vcp); return q }
+        return ImmediateRenderQueue(vcp).also { reusedQueue = it }
+    }
+
+    /** Drop every replay-scoped ghost cache (called from [ReplayState.stop]). Idempotent.
+     *  The renderer/prototype caches are the important ones: their entries are fabricated
+     *  against the `mc.world`/dispatcher live at LOOKUP time, so a clip played in a
+     *  different world/dimension after this replay would keep rendering ghosts with
+     *  renderers + prototype entities bound to the previous world (the old version cleared
+     *  only the walk/health per-uuid state and leaked all of these for the JVM's lifetime).
+     *  Render-thread only (stop is client-thread; the maps are either thread-safe or only
+     *  touched on this thread, and they are empty again by the next replay's first frame). */
     fun clearGhostCaches() {
         try {
             walkState.clear()
             healthState.clear()
+            entityRendererCache.clear()
+            entityPrototypeCache.clear()
+            nonLivingRendererCache.clear()
+            nonLivingPrototypeCache.clear()
+            stackCache.clear()
+            playerRenderer = null
+            cachedAlertLabels = emptyMap()
+            cachedAlertTick = Int.MIN_VALUE
         } catch (_: Throwable) {}
     }
 

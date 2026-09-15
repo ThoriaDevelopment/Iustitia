@@ -63,19 +63,20 @@ object ChunkRollingCapture {
         try {
             val world = MinecraftClient.getInstance().world ?: return
             val st = store.getOrPut(segmentId) { HashMap() }
+            val cap = rollingChunkCap()  // once per tick, not per chunk attempt
             val r = radius.coerceIn(1, 32)
             var n = 0
             for (d in 0..r) {
                 if (d == 0) {
-                    if (tryCapture(st, world, pcx, pcz)) { n++; if (n >= PER_TICK) return }
+                    if (tryCapture(st, world, pcx, pcz, cap)) { n++; if (n >= PER_TICK) return }
                 } else {
                     for (cx in (pcx - d)..(pcx + d)) {
-                        if (tryCapture(st, world, cx, pcz - d)) { n++; if (n >= PER_TICK) return }
-                        if (tryCapture(st, world, cx, pcz + d)) { n++; if (n >= PER_TICK) return }
+                        if (tryCapture(st, world, cx, pcz - d, cap)) { n++; if (n >= PER_TICK) return }
+                        if (tryCapture(st, world, cx, pcz + d, cap)) { n++; if (n >= PER_TICK) return }
                     }
                     for (cz in (pcz - d + 1)..(pcz + d - 1)) {
-                        if (tryCapture(st, world, pcx - d, cz)) { n++; if (n >= PER_TICK) return }
-                        if (tryCapture(st, world, pcx + d, cz)) { n++; if (n >= PER_TICK) return }
+                        if (tryCapture(st, world, pcx - d, cz, cap)) { n++; if (n >= PER_TICK) return }
+                        if (tryCapture(st, world, pcx + d, cz, cap)) { n++; if (n >= PER_TICK) return }
                     }
                 }
             }
@@ -87,20 +88,17 @@ object ChunkRollingCapture {
         st: HashMap<Long, ChunkSnapshot.ChunkRec>,
         world: net.minecraft.client.world.ClientWorld,
         cx: Int, cz: Int,
+        cap: Int,
     ): Boolean {
         val k = chunkKey(cx, cz)
         if (st.containsKey(k)) return false
-        val cap = rollingChunkCap()
         if (totalSections >= cap) return false
         val secs = try { ChunkCapture.captureChunkAt(world, cx, cz) } catch (_: Throwable) { null }
             ?: return false
-        if (totalSections + secs.size > cap) {
-            val room = cap - totalSections
-            if (room <= 0) return false
-            st[k] = ChunkSnapshot.ChunkRec(cx, cz, secs.take(room))
-            totalSections += room
-            return true
-        }
+        // Budget nearly full: DON'T store a truncated chunk. A truncated ChunkRec would be a
+        // permanent hole in the replay world (containsKey -> never re-captured). Skip instead —
+        // the chunk is retried on a later tick once segment eviction frees budget.
+        if (totalSections + secs.size > cap) return false
         st[k] = ChunkSnapshot.ChunkRec(cx, cz, secs)
         totalSections += secs.size
         return true

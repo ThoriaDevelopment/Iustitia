@@ -732,12 +732,17 @@ object ReplayState {
         dev.iustitia.history.FlagHistory.nameOrShort(u)
     } catch (_: Throwable) { null }
 
-    /** The focus player's snap at the current playhead, or null (no focus / inactive / not in frame).
-     *  Read cross-thread by the camera mixin (POV/FOLLOW) + the ghost renderer (skip-focus-in-POV). */
-    fun focusSnap(): ReplayBuffer.PlayerSnap? = try {
+    /** The focus player's snap at the current playhead, lerped by [tickDelta] — the SAME frame +
+     *  fraction the ghost renderer draws from ([currentFrameLerped]), so the POV/FOLLOW camera
+     *  anchor and the ghost it films can't disagree by up to a full tick of motion at the tick
+     *  boundary. Falls back to the floor frame when no lerp applies (single-frame window /
+     *  segment-boundary snap). Null when no focus / inactive / not in frame. Render thread,
+     *  consumed synchronously — the lerped frame's snap list is shared render scratch (see
+     *  [currentFrameLerped]'s reuse note). */
+    fun focusSnap(tickDelta: Float): ReplayBuffer.PlayerSnap? = try {
         if (!active) return null
         val u = focusUuid ?: return null
-        currentFrame()?.snaps?.firstOrNull { it.uuid() == u }
+        (currentFrameLerped(tickDelta) ?: currentFrame())?.snaps?.firstOrNull { it.uuid() == u }
     } catch (_: Throwable) { null }
 
     /** The replay window's first..last captured tick (for mapping alert ticks to HUD progress). */

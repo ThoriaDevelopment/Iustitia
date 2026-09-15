@@ -1,10 +1,12 @@
 package dev.iustitia.replay
 
 import dev.iustitia.config.ConfigManager
+import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.tracking.TrackedPlayer
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.world.ClientWorld
 import net.minecraft.entity.EquipmentSlot
+import net.minecraft.entity.Entity
 import net.minecraft.entity.LivingEntity
 import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.item.ItemStack
@@ -65,20 +67,17 @@ object ReplayBuffer {
     private const val ENTITY_CAPTURE_RADIUS = 64.0
     private const val ENTITY_CAPTURE_RADIUS_SQ = ENTITY_CAPTURE_RADIUS * ENTITY_CAPTURE_RADIUS
 
-    /** Non-player entity capture toggle ([dev.iustitia.config.IustitiaConfig.clipEntities]). Fail-open
-     *  to the default (on) when the config can't be read. */
-    private fun entityCaptureEnabled(): Boolean = try { ConfigManager.config.clipEntities } catch (_: Throwable) { true }
+    /** Non-player entity capture toggle ([dev.iustitia.config.IustitiaConfig.clipEntities]). Read from
+     *  the caller's per-tick config snapshot — see [recordTick]. Fail-open to the default (on). */
+    private fun entityCaptureEnabled(cfg: IustitiaConfig): Boolean = cfg.clipEntities
 
-    /** Per-frame non-player entity cap ([dev.iustitia.config.IustitiaConfig.clipEntityCap]), clamped
-     *  0..256. Fail-open to 64. */
-    private fun entityCap(): Int = try { ConfigManager.config.clipEntityCap.coerceIn(0, 256) } catch (_: Throwable) { 64 }
+    /** Per-frame non-player entity cap ([IustitiaConfig.clipEntityCap]), clamped 0..256. Fail-open to 64. */
+    private fun entityCap(cfg: IustitiaConfig): Int = cfg.clipEntityCap.coerceIn(0, 256)
 
     /** Distance (blocks) the local player must move (or a world change) to begin a new capture segment
-     *  ([dev.iustitia.config.IustitiaConfig.clipSegmentTeleportThreshold]), clamped 1..512. Fail-open
-     *  to 64. */
-    private fun segmentTeleportThreshold(): Double = try {
-        ConfigManager.config.clipSegmentTeleportThreshold.coerceIn(1.0, 512.0)
-    } catch (_: Throwable) { 64.0 }
+     *  ([IustitiaConfig.clipSegmentTeleportThreshold]), clamped 1..512. Fail-open to 64. */
+    private fun segmentTeleportThreshold(cfg: IustitiaConfig): Double =
+        cfg.clipSegmentTeleportThreshold.coerceIn(1.0, 512.0)
 
     /** Pose encoding for [PlayerSnap.pose] / [EntitySnap.pose] (1 byte). */
     const val POSE_STAND: Byte = 0
@@ -208,7 +207,11 @@ object ReplayBuffer {
         try {
             val mc = MinecraftClient.getInstance()
             val world = mc.world
-            updateSegment(mc, world)
+            // One config snapshot for the whole tick (~8 [ConfigManager.config] getter reads collapsed
+            // to one): the gates below can't disagree mid-tick if a config save swaps the snapshot
+            // between them (e.g. entity capture on, entity cap from the new values).
+            val cfg = ConfigManager.config
+            updateSegment(mc, world, cfg)
 
             val snaps = ArrayList<PlayerSnap>(minOf(tracked.size, MAX_PLAYERS_PER_FRAME))
             for (tp in tracked) {
@@ -216,7 +219,7 @@ object ReplayBuffer {
                 val snap = buildSnap(tp) ?: continue   // skip one bad player, keep going
                 snaps.add(snap)
             }
-            val entities = if (world != null) buildEntitySnaps(world, mc.player) else emptyList()
+            val entities = if (world != null) buildEntitySnaps(world, mc.player, cfg) else emptyList()
             synchronized(frames) {
                 frames.addLast(Frame(tick, snaps, entities, currentSegmentId))
                 while (frames.size > MAX_FRAMES) frames.removeFirst()
@@ -232,30 +235,33 @@ object ReplayBuffer {
      * gets a fresh id + recorded dimension key. (Chunk rolling capture is Phase 2; this only tags the
      * frames so the codec/overlay can later group them.) Fail-open.
      */
-    private fun updateSegment(mc: MinecraftClient, world: World?) {
+    private fun updateSegment(mc: MinecraftClient, world: World?, cfg: IustitiaConfig) {
         val self = mc.player
         val px = self?.x ?: 0.0
         val py = self?.y ?: 0.0
         val pz = self?.z ?: 0.0
-        val thr = segmentTeleportThreshold()
+        val thr = segmentTeleportThreshold(cfg)
         val newSegment = when {
             world === null -> false
             world !== lastWorld -> true
             self == null -> false
             else -> {
-                val dx = px - lastX; val dy = py - lastY; val dz = pz - lastZ
-                dx * dx + dy * dy + dz * dz > thr * thr
+                // Horizontal only: a fall (large dy, small dxz) is continuous motion the camera and
+                // lerp can bridge — segmenting on it would snap the replay every few ticks of a
+                // long drop. Genuine teleports move horizontally too.
+                val dx = px - lastX; val dz = pz - lastZ
+                dx * dx + dz * dz > thr * thr
             }
         }
         if (world != null) {
             if (newSegment) {
                 currentSegmentId++
                 segmentDimensions[currentSegmentId] = try { world.registryKey.value.toString() } catch (_: Throwable) { "?" }
-                beginSegmentCapture(currentSegmentId, px, pz)
+                beginSegmentCapture(currentSegmentId, px, pz, cfg)
             }
             // Roll the segment's world in a little each tick (bounded per-tick cost), so an export has
             // the world already captured instead of sweeping ~300 chunks synchronously in the command.
-            tickSegmentCapture(currentSegmentId, px, pz)
+            tickSegmentCapture(currentSegmentId, px, pz, cfg)
             lastWorld = world
             lastX = px; lastY = py; lastZ = pz
         }
@@ -263,18 +269,18 @@ object ReplayBuffer {
 
     /** Rolling chunk capture is gated on [dev.iustitia.config.IustitiaConfig.clipChunkWorld] (the same
      *  toggle the export honours). Fail-open to on. */
-    private fun rollingCaptureEnabled(): Boolean = try { ConfigManager.config.clipChunkWorld } catch (_: Throwable) { true }
+    private fun rollingCaptureEnabled(cfg: IustitiaConfig): Boolean = cfg.clipChunkWorld
 
     /** Capture radius in chunks ([IustitiaConfig.clipChunkRadius], clamped 1..32). Fail-open to 8. */
-    private fun clipRadius(): Int = try { ConfigManager.config.clipChunkRadius.coerceIn(1, 32) } catch (_: Throwable) { 8 }
+    private fun clipRadius(cfg: IustitiaConfig): Int = cfg.clipChunkRadius.coerceIn(1, 32)
 
     /** Open the rolling world capture for a fresh segment (nearest-first fill happens in
      *  [tickSegmentCapture]). Fail-open. */
-    private fun beginSegmentCapture(segmentId: Int, px: Double, pz: Double) {
+    private fun beginSegmentCapture(segmentId: Int, px: Double, pz: Double, cfg: IustitiaConfig) {
         try {
-            if (!rollingCaptureEnabled()) return
+            if (!rollingCaptureEnabled(cfg)) return
             ChunkRollingCapture.onSegmentStart(
-                segmentId, Math.floorDiv(px.toInt(), 16), Math.floorDiv(pz.toInt(), 16), clipRadius(),
+                segmentId, Math.floorDiv(px.toInt(), 16), Math.floorDiv(pz.toInt(), 16), clipRadius(cfg),
             )
         } catch (_: Throwable) {
         }
@@ -282,12 +288,12 @@ object ReplayBuffer {
 
     /** Add up to [ChunkRollingCapture.PER_TICK] not-yet-captured chunks to this segment's world.
      *  Fail-open. */
-    private fun tickSegmentCapture(segmentId: Int, px: Double, pz: Double) {
+    private fun tickSegmentCapture(segmentId: Int, px: Double, pz: Double, cfg: IustitiaConfig) {
         try {
-            if (!rollingCaptureEnabled()) return
+            if (!rollingCaptureEnabled(cfg)) return
             if (segmentId < 0) return
             ChunkRollingCapture.tickCapture(
-                segmentId, Math.floorDiv(px.toInt(), 16), Math.floorDiv(pz.toInt(), 16), clipRadius(),
+                segmentId, Math.floorDiv(px.toInt(), 16), Math.floorDiv(pz.toInt(), 16), clipRadius(cfg),
             )
         } catch (_: Throwable) {
         }
@@ -479,21 +485,30 @@ object ReplayBuffer {
      * (`clipEntityCap`). Players are excluded (they are already in [Frame.snaps]). Fail-open: a
      * per-entity read error skips that entity.
      */
-    internal fun buildEntitySnaps(world: ClientWorld, self: net.minecraft.client.network.ClientPlayerEntity?): List<EntitySnap> {
-        if (!entityCaptureEnabled()) return emptyList()
-        val cap = entityCap()
+    internal fun buildEntitySnaps(world: ClientWorld, self: net.minecraft.client.network.ClientPlayerEntity?, cfg: IustitiaConfig): List<EntitySnap> {
+        if (!entityCaptureEnabled(cfg)) return emptyList()
+        val cap = entityCap(cfg)
         if (cap <= 0) return emptyList()
         val p = self ?: return emptyList()
         val sx = p.x; val sy = p.y; val sz = p.z
         val out = ArrayList<EntitySnap>(minOf(cap, 32))
         try {
+            // Collect + sort by distance BEFORE the cap: `world.entities` iterates in hash order,
+            // so taking the first `cap` in-range entities could keep far ones and drop the mobs
+            // right next to the player when a crowd fills the budget.
+            val candidates = ArrayList<Pair<Entity, Double>>(64)
             for (entity in world.entities) {
-                if (out.size >= cap) break
                 if (entity === self) continue
                 if (entity is PlayerEntity) continue
                 if (entity.isRemoved) continue
                 val dx = entity.x - sx; val dy = entity.y - sy; val dz = entity.z - sz
-                if (dx * dx + dy * dy + dz * dz > ENTITY_CAPTURE_RADIUS_SQ) continue
+                val dSq = dx * dx + dy * dy + dz * dz
+                if (dSq > ENTITY_CAPTURE_RADIUS_SQ) continue
+                candidates.add(entity to dSq)
+            }
+            candidates.sortBy { it.second }
+            for ((entity, _) in candidates) {
+                if (out.size >= cap) break
                 val snap = if (entity is LivingEntity) buildEntitySnap(entity) else buildNonLivingEntitySnap(entity)
                 if (snap != null) out.add(snap)
             }

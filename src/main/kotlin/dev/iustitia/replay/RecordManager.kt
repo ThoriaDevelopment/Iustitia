@@ -142,6 +142,7 @@ object RecordManager {
         // /record, but a recording begun before the companion was noticed must not keep buffering.
         if (dev.iustitia.compat.CompanionMods.snapClip) return
         try {
+            val cfg = ConfigManager.config   // one config snapshot for the whole tick
             val snaps = ArrayList<ReplayBuffer.PlayerSnap>(minOf(tracked.size, MAX_PLAYERS_PER_FRAME))
             for (tp in tracked) {
                 if (snaps.size >= MAX_PLAYERS_PER_FRAME) break
@@ -151,10 +152,9 @@ object RecordManager {
             val mc = net.minecraft.client.MinecraftClient.getInstance()
             val entities = try {
                 val world = mc.world
-                if (world != null) ReplayBuffer.buildEntitySnaps(world, mc.player) else emptyList()
+                if (world != null) ReplayBuffer.buildEntitySnaps(world, mc.player, cfg) else emptyList()
             } catch (_: Throwable) { emptyList() }
             try {
-                val cfg = ConfigManager.config
                 val self = mc.player
                 if (cfg.clipChunkWorld && self != null) {
                     val radius = try { cfg.clipChunkRadius } catch (_: Throwable) { 8 }

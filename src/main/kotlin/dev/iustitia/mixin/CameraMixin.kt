@@ -182,11 +182,14 @@ class CameraMixin {
                     setPos(Vec3d(x, y, z))
                 }
                 ReplayState.CameraMode.POV -> {
-                    val snap = ReplayState.focusSnap() ?: return false
+                    // Lerped (not floor) frame: the ghost is drawn from currentFrameLerped, so the
+                    // camera must anchor on the same lerped snap or POV jitters a full tick of
+                    // motion relative to its own ghost at every tick boundary.
+                    val snap = ReplayState.focusSnap(tickDelta) ?: return false
                     positionReplayPov(snap)
                 }
                 ReplayState.CameraMode.FOLLOW -> {
-                    val snap = ReplayState.focusSnap() ?: return false
+                    val snap = ReplayState.focusSnap(tickDelta) ?: return false
                     positionReplayFollow(snap)
                 }
             }
