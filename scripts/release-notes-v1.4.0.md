@@ -59,7 +59,7 @@ Every number below was produced at `2c07601`, the tree the live suite last passe
 
 The two re-arm regressions were observed in both directions: one alert each against the pre-fix checks, where two were required, and two each against the fixed ones.
 
-The suite cannot see everything. Mixin packet decode, rendering and screenshots, ViaFabricPlus 1.8 behaviour, the legacy v2-v12 clip layouts (there are no reference clips in the repo to test them against) and multiplayer server interaction stay manual, and `docs/live-verification.md` is the checklist for them.
+The suite cannot see everything. Mixin packet decode, rendering and screenshots, ViaFabricPlus 1.8 behaviour, the legacy v2-v12 clip layouts (there are no reference clips in the repo to test them against) and multiplayer server interaction stay manual, and `docs/live-verification.md` is the checklist for them. The two entries on that checklist the suite structurally cannot reach, the dig pass behind the clickStatistics fix and the legacy attribution pass behind this one, were both worked by hand on 2026-09-16 and came back clean, so neither the dig-driven false positive nor a dead attribution path on a 1.8 server is left to assumption.
 
 ## Install
 

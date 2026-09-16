@@ -88,7 +88,7 @@ A synthetic or controlled trace is evidence of code behavior, not proof that the
 8. Test a death-respawn separately from a dimension/world change.
 9. Confirm no outgoing gameplay behavior was added unintentionally.
 
-### The dig pass (swing-source audit)
+### The dig pass (swing-source audit, RUN 2026-09-16)
 
 The harness cannot reach this one. The gametest bots are client-side display entities the server
 never tracks, so no `BlockBreakingProgressS2CPacket` is ever sent for them and the
@@ -114,7 +114,11 @@ account, or on any server where another player will take damage near you:
 5. Release the button and confirm the next swings are evaluated normally, with no alert left over
    from the dig.
 
-### The legacy attribution pass (attribution follow-up, NOT RUN)
+**Run by hand on 2026-09-16, reported clean.** The five steps above were worked on a live server. This
+pass needs a real server and a second account, so nothing in the suite reproduces it and no report file
+records it; the checklist above is the only write-up of what was worked.
+
+### The legacy attribution pass (attribution follow-up, RUN 2026-09-16)
 
 The harness cannot reach this one either, and the attribution fix turns it into the only path where
 guessing an attacker is still allowed. On a 1.8 to 1.19.3 server there is no
@@ -138,6 +142,11 @@ accounts:
    named-cause rule cannot apply where nothing is named. A player who *is* swinging near that damage
    can still be credited on a legacy server, and that is the accepted cost of detection working
    there at all.
+
+**Run by hand on 2026-09-16, reported clean.** The four steps above were worked against a live 1.8
+server through ViaFabricPlus, so the legacy attribution path is exercised rather than assumed. Like the
+dig pass, this one is outside what the suite can reach, and it stays a manual pass with no report file
+behind it.
 
 ## Mixin changes
 
