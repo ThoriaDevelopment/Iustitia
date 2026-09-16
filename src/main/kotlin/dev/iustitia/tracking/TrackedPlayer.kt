@@ -114,6 +114,34 @@ class TrackedPlayer(val uuid: UUID, var entityId: Int, val joinTick: Int) {
      *  into the replay/clip buffer so a replay ghost's arm swings when the player attacked/mined. */
     @Volatile var handSwingTicks: Int = 0
 
+    /** Sticky "the server accepted a dig from this player and has not ended it" flag, from
+     *  `BlockBreakingProgressS2CPacket` (see [EntityTrackerManager.markDig]). Set by any progress
+     *  >= 0, cleared only by the server's -1, by an id-carrying hurt naming this player as the
+     *  attacker (a proven attack, since vanilla makes digging and attacking mutually exclusive
+     *  through the crosshair target), or by leaving tracking.
+     *
+     *  Deliberately NOT time-expired: the server rebroadcasts progress only when the integer stage
+     *  changes, so a bedrock dig (breaking delta 0) sends exactly ONE packet and then silence for
+     *  as long as the button is held. A freshness window would re-open the false positive part-way
+     *  through every bedrock dig. See [digging]. */
+    @Volatile var digActive: Boolean = false
+
+    /** Tick of the last dig progress packet. Diagnostics and evidence only: not an expiry. */
+    @Volatile var digTick: Int = -10000
+
+    /** Centre of the block being broken, for the orphan-radius arm of [digging]. */
+    @Volatile var digPos: Vec3d = Vec3d.ZERO
+
+    /** True while a dig is live: [digActive] and still near the block.
+     *
+     *  The radius arm exists because the -1 that clears [digActive] is broadcast only within 32
+     *  blocks (`ServerWorld.setBlockBreakingInfo`), so a player who walks out of that radius while
+     *  breaking a block can never be sent one. Testing the player's own distance to the block shows
+     *  the -1 is unreachable rather than merely late, which is what lets the flag stay sticky
+     *  everywhere else. */
+    val digging: Boolean
+        get() = digActive && pos.squaredDistanceTo(digPos) <= DIG_ORPHAN_SQ
+
     /** Tick of the last tick this player actually moved (|delta|² >= 0.0001). Idle-since-join
      *  players keep the default -10000 so they never inflate the EntityTrackerManager mass-
      *  freeze (server-lag) signal — an AFK player frozen next to a Blinker must not exempt
@@ -256,5 +284,13 @@ class TrackedPlayer(val uuid: UUID, var entityId: Int, val joinTick: Int) {
         gliding || swimming || riptide -> 0.4
         sneaking -> 1.54
         else -> 1.62
+    }
+
+    companion object {
+        /** Squared feet-to-block-centre bound for [digging]. Vanilla block reach is 4.5 from
+         *  the EYE, and the eye sits 1.62 above the feet, so the furthest legal dig stance puts
+         *  the block centre roughly 6.5 from the feet. 8.0 clears every legal stance with margin,
+         *  while still expiring a dig the player has plainly walked away from. */
+        private const val DIG_ORPHAN_SQ = 8.0 * 8.0
     }
 }

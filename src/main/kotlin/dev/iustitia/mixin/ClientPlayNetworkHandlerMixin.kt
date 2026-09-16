@@ -1,6 +1,7 @@
 package dev.iustitia.mixin
 
 import dev.iustitia.Iustitia
+import dev.iustitia.event.DiggingSignal
 import dev.iustitia.event.EffectSignal
 import dev.iustitia.event.GameJoinSignal
 import dev.iustitia.event.HurtSignal
@@ -13,6 +14,7 @@ import net.minecraft.client.MinecraftClient
 import net.minecraft.client.network.ClientPlayNetworkHandler
 import net.minecraft.entity.Entity
 import net.minecraft.entity.effect.StatusEffects
+import net.minecraft.network.packet.s2c.play.BlockBreakingProgressS2CPacket
 import net.minecraft.network.packet.s2c.play.ChatMessageS2CPacket
 import net.minecraft.network.packet.s2c.play.DamageTiltS2CPacket
 import net.minecraft.network.packet.s2c.play.EntityAnimationS2CPacket
@@ -115,6 +117,29 @@ class ClientPlayNetworkHandlerMixin {
             ) return
             val attacker = otherPlayer(packet.entityId) ?: return
             Iustitia.bus.publish(SwingSignal(attacker, Iustitia.tickCounter, System.nanoTime(), anim))
+        } catch (_: Throwable) {}
+    }
+
+    /**
+     * Block-break progress for another player: the only observation that distinguishes a
+     * swing the server relayed because a dig was running from a swing the player chose.
+     * A digging player's arm is animated on the server's own `getHandSwingDuration()/2`
+     * clock (4 ticks bare-handed or with a tool, 3 under Haste I/II, 5 under Mining
+     * Fatigue I), so their swing stream is exactly constant and reads as a fixed-delay
+     * autoclicker to the cadence checks, and as a permanently eligible attacker to
+     * attack inference. See [dev.iustitia.event.DiggingSignal] for the broadcast rules
+     * (including the one-packet-per-dig case) and for what this does and does not attest.
+     *
+     * Fail-open. */
+    @Inject(method = ["onBlockBreakingProgress"], at = [At("HEAD")])
+    private fun iustitia_onBlockBreakingProgress(
+        packet: BlockBreakingProgressS2CPacket, ci: CallbackInfo
+    ) {
+        try {
+            val digger = otherPlayer(packet.entityId) ?: return
+            Iustitia.bus.publish(
+                DiggingSignal(digger, Iustitia.tickCounter, packet.progress, packet.pos)
+            )
         } catch (_: Throwable) {}
     }
 

@@ -4,6 +4,7 @@ import net.minecraft.client.MinecraftClient
 import net.minecraft.client.network.OtherClientPlayerEntity
 import net.minecraft.client.world.ClientWorld
 import net.minecraft.item.consume.UseAction
+import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.Vec3d
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
@@ -62,6 +63,17 @@ object EntityTrackerManager {
 
     fun all(): Collection<TrackedPlayer> = byUuid.values
 
+    /** The tracked player with this entity id, or null. Packet-sourced ids (an attack's
+     *  `sourceCauseId`, a swing's animation id) name entities, not uuids, so every consumer that
+     *  wants to resolve one back to a tracked player goes through here. Linear in tracked players;
+     *  called once per hurt or per attributed attack, not per tick. */
+    fun byEntityId(id: Int): TrackedPlayer? =
+        try {
+            byUuid.values.firstOrNull { it.entityId == id }
+        } catch (_: Throwable) {
+            null
+        }
+
     /**
      * Despawn listeners — fired once per player that left the client world this tick. [dev.iustitia.Iustitia]
      * wires a listener that calls `Check.purge(uuid)` for each, so a long single-world session doesn't
@@ -102,6 +114,42 @@ object EntityTrackerManager {
     fun markAttack(uuid: UUID, tick: Int) {
         try {
             byUuid[uuid]?.lastAttackTick = tick
+        } catch (_: Throwable) {
+            // ignore
+        }
+    }
+
+    /** Mark a block-break progress observation. `progress < 0` is the server's abort / stop /
+     *  destroy and clears the sticky dig state; any other value (re)arms it. Fail-open: a dropped
+     *  observation just means a digger keeps no exemption (the stricter direction). */
+    fun markDig(uuid: UUID, tick: Int, progress: Int, pos: BlockPos) {
+        try {
+            val tp = byUuid[uuid] ?: return
+            if (progress < 0) {
+                tp.digActive = false
+                return
+            }
+            tp.digActive = true
+            tp.digTick = tick
+            tp.digPos = Vec3d(pos.x + 0.5, pos.y + 0.5, pos.z + 0.5)
+        } catch (_: Throwable) {
+            // ignore
+        }
+    }
+
+    /** Clear the sticky dig state of the player an id-carrying hurt named as the attacker.
+     *
+     *  This is the proof that a dig observation is stale or spoofed: vanilla cannot attack
+     *  mid-dig, because `MinecraftClient.doAttack` and `handleBlockBreaking` both branch on the
+     *  same crosshair target, and the crosshair cannot be a block and an entity at once. So an
+     *  attacker the SERVER named (EntityDamageS2CPacket.sourceCauseId is not client-chosen) was
+     *  not digging when it landed, whatever the last progress packet said. That bounds a client
+     *  that keeps re-sending START_DESTROY_BLOCK to hold a fake dig open: the fake survives at
+     *  most until the next hit it lands, which is exactly the case the dig exemption would
+     *  otherwise hide. Fail-open. */
+    fun clearDig(entityId: Int) {
+        try {
+            byEntityId(entityId)?.digActive = false
         } catch (_: Throwable) {
             // ignore
         }

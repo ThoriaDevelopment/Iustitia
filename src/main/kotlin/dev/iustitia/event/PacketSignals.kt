@@ -1,5 +1,6 @@
 package dev.iustitia.event
 
+import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.Vec3d
 import java.util.UUID
 
@@ -20,6 +21,33 @@ data class SwingSignal(
     val tick: Int,
     val nanoTime: Long,
     val animationId: Int,
+)
+
+/**
+ * A block-break progress observation (BlockBreakingProgressS2CPacket) for [entity].
+ *
+ * [progress] >= 0 is a live dig at [pos] (the 0..9 stage the server broadcasts);
+ * -1 is the server's abort / stop / destroy and ends it.
+ *
+ * The server side is `ServerWorld.setBlockBreakingInfo`, which broadcasts to every
+ * other player in the same world within 32 blocks (squared distance < 1024.0) and,
+ * via `ServerPlayerInteractionManager.continueMining`, only when the integer stage
+ * CHANGES. A block whose breaking delta is 0 (bedrock, or obsidian under a too-weak
+ * tool) therefore produces exactly one progress-0 packet and then silence for as long
+ * as the button is held. That is why consumers keep this as sticky state rather than
+ * a time window.
+ *
+ * What this attests is that the server accepted a dig, not that the player is still
+ * holding the button: a client that keeps re-sending START_DESTROY_BLOCK re-arms it.
+ * Consumers must not treat the dig state as unforgeable; the guards that use it are
+ * bounded elsewhere (see AttackInference's direct-attribution path and the
+ * proven-attack clear).
+ */
+data class DiggingSignal(
+    val entity: UUID,
+    val tick: Int,
+    val progress: Int,
+    val pos: BlockPos,
 )
 
 /** A hurt event for [victim], from any of the four observable hurt channels. */

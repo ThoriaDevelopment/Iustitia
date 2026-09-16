@@ -4,6 +4,7 @@ import dev.iustitia.alert.AlertManager
 import dev.iustitia.checks.Check
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.event.AttackEvent
+import dev.iustitia.event.DiggingSignal
 import dev.iustitia.event.EventBus
 import dev.iustitia.event.HurtSignal
 import dev.iustitia.inference.AttackInference
@@ -140,6 +141,21 @@ object Iustitia {
         // enabled. Fail-open: a missed hurt just means no exemption (stricter, safe).
         try {
             bus.subscribe<HurtSignal> { EntityTrackerManager.markHurt(it.victim, it.tick) }
+        } catch (_: Throwable) {}
+        // Centralized block-break observation → sticky dig state, plus the proven-attack clear.
+        // Both live here rather than in a check so every consumer (clickStatistics' cadence
+        // windows and attack inference's proximity attribution) reads one shared answer to "was
+        // this swing a dig". The clear rides the same subscription because an id-carrying hurt is
+        // server ground truth that the named player attacked, which vanilla makes mutually
+        // exclusive with digging: it is what bounds a spoofed dig. Fail-open; a dropped
+        // observation means no dig exemption, and a dropped clear is covered by the server's -1.
+        try {
+            bus.subscribe<DiggingSignal> {
+                EntityTrackerManager.markDig(it.entity, it.tick, it.progress, it.pos)
+            }
+            bus.subscribe<HurtSignal> { h ->
+                if (h.attackerEntityId >= 0) EntityTrackerManager.clearDig(h.attackerEntityId)
+            }
         } catch (_: Throwable) {}
         // Centralized attack → combat-relevance timestamp for the sensitivity substrate feed
         // (FPS pass #3): the attacker is the cheater candidate whose sensitivity we want to
