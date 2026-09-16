@@ -274,6 +274,8 @@ the run, this table is maintained by hand.
 
 Last full run: **84 scenarios** at `ca12ec8` (2026-09-16) -- 17 legit incl. the smoke test, 59 cheat, 8 replay incl. the two preset gates. All 84 green in a single unsharded pass, **0 false positives, 0 bypasses**, with the 4 detector gaps and 6 drive gaps below still open. The raw report is `build/selftest-report.json`.
 
+`replay-show-self` and its row below landed after that run, so the inventory is now **85 scenarios** (9 replay) and the green pass quoted above does not cover it. `--list` prints the live inventory, which is the authoritative count.
+
 | | count |
 |---|---|
 | cheat scenarios | 59 |
@@ -382,6 +384,7 @@ each are in §6.3.
 | Camera modes (incl. freecam enter/exit restore) | `replay-camera-modes` |
 | `.iusclip` export -> metadata -> load -> play -> delete | `replay-clip-roundtrip` |
 | `/ius playclip` relocation + captured-world rendering | `replay-playclip-relocation` |
+| Show-self: your own snap in the buffer, its survival through the clip round trip, and the live-body hide | `replay-show-self` |
 | Disabled-check gate (toggled-off check = zero VL; re-enabled = alerts) | `preset-disabled-check-gate` |
 | Preset apply (schema-derived coverage + documented exclusions + standard semantics) | `preset-apply-coverage` |
 

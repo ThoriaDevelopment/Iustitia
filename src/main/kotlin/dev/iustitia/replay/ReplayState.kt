@@ -86,6 +86,15 @@ object ReplayState {
         private set
     @Volatile var hideLive: Boolean = true
         private set
+    /**
+     * True when the window being played actually carries a snap for the LOCAL player, i.e. it was
+     * recorded by a build that captures self (see [ReplayBuffer.buildSelfSnap]). Read by
+     * [shouldHideEntity] to decide whether the live body may be hidden: hiding it while no self ghost
+     * is on screen would leave the user with no body at all, which is exactly the case for a clip
+     * written before self capture existed. Freecam hides the live body regardless.
+     */
+    @Volatile var selfGhost: Boolean = false
+        private set
     /** Current camera mode (read by the render-thread camera mixin + the ghost renderer). Ephemeral
      *  — not persisted; defaults to FREE each replay. */
     @Volatile var cameraMode: CameraMode = CameraMode.FREE
@@ -288,6 +297,7 @@ object ReplayState {
             focusUuid = focus
             this.speed = speed
             this.hideLive = hideLive
+            selfGhost = windowHasSelf(window)
             playhead = 0f
             prevPlayhead = 0f
             paused = false
@@ -329,6 +339,54 @@ object ReplayState {
             return false
         }
     }
+
+    /**
+     * Does this window carry a snap for the local player? Drives [selfGhost], which is what lets the
+     * renderer hide the live body without ever leaving the user bodiless (see [selfGhost]).
+     *
+     * `any` short-circuits on the first frame that has one, and a self-capturing build puts self in
+     * EVERY frame, so in practice this is a single frame's scan. A window recorded before self capture
+     * existed (or replayed from such a clip) has none, and the scan is then bounded by
+     * frames x the per-frame player cap, once per replay start. Fail-open to false: no self ghost means
+     * the live body stays visible, which is the pre-existing behavior.
+     */
+    private fun windowHasSelf(window: ReplayBuffer.Window): Boolean = try {
+        val u = net.minecraft.client.MinecraftClient.getInstance().player?.uuid ?: return false
+        window.frames.any { f -> f.snaps.any { it.uuid() == u } }
+    } catch (_: Throwable) { false }
+
+    /**
+     * The single hide decision for [dev.iustitia.mixin.EntityRendererMixin]: should this entity's live
+     * render be suppressed right now?
+     *
+     * - **Self**: hidden in FREECAM, where the detached camera flies away from where you really are and
+     *   your body would just float at that now-irrelevant spot, or when the playing window carries a
+     *   captured snap of you ([selfGhost]). The ghost IS your body in that case, drawn at the replayed
+     *   position, so keeping the live one too renders you twice, and in POV it hangs in front of the
+     *   camera. Gating the second half on [selfGhost] is what keeps a clip recorded before self capture
+     *   from hiding your body with nothing to replace it.
+     * - **Everything else in a MODERN chunk-bearing clip** (`isModernChunkWorld`): hidden. Boats, item
+     *   frames, minecarts, armor stands and paintings were never recorded, so they render at their LIVE
+     *   positions and detach from the relocated recorded world (the reported signs/boats bug).
+     * - **Other players otherwise**: hidden only when [hideLive] is on (the rewind feel); with it off
+     *   the live players overlay the ghosts as before.
+     *
+     * This lives here rather than inline in the mixin so the gametest suite can drive every branch
+     * without a live render pass, which is the only way to catch a self branch that stopped being
+     * reachable. [isSelf] is therefore passed in explicitly, never inferred from an
+     * `as? OtherClientPlayerEntity` cast: in yarn 1.21.11 `ClientPlayerEntity` and
+     * `OtherClientPlayerEntity` are SIBLINGS (both extend `AbstractClientPlayerEntity`), so that cast is
+     * null for the local player and any self branch placed after one is dead code (verified with javap
+     * against the mapped 1.21.11 jar).
+     *
+     * Fail-open to false: a throw here means nothing is hidden, which leaves the pre-existing behavior.
+     */
+    fun shouldHideEntity(isModernChunkWorld: Boolean, isSelf: Boolean, isOtherPlayer: Boolean): Boolean = try {
+        if (!active) false
+        else if (isSelf) cameraMode == CameraMode.FREECAM || selfGhost
+        else if (isModernChunkWorld) true
+        else isOtherPlayer && hideLive
+    } catch (_: Throwable) { false }
 
     /**
      * The relocation offset: `userPos - origin`, where [origin] is the focus player's recorded start
@@ -525,6 +583,7 @@ object ReplayState {
             frames = emptyList()
             alerts = emptyList()
             focusUuid = null
+            selfGhost = false
             playhead = 0f
             prevPlayhead = 0f
             paused = false

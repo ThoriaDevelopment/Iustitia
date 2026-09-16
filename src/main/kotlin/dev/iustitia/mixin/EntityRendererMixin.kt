@@ -28,11 +28,27 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
  * work), so cancelling here is cheap and avoids the multi-pass flicker a `render`-targeting inject
  * would risk (shadow + main pass).
  *
- * ## Local-player exclusion
+ * ## Telling self apart from the other players
  *
- * `ClientPlayerEntity` IS-A `OtherClientPlayerEntity`, so the `as? OtherClientPlayerEntity` check
- * would also hide YOU in third-person during a replay. We exclude the local player by uuid (same
- * pattern as [PlayerEntityRendererMixin]).
+ * `ClientPlayerEntity` and `OtherClientPlayerEntity` are SIBLINGS in yarn 1.21.11, both extending
+ * `AbstractClientPlayerEntity` (verified with javap against the mapped jar). An
+ * `as? OtherClientPlayerEntity` cast is therefore null for the local player: it identifies the OTHER
+ * players only. That is convenient for the other-player rule, but it means any self branch placed
+ * after such a cast is unreachable dead code, which is the trap the shape below is written to avoid.
+ * `isSelf` comes from the entity's uuid, and the branching itself is delegated to
+ * [ReplayState.shouldHideEntity].
+ *
+ * ## Show-self: hiding your own body too
+ *
+ * The buffer captures the local player as an ordinary snap ([dev.iustitia.replay.ReplayBuffer.buildSelfSnap]),
+ * so a replay draws your own recorded body as a ghost alongside everyone else's. The live body is then
+ * hidden in EVERY camera mode, not just freecam, or you would appear twice: once standing where you
+ * really are and once walking the replayed path (and in POV the live body would sit in front of the
+ * camera). This is gated on [ReplayState.selfGhost] rather than applied unconditionally, because a clip
+ * recorded before self capture carries no self ghost: hiding the live body there would leave nothing at
+ * all on screen. Freecam hides the live body regardless, as it always has. The rule itself lives in
+ * [ReplayState.shouldHideEntity] so the gametest suite can drive it; see that method for the exact
+ * conditions.
  *
  * ## MODERN chunk-bearing playclip — hide ALL live entities
  *
@@ -41,8 +57,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable
  * but the LIVE world's non-player entities (boats, item frames, minecarts, armor stands, paintings,
  * ...) were never recorded and keep rendering at their LIVE positions via vanilla's dispatcher —
  * so they detached/jittered against the relocated recorded world (the reported signs/boats bug).
- * Under that gate we now cancel `shouldRender` for every entity that is NOT the local player (self
- * keeps the FREECAM hide below), so only the recorded chunk world + buffered ghosts show — the same
+ * Under that gate every entity that is NOT the local player is hidden (self keeps the FREECAM/
+ * show-self rule above), so only the recorded chunk world + buffered ghosts show — the same
  * rewind-the-world suppression already applied to other players, extended to all live entities.
  * Recorded block *models* still render in the chunk world; recorded entity/block-entity NBT is a
  * documented v1 follow-up (`ChunkCapture.kt:22-23`). The legacy `/ius playclip` + `/ius replay` paths
@@ -71,37 +87,19 @@ abstract class EntityRendererMixin {
     ) {
         try {
             if (!ReplayState.active) return
-            val mc = MinecraftClient.getInstance()
-            val isSelf = entity.uuid == mc.player?.uuid
-            // MODERN chunk-bearing playclip: hide EVERY live entity that isn't the local player —
-            // boats/item-frames/minecarts/armor-stands/paintings/etc. previously fell through here
-            // and rendered at LIVE positions, detached from the relocated recorded chunk world.
-            // Self keeps the FREECAM hide; everything else cancels. (See class doc.)
-            if (ReplayState.chunks != null && !ReplayState.legacyPlayclip) {
-                if (isSelf) {
-                    if (ReplayState.cameraMode == ReplayState.CameraMode.FREECAM) cir.setReturnValue(false)
-                } else {
-                    cir.setReturnValue(false)
-                }
-                return
+            // The decision itself lives in ReplayState.shouldHideEntity so the gametest suite can drive
+            // every branch without a live render pass (the scenario replay-show-self does). Only the
+            // facts that need the entity are computed here, and `isOtherPlayer` is passed as a flag
+            // rather than used as an early return: an `as? OtherClientPlayerEntity` guard placed above a
+            // self branch would make that branch unreachable (see the class doc).
+            if (ReplayState.shouldHideEntity(
+                    isModernChunkWorld = ReplayState.chunks != null && !ReplayState.legacyPlayclip,
+                    isSelf = entity.uuid == MinecraftClient.getInstance().player?.uuid,
+                    isOtherPlayer = entity is OtherClientPlayerEntity,
+                )
+            ) {
+                cir.setReturnValue(false)
             }
-            // Non-MODERN (legacy replay / wireframe clip): original behavior — only OTHER players hide.
-            val other = entity as? OtherClientPlayerEntity ?: return
-            if (isSelf) {
-                // FREECAM: the detached camera flies away from the local player, so the player's own
-                // body would float at its real (now-irrelevant) spot in the clip world. Hide it for
-                // a clean ReplayMod-style free spectate. Restored the instant FREECAM ends (next
-                // frame `active`/mode flips back). The player still ticks + receives input normally —
-                // only rendering is suppressed.
-                if (ReplayState.cameraMode == ReplayState.CameraMode.FREECAM) {
-                    cir.setReturnValue(false)
-                }
-                return
-            }
-            // Not self: hide OTHER players during a hide-live replay so only the buffered ghosts
-            // draw (the rewind-the-world feel). When hideLive is off the live players overlay the
-            // ghosts as before.
-            if (ReplayState.hideLive) cir.setReturnValue(false)
         } catch (_: Throwable) {
             // fail-open: never block rendering on an error
         }

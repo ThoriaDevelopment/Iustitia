@@ -261,4 +261,138 @@ object ReplayScenarios {
             }
         }
     }
+
+    /**
+     * Show-self: the recorder's own body, captured and drawn in both playclip modes.
+     *
+     * The local player is captured as an ordinary [ReplayBuffer.PlayerSnap] appended to every frame's
+     * snap list, which is why show-self needs no clip-format change. This scenario proves the three
+     * links in that chain instead of trusting them: (1) the rolling buffer carries a snap for the local
+     * uuid, (2) that snap survives a `.iusclip` save/load round trip, which is what makes it work for
+     * `/ius playclip` in both MODERN and LEGACY (a Legacy export skips terrain, chunks and relocation
+     * but never frames), and (3) [ReplayState.selfGhost] arms the live-body hide, including staying
+     * false for a window with no self snap so an older clip can never leave the observer bodiless.
+     */
+    class ShowSelf : SelfTest.Scenario("replay-show-self", "REPLAY") {
+        override fun run(b: SelfTest.ScenarioBuilder) {
+            val bot = b.bot("Actor", 0.0, 0.0)
+            var t = 0
+            b.everyTick {
+                bot.teleportTo(0.0, b.groundY, -t * 0.2)
+                t++
+            }
+            b.runFor(80)
+
+            // (1) The rolling buffer captures the local player. Matched by uuid, which is the identity
+            // the ghost renderer and the playhead interpolator use, so this asserts the real contract.
+            val selfFrames = ClientThread.computeOnClient { _ ->
+                val self = net.minecraft.client.MinecraftClient.getInstance().player?.uuid
+                    ?: return@computeOnClient -1
+                val window = ReplayBuffer.snapshot(4, dev.iustitia.Iustitia.tickCounter)
+                window.frames.count { f -> f.snaps.any { it.uuid() == self } }
+            }
+            check(selfFrames > 0) {
+                "SHOW-SELF capture failure: no frame in the window carried a snap for the local player " +
+                    "(found $selfFrames). Without buildSelfSnap the buffer records other tracked players only."
+            }
+
+            // (3a) The hide decision, driven through the exact function EntityRendererMixin calls.
+            // Asserting the flag alone is not enough, and that is not hypothetical: this decision was
+            // once unreachable dead code sitting behind an `as? OtherClientPlayerEntity` guard, which is
+            // null for the local player in 1.21.11, and every flag-only assertion stayed green while the
+            // live body rendered on top of the self ghost.
+            ClientThread.runOnClient { _ ->
+                val window = ReplayBuffer.snapshot(4, dev.iustitia.Iustitia.tickCounter)
+                check(ReplayState.start(window, null, ReplayState.SPEED_FULL, true, false, false)) {
+                    "ReplayState.start refused a non-empty window"
+                }
+                ReplayState.setCameraMode(ReplayState.CameraMode.FREE)
+                check(ReplayState.selfGhost) {
+                    "ReplayState.selfGhost is false for a window carrying a self snap."
+                }
+                check(ReplayState.shouldHideEntity(false, isSelf = true, isOtherPlayer = false)) {
+                    "/ius replay shape: the live body is NOT hidden while a self ghost draws, so you " +
+                        "appear twice, once where you really are and once walking the replayed path."
+                }
+                check(ReplayState.shouldHideEntity(true, isSelf = true, isOtherPlayer = false)) {
+                    "MODERN playclip shape: the live body is not hidden while the self ghost draws."
+                }
+                check(ReplayState.shouldHideEntity(false, isSelf = false, isOtherPlayer = true)) {
+                    "an other player is not hidden during a hide-live replay, so the rewind feel is gone."
+                }
+                check(!ReplayState.shouldHideEntity(false, isSelf = false, isOtherPlayer = false)) {
+                    "a non-player entity is hidden during a legacy replay, so mobs and boats would vanish."
+                }
+            }
+            b.runFor(4)
+            ClientThread.runOnClient { _ -> ReplayState.stop("selftest") }
+
+            // (3b) The negative case, and the reason the hide is gated at all: a window with no self
+            // snap must not hide the live body. That is every clip written before self capture existed,
+            // and hiding it there would leave no body on screen at all. The snaps are stripped from a
+            // real window rather than hand-built, so the shape stays honest.
+            val armedWithoutSelf = ClientThread.computeOnClient { _ ->
+                val self = net.minecraft.client.MinecraftClient.getInstance().player?.uuid
+                val window = ReplayBuffer.snapshot(4, dev.iustitia.Iustitia.tickCounter)
+                val stripped = window.copy(
+                    frames = window.frames.map { f ->
+                        f.copy(snaps = f.snaps.filterNot { it.uuid() == self })
+                    },
+                )
+                check(ReplayState.start(stripped, null, ReplayState.SPEED_FULL, true, false, false)) {
+                    "ReplayState.start refused the self-stripped window"
+                }
+                // Non-freecam, so [selfGhost] is the only thing that could hide the body.
+                ReplayState.setCameraMode(ReplayState.CameraMode.FREE)
+                ReplayState.shouldHideEntity(false, isSelf = true, isOtherPlayer = false)
+            }
+            check(!armedWithoutSelf) {
+                "SHOW-SELF guard failure: the live body is hidden for a window with no self snap, so an " +
+                    "older clip would leave you with no body on screen at all."
+            }
+            // Freecam is the one case that hides your body even with no self ghost: the detached camera
+            // is far from where you really are, so leaving your body visible there was never intended.
+            val freecamWithoutSelf = ClientThread.computeOnClient { _ ->
+                ReplayState.setCameraMode(ReplayState.CameraMode.FREECAM)
+                val hidden = ReplayState.shouldHideEntity(false, isSelf = true, isOtherPlayer = false)
+                ReplayState.stop("selftest")
+                hidden
+            }
+            check(freecamWithoutSelf) {
+                "freecam no longer hides the live body when the window has no self snap, so your body " +
+                    "would float at its real spot in the detached camera's view."
+            }
+
+            // (2) Round trip through the codec. ClipPlayback feeds ReplayState from the file, so a hidden
+            // decision here means the snap survived write + read and is drawable during /ius playclip.
+            // Checked for the LEGACY shape (no captured chunks), which is the one that renders over the
+            // live world and therefore the one where the live body would otherwise double up.
+            val name = "selftest_showself"
+            val saved = ClientThread.computeOnClient { _ ->
+                val window = ReplayBuffer.snapshotForExport(4, dev.iustitia.Iustitia.tickCounter)
+                ClipStore.save(name, window, null) ?: ""
+            }
+            check(saved.isNotEmpty()) { "ClipStore.save returned null -- show-self is unverifiable" }
+            try {
+                val armedAfterLoad = ClientThread.computeOnClient { _ ->
+                    val started = ClipPlayback.start(saved, ReplayState.SPEED_FULL)
+                    if (started !is ClipPlayback.Result.Started) {
+                        false
+                    } else {
+                        ReplayState.setCameraMode(ReplayState.CameraMode.FREE)
+                        val hidden = ReplayState.shouldHideEntity(false, isSelf = true, isOtherPlayer = false)
+                        ReplayState.stop("selftest")
+                        hidden
+                    }
+                }
+                check(armedAfterLoad) {
+                    "SHOW-SELF round-trip failure: a saved clip did not hide the live body, so the local " +
+                        "player's snap did not survive the codec and /ius playclip would show no self ghost."
+                }
+            } finally {
+                // Belt-and-braces cleanup so a failed assertion never leaves a stray file.
+                ClientThread.runOnClient { _ -> ClipStore.delete(name) }
+            }
+        }
+    }
 }

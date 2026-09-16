@@ -45,9 +45,14 @@ object TerrainCapture {
     const val MAX_TERRAIN_BLOCKS = 250_000
 
     /**
-     * Capture the terrain around [window]'s action. [focus] picks the anchor for the per-axis cap
-     * (the focus player's start, else the first-frame centroid). Returns null on any failure / empty
-     * bbox / no loaded world — the clip then saves without terrain.
+     * Capture the terrain around [window]'s action. [focus] picks the anchor for the per-axis cap: the
+     * focus player's recorded start, else the first snap of the first frame. Since the buffer captures
+     * the recorder first (see [ReplayBuffer.buildSelfSnap]), a focus-less window anchors on YOU, the
+     * recorder, which is the right centre for a clip where no player was named: the scene is the one you
+     * were standing in, and the bbox covers your own path for the same reason. The per-axis [CAP_HALF]
+     * cap and the [MAX_TERRAIN_BLOCKS] volume cap bound the result either way, so an observer recording
+     * from far away cannot blow the volume up, it only re-centres it. Returns null on any failure / empty
+     * bbox / no loaded world, in which case the clip saves without terrain.
      */
     fun capture(window: ReplayBuffer.Window, focus: java.util.UUID?): TerrainSnapshot? = try {
         val world = MinecraftClient.getInstance().world ?: return null

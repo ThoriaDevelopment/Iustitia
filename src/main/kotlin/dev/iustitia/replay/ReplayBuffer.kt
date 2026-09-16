@@ -213,7 +213,13 @@ object ReplayBuffer {
             val cfg = ConfigManager.config
             updateSegment(mc, world, cfg)
 
-            val snaps = ArrayList<PlayerSnap>(minOf(tracked.size, MAX_PLAYERS_PER_FRAME))
+            val snaps = ArrayList<PlayerSnap>(minOf(tracked.size + 1, MAX_PLAYERS_PER_FRAME))
+            // Self FIRST: your own body belongs in every frame, and ahead of the tracked players so a
+            // full player cap on a crowded server can never crowd it out. [tracked] only ever holds
+            // OTHER players (the tracker polls OtherClientPlayerEntity), so this is the single capture
+            // path for the local player. Fail-open: a null self just means no self ghost this tick.
+            val self = mc.player
+            if (self != null) buildSelfSnap(self)?.let { snaps.add(it) }
             for (tp in tracked) {
                 if (snaps.size >= MAX_PLAYERS_PER_FRAME) break
                 val snap = buildSnap(tp) ?: continue   // skip one bad player, keep going
@@ -476,6 +482,38 @@ object ReplayBuffer {
             swingTicks = tp.handSwingTicks, pose = poseOf(tp), name = nm,
             hurtTime = hurtTime, health = health, maxHealth = maxHealth,
             mainHand = mainHand, offHand = offHand, head = head, chest = chest, legs = legs, feet = feet,
+        )
+    } catch (_: Throwable) { null }
+
+    /**
+     * Capture the LOCAL player (the recorder) as an ordinary snap, so `/ius replay` + `/ius playclip`
+     * draw your own body alongside everyone else's. This is the only capture path for self: the tracker
+     * polls `OtherClientPlayerEntity` exclusively, so [buildSnap] never sees you.
+     *
+     * [net.minecraft.client.network.ClientPlayerEntity] IS-A [PlayerEntity] and so a [LivingEntity], so
+     * every read here is the same one [buildSnap] does on a tracked player's entity. The result goes
+     * into [Frame.snaps] as a normal entry — the clip format (v13) is unchanged, and the renderer, the
+     * tier lookup and the playhead interpolator all key snaps by UUID, so nothing needs a self case.
+     * Fail-open: null drops the self ghost for that tick, never the frame.
+     */
+    internal fun buildSelfSnap(p: net.minecraft.client.network.ClientPlayerEntity): PlayerSnap? = try {
+        val u = p.uuid
+        val nm = p.name.string.ifEmpty { u.toString().take(8) }
+        PlayerSnap(
+            u.mostSignificantBits, u.leastSignificantBits,
+            p.x.toFloat(), p.y.toFloat(), p.z.toFloat(),
+            p.yaw, p.pitch,
+            bodyYaw = p.bodyYaw, headYaw = p.headYaw,
+            swingTicks = try { p.handSwingTicks } catch (_: Throwable) { 0 },
+            pose = poseOfLiving(p), name = nm,
+            hurtTime = try { p.hurtTime.toByte() } catch (_: Throwable) { 0 },
+            health = try { p.getHealth() } catch (_: Throwable) { 20f },
+            maxHealth = try { p.getMaxHealth() } catch (_: Throwable) { 20f },
+            mainHand = idOf(p.mainHandStack), offHand = idOf(p.offHandStack),
+            head = idOf(p.getEquippedStack(EquipmentSlot.HEAD)),
+            chest = idOf(p.getEquippedStack(EquipmentSlot.CHEST)),
+            legs = idOf(p.getEquippedStack(EquipmentSlot.LEGS)),
+            feet = idOf(p.getEquippedStack(EquipmentSlot.FEET)),
         )
     } catch (_: Throwable) { null }
 

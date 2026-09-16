@@ -137,19 +137,23 @@ object RecordManager {
         if (dev.iustitia.compat.CompanionMods.snapClip) return
         try {
             val cfg = ConfigManager.config   // one config snapshot for the whole tick
-            val snaps = ArrayList<ReplayBuffer.PlayerSnap>(minOf(tracked.size, MAX_PLAYERS_PER_FRAME))
+            val mc = net.minecraft.client.MinecraftClient.getInstance()
+            val snaps = ArrayList<ReplayBuffer.PlayerSnap>(minOf(tracked.size + 1, MAX_PLAYERS_PER_FRAME))
+            // Self first, exactly as the rolling buffer does it (see [ReplayBuffer.buildSelfSnap]): a
+            // recording is a clip too, so your own body has to be in it. Added ahead of the tracked
+            // players so a full player cap on a crowded server can never crowd it out.
+            val self = mc.player
+            if (self != null) ReplayBuffer.buildSelfSnap(self)?.let { snaps.add(it) }
             for (tp in tracked) {
                 if (snaps.size >= MAX_PLAYERS_PER_FRAME) break
                 val snap = ReplayBuffer.buildSnap(tp) ?: continue
                 snaps.add(snap)
             }
-            val mc = net.minecraft.client.MinecraftClient.getInstance()
             val entities = try {
                 val world = mc.world
                 if (world != null) ReplayBuffer.buildEntitySnaps(world, mc.player, cfg) else emptyList()
             } catch (_: Throwable) { emptyList() }
             try {
-                val self = mc.player
                 if (cfg.clipChunkWorld && self != null) {
                     val radius = try { cfg.clipChunkRadius } catch (_: Throwable) { 8 }
                     val pcx = Math.floorDiv(self.x.toInt(), 16)

@@ -176,6 +176,7 @@ class SelfTestEntrypoint : FabricClientGameTest {
         ReplayScenarios.PlaybackControls(),
         ReplayScenarios.CameraModes(),
         ReplayScenarios.ClipRoundTrip(),
+        ReplayScenarios.ShowSelf(),
         ReplayScenarios.PlayclipRelocation(),
         PresetScenarios.PresetDisabledGate(),
         PresetScenarios.PresetApplyCoverage(),

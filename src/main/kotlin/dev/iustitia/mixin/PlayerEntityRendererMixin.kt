@@ -4,7 +4,6 @@ import dev.iustitia.VerboseLog
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
 import dev.iustitia.tracking.EntityTrackerManager
-import net.minecraft.client.MinecraftClient
 import net.minecraft.client.network.OtherClientPlayerEntity
 import net.minecraft.client.render.command.OrderedRenderCommandQueue
 import net.minecraft.client.render.entity.PlayerEntityRenderer
@@ -87,10 +86,13 @@ import java.util.IdentityHashMap
  *
  * ## Local-player exclusion
  *
- * `ClientPlayerEntity` IS-A `OtherClientPlayerEntity`, so the naive `entity as? OtherClientPlayerEntity`
- * check does NOT exclude the local player — it would prefix your own `displayName` (harmless only
- * because you aren't drawn in first-person). We exclude the local player explicitly by uuid so F5
- * third-person doesn't show your own prefix.
+ * `ClientPlayerEntity` and `OtherClientPlayerEntity` are SIBLINGS in yarn 1.21.11 (both extend
+ * `AbstractClientPlayerEntity`, verified with javap against the mapped jar), so the
+ * `entity as? OtherClientPlayerEntity` check already excludes the local player: the cast is null for
+ * yourself. That is what keeps F5 third-person from showing your own prefix, which means the null case
+ * below IS the self case. (An earlier revision of this comment claimed `ClientPlayerEntity` IS-A
+ * `OtherClientPlayerEntity` and added a uuid check on top of the cast; the cast was already doing the
+ * work, and [dev.iustitia.mixin.EntityRendererMixin] was less lucky with the same wrong premise there.)
  *
  * Target verified against yarn 1.21.11 mappings. `updateRenderState` = method_62604; the
  * `renderLabelIfPresent` override on `PlayerEntityRenderer` is `(PlayerEntityRenderState,
@@ -137,9 +139,10 @@ class PlayerEntityRendererMixin {
             // them), clear before the map grows unbounded. Normal operation is remove-on-read.
             if (stateTier.size > CAP) stateTier.clear()
 
+            // `null` means "not one of the other players", which covers the local player (the client
+            // player is not an OtherClientPlayerEntity; see the class doc), so self never gets a prefix.
             val other = entity as? OtherClientPlayerEntity
-            val isSelf = other != null && other.uuid == MinecraftClient.getInstance().player?.uuid
-            if (other == null || isSelf) {
+            if (other == null) {
                 stateTier.remove(state)
             } else {
                 stateTier[state] = TierEntry(

@@ -117,15 +117,21 @@ For any new or changed mixin:
 2. Start `/ius replay`.
 3. Test pause, resume, seek, step, speed, and stop.
 4. Confirm live players are restored immediately after stop.
-5. Test `/ius clip` and inspect that the file is written locally.
-6. Load it with `/ius playclip`.
-7. Test legacy and modern playclip modes if either was changed.
-8. Test freecam movement and mouse look if affected.
-9. Confirm chat, commands, inventory, and hotbar behavior matches the documented mode.
-10. Confirm movement/interactions are restored after playback stops.
-11. Test world/dimension change during playback.
-12. Test disconnect during playback.
-13. Test a missing/corrupt/old clip and confirm it fails without crashing.
+5. Confirm your own replayed body is visible and appears exactly once in each camera mode
+   (`freecam`, `pov`, `follow`, `free`). Your live body is hidden for the duration, so a second
+   body on screen, or none at all, means the show-self gate is wrong.
+6. Record a clip and repeat check 5 with `/ius playclip` in both Modern and Legacy mode. A clip
+   written by an older build carries no snap of you, and there your live body must stay visible
+   rather than vanishing.
+7. Test `/ius clip` and inspect that the file is written locally.
+8. Load it with `/ius playclip`.
+9. Test legacy and modern playclip modes if either was changed.
+10. Test freecam movement and mouse look if affected.
+11. Confirm chat, commands, inventory, and hotbar behavior matches the documented mode.
+12. Confirm movement/interactions are restored after playback stops.
+13. Test world/dimension change during playback.
+14. Test disconnect during playback.
+15. Test a missing/corrupt/old clip and confirm it fails without crashing.
 
 ### Replay merge (v13 segments, entity ghosts, block edits)
 
