@@ -69,13 +69,12 @@ Iustitia is now an open-collaboration project. `CONTRIBUTING.md`, `SECURITY.md`,
 
 ## Verification
 
-Every number below was produced at `2c07601`, the tree the live suite last passed on in full. The commits after it change preset content and check prose, and the detection passes observe neither: the harness turns every check on and overwrites the alert and display fields before each scenario, so a profile's scope and display settings never reach a flag. The suite is 92 scenarios now, one more than the pass below, and the addition is the last bullet of this list.
+Every number below was produced at `dce93fd`, the tree the live suite passes on.
 
 - `python scripts/verify_contribution.py --static`: pass. Six detector defaults in `scripts/checks.json` had drifted from the code they describe, so the verifier now compares them value by value against `IustitiaConfig.kt`; perturbing one makes it exit 1 instead of passing quietly.
-- `./gradlew test --no-daemon`: 21 tests, 0 failures.
-- `python scripts/live_selftest.py`: the full three-pass suite in a real game client. 91 scenarios, all green, 0 false positives, 0 bypasses. The 4 recorded detector gaps and 5 harness-gap entries are unchanged and still listed, and the whole cheat pass was re-run against the narrowed attribution, so no bypass opened behind the fix.
-- `python scripts/live_selftest.py --check preset`: a scoped boot of the three preset scenarios plus the smoke test, run at `b51bf22`. 4 of 4 green, so all five built-in profiles land their enable contract, their `setbackVL` scaling and their display settings on the live config object, and a name that is not a preset still changes nothing.
-- `./gradlew test --no-daemon` at `b51bf22`: 33 tests, 0 failures. `./gradlew build --no-daemon` and `python scripts/verify_contribution.py --static` both pass on the same tree.
+- `./gradlew test --no-daemon`: 33 tests, 0 failures.
+- `python scripts/live_selftest.py`: the full three-pass suite in a real game client. 92 scenarios (22 legit including the smoke test, 60 cheat, 10 replay), all green, 0 false positives, 0 bypasses. The 4 recorded detector gaps and 5 harness-gap entries are unchanged and still listed, and the whole cheat pass was re-run against the narrowed attribution, so no bypass opened behind the fix. It is also the first pass to cover `preset-builtin-coverage`, so the five profiles' detection scope and display settings are asserted against the live config instead of assumed; the harness could not see either before, because it turns every check on and overwrites the alert and display fields before each scenario.
+- `./gradlew build --no-daemon`: pass, jar and static checks included.
 
 The two re-arm regressions were observed in both directions: one alert each against the pre-fix checks, where two were required, and two each against the fixed ones.
 
