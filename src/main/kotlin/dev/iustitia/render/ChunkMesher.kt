@@ -150,9 +150,11 @@ object ChunkMesher {
     private val rand: Random = Random.create()
     private val directions: Array<Direction> = Direction.entries.toTypedArray()
 
-    /** Chunk-coord → long key (same encoding as [ChunkSnapshot]'s internal index). */
-    private fun key(chunkX: Int, chunkZ: Int): Long =
-        (chunkX.toLong() shl 32) or (chunkZ.toLong() and 0xFFFFFFFFL)
+    /** Chunk-coord → long key, delegating to the one definition of the encoding
+     *  ([dev.iustitia.replay.BlockDeltaBuffer.chunkKey]) so the bake cache and the snapshot index it
+     *  is keyed against can never drift apart. This local spelling stays because it is called ten
+     *  times below. */
+    private fun key(chunkX: Int, chunkZ: Int): Long = dev.iustitia.replay.BlockDeltaBuffer.chunkKey(chunkX, chunkZ)
 
     /**
      * Key the mesher to [snap]. A **different snapshot reference** (a new clip, or re-play of a reloaded
@@ -425,24 +427,34 @@ object ChunkMesher {
      *  NB: Registries.BLOCK is a DefaultedRegistry, so get(unknownId) returns AIR (never null) — an
      *  unknown block resolves to air, which renders as nothing and is a transparent neighbour —
      *  exactly the fail-open behaviour we want, so no special unknown-skip needed. */
-    private fun stateFor(name: String): BlockState? = stateCache.getOrPut(name) {
-        try {
-            if ('[' in name) {
-                // Registries.BLOCK is a DefaultedRegistry<Block> which IS-A RegistryWrapper.Impl<Block>
-                // (Registry extends RegistryWrapper.Impl), so it's passed directly as the wrapper the
-                // parser resolves block ids + properties against.
-                BlockArgumentParser.block(Registries.BLOCK, name, false).blockState()
-            } else {
-                val id = Identifier.tryParse(name) ?: return@getOrPut null
-                Registries.BLOCK.get(id).defaultState
-            }
-        } catch (_: Throwable) {
-            // fall back to the bare-id default state (today's behaviour) — a bad property value still
-            // renders the block in its default orientation instead of skipping it entirely.
-            val bare = name.substringBefore('[')
-            val id = Identifier.tryParse(bare) ?: return@getOrPut null
-            try { Registries.BLOCK.get(id).defaultState } catch (_: Throwable) { null }
+    private fun stateFor(name: String): BlockState? {
+        // `containsKey`, NOT `getOrPut`. Kotlin's getOrPut keys off `get(name) == null`, so a cached
+        // null reads back as "absent" and the resolver re-runs — which meant an unresolvable palette
+        // name was re-parsed on every single access for the whole clip, not once. A null here is a real
+        // answer ("this name resolves to nothing, skip it"), so the miss is memoized like any other.
+        if (stateCache.containsKey(name)) return stateCache[name]
+        val resolved = resolveState(name)
+        stateCache[name] = resolved
+        return resolved
+    }
+
+    /** The uncached half of [stateFor]: resolve a palette name once, no memoization. */
+    private fun resolveState(name: String): BlockState? = try {
+        if ('[' in name) {
+            // Registries.BLOCK is a DefaultedRegistry<Block> which IS-A RegistryWrapper.Impl<Block>
+            // (Registry extends RegistryWrapper.Impl), so it's passed directly as the wrapper the
+            // parser resolves block ids + properties against.
+            BlockArgumentParser.block(Registries.BLOCK, name, false).blockState()
+        } else {
+            val id = Identifier.tryParse(name) ?: return null
+            Registries.BLOCK.get(id).defaultState
         }
+    } catch (_: Throwable) {
+        // fall back to the bare-id default state (today's behaviour) — a bad property value still
+        // renders the block in its default orientation instead of skipping it entirely.
+        val bare = name.substringBefore('[')
+        val id = Identifier.tryParse(bare) ?: return null
+        try { Registries.BLOCK.get(id).defaultState } catch (_: Throwable) { null }
     }
 
     /** Resolve a block's tint colour (ARGB int) for tint index 0, memoized in [tintCache]. Same call

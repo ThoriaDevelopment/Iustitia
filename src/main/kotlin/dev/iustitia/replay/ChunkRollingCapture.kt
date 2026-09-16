@@ -43,8 +43,9 @@ object ChunkRollingCapture {
     private val store: HashMap<Int, HashMap<Long, ChunkSnapshot.ChunkRec>> = HashMap()
     private var totalSections: Int = 0
 
-    private fun chunkKey(chunkX: Int, chunkZ: Int): Long =
-        (chunkX.toLong() shl 32) or (chunkZ.toLong() and 0xFFFFFFFFL)
+    /** Delegates to the shared encoding ([BlockDeltaBuffer.chunkKey]) — this store is read back by key
+     *  from the export path, which uses the canonical form. */
+    private fun chunkKey(chunkX: Int, chunkZ: Int): Long = BlockDeltaBuffer.chunkKey(chunkX, chunkZ)
 
     /**
      * Evict the oldest segment(s) other than [keepSegment] until the section count is below [cap].

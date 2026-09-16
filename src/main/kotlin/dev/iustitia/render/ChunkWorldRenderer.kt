@@ -112,6 +112,10 @@ object ChunkWorldRenderer {
     private val COLOR_MOD = Vector4f(1f, 1f, 1f, 1f)
     private val MODEL_OFFSET = Vector3f()
     private val TEX_IDENTITY = Matrix4f()
+    /** Scratch for the per-frame model-view (= getModelView × the stack's position matrix).
+     *  `Matrix4f.mul(right, dest)` overwrites `dest` outright rather than accumulating, and nothing
+     *  holds the reference past the `write` that copies it, so one instance serves every frame. */
+    private val MODEL_VIEW = Matrix4f()
 
     /**
      * Draw the clip's chunk world. [matrices] is already translated by the shared origin translate
@@ -287,9 +291,8 @@ object ChunkWorldRenderer {
         // per-block translate, so DynamicTransforms = getModelView × matrices.peek() reproduces that
         // exactly. (Setting it to matrices.peek() alone — C2's first attempt — lost the rotation: blocks
         // translated with WASD but never rotated with the mouse.) mul(right, dest) writes getModelView ×
-        // base into [modelView] without mutating the shared getModelView matrix or the live stack entry.
-        val modelView = Matrix4f()
-        RenderSystem.getModelViewMatrix().mul(matrices.peek().getPositionMatrix(), modelView)
+        // base into [MODEL_VIEW] without mutating the shared getModelView matrix or the live stack entry.
+        RenderSystem.getModelViewMatrix().mul(matrices.peek().getPositionMatrix(), MODEL_VIEW)
         val dynUniforms = RenderSystem.getDynamicUniforms()
         // The block atlas needs the BLOCK_SAMPLER (CLAMP_TO_EDGE both axes, LINEAR min / NEAREST mag,
         // mipmap) — vanilla's RenderLayers.BLOCK_SAMPLER. The lightmap uses a plain LINEAR sampler.
@@ -319,7 +322,7 @@ object ChunkWorldRenderer {
         // quad index buffer. modelView is identical for every layer → write once + grow once to the
         // global max indexCount, then bind the pre-resolved slice/buffer inside each pass (setUniform /
         // setIndexBuffer / setVertexBuffer / bindTexture / drawIndexed are pass-safe — they bind, not map).
-        val mv = dynUniforms.write(modelView, COLOR_MOD, MODEL_OFFSET, TEX_IDENTITY)
+        val mv = dynUniforms.write(MODEL_VIEW, COLOR_MOD, MODEL_OFFSET, TEX_IDENTITY)
         var globalMaxIdx = 0
         for ((_, list) in staticByLayer) for (st in list) if (st.indexCount > globalMaxIdx) globalMaxIdx = st.indexCount
         val idxBuffer = seq.getIndexBuffer(globalMaxIdx)

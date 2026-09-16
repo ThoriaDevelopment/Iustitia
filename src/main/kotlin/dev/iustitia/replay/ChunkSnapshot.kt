@@ -58,8 +58,9 @@ data class ChunkSnapshot(val chunks: List<ChunkRec>) {
     /** Lazy chunk-index map: `key(chunkX, chunkZ) → ChunkRec`, built on first [nameAt]. */
     @Volatile private var index: HashMap<Long, ChunkRec>? = null
 
-    private fun key(chunkX: Int, chunkZ: Int): Long =
-        (chunkX.toLong() shl 32) or (chunkZ.toLong() and 0xFFFFFFFFL)
+    /** Delegates to the one definition of the encoding ([BlockDeltaBuffer.chunkKey]); the index has to
+     *  agree with every other chunk-keyed map in the replay stack, so it does not carry its own copy. */
+    private fun key(chunkX: Int, chunkZ: Int): Long = BlockDeltaBuffer.chunkKey(chunkX, chunkZ)
 
     private fun ensureIndex(): HashMap<Long, ChunkRec> {
         index?.let { return it }

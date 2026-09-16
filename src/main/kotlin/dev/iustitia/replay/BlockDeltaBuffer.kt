@@ -61,7 +61,15 @@ object BlockDeltaBuffer {
     /** Currently buffered delta count (diagnostic). Fail-open. */
     fun count(): Int = try { synchronized(deltas) { deltas.size } } catch (_: Throwable) { 0 }
 
-    /** Pack a chunk coord pair into one long key (matches [ChunkSnapshot]'s internal key). */
+    /**
+     * Pack a chunk coord pair into one long key — **the** definition, called by every other site that
+     * needs one ([ChunkSnapshot]'s index, [ChunkRollingCapture]'s store, [ChunkMesher]'s bake cache,
+     * [RecordManager]'s delta filter). High 32 bits = chunkX, low 32 = chunkZ, so the pair fits one
+     * `HashMap<Long, _>` key without boxing. The `and 0xFFFFFFFFL` masks sign extension: a negative
+     * chunkZ (any chunk at z < 0) would otherwise smear 1-bits across the whole high half and collide
+     * with unrelated chunks. It was copy-pasted into five more places before this one was made
+     * canonical, and every copy had to get that mask right — so the mask lives here, once.
+     */
     fun chunkKey(chunkX: Int, chunkZ: Int): Long =
         (chunkX.toLong() shl 32) or (chunkZ.toLong() and 0xFFFFFFFFL)
 }

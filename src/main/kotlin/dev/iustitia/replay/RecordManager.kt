@@ -269,11 +269,12 @@ object RecordManager {
             val minTick = outFrames.first().tick
             val maxTick = outFrames.last().tick
             val chunkKeys = buildSet {
-                for (c in map.chunks) add((c.chunkX.toLong() shl 32) or (c.chunkZ.toLong() and 0xFFFFFFFFL))
+                for (c in map.chunks) add(BlockDeltaBuffer.chunkKey(c.chunkX, c.chunkZ))
             }
             synchronized(blockDeltas) {
                 blockDeltas.filter { d ->
-                    d.tick in minTick..maxTick && chunkKeys.contains((d.x shr 4).toLong().let { (it shl 32) or ((d.z shr 4).toLong() and 0xFFFFFFFFL) })
+                    d.tick in minTick..maxTick &&
+                        chunkKeys.contains(BlockDeltaBuffer.chunkKey(d.x shr 4, d.z shr 4))
                 }.toList()
             }
         } catch (_: Throwable) { emptyList() }
