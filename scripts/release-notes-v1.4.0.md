@@ -8,7 +8,7 @@ The world around a `/ius clip` used to be swept all at once the moment you saved
 
 Clips also capture the whole scene now: nearby mobs, animals, boats and minecarts, plus every block edit observed during the window. Replays draw them through their own vanilla entity models, so what you replay is what you saw. Four new options in `/ius config` back this: **Clip captures entities**, **Entity capture cap** (default 64), **Rolling world budget** (default 24,000 sections, roughly 20–95 MB of live captured world — a *fully captured* 17×17-radius segment is ~3,500 sections ≈ 14 MB and about seven of those fit the default), and **New-segment distance**. If you're running a long session on a tight machine, the budget is the one to turn down.
 
-Clip format is now v13: per-segment worlds, block-edit deltas, entity capture, and body/head yaw. Every older clip (v2 through v12, including SnapClip's v9-v12) still loads here. The reverse is not true: an older Iustitia build can't read a v13 clip, so re-export one if you need to open it there.
+Clip format is now v13: per-segment worlds, block-edit deltas, entity capture, and body/head yaw. Clips from v2 through v12, including SnapClip's v9-v12, are still read here, though the older layouts are coded from the format's shape rather than from a reference clip, since none exist in this repo to test against, so treat that path as best-effort. A file that does not match is refused rather than half-loaded: the reader checks that it consumed exactly the bytes on disk and reports a truncated or unrecognized clip. The reverse is not true: an older Iustitia build can't read a v13 clip, so re-export one if you need to open it there.
 
 ## Detection pass
 
@@ -47,7 +47,7 @@ Every number below was produced at `ca12ec8`, the source tree this release is cu
 
 The two re-arm regressions were observed in both directions: one alert each against the pre-fix checks, where two were required, and two each against the fixed ones.
 
-The suite cannot see everything. Mixin packet decode, rendering and screenshots, ViaFabricPlus 1.8 behaviour and multiplayer server interaction stay manual, and `docs/live-verification.md` is the checklist for them.
+The suite cannot see everything. Mixin packet decode, rendering and screenshots, ViaFabricPlus 1.8 behaviour, the legacy v2-v12 clip layouts (there are no reference clips in the repo to test them against) and multiplayer server interaction stay manual, and `docs/live-verification.md` is the checklist for them.
 
 ## Install
 

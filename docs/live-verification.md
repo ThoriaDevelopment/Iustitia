@@ -59,12 +59,16 @@ For a changed check:
 1. Confirm the check appears in `/ius list`.
 2. Confirm its config slice is present and editable.
 3. Confirm a normal movement/combat trace does not immediately produce an alert.
-4. Exercise the intended suspicious-like trace in a controlled test.
-5. Confirm flags appear in `/ius hist` when expected.
-6. Confirm alert throttling, join grace, decay, and tier behavior.
-7. Confirm disabling the check stops new flags while preserving expected history behavior.
-8. Confirm `/ius clear <name>` resets the detection record without removing tracking.
-9. Confirm world change and disconnect reset transient state safely.
+4. If the detector was narrowed, play the legitimate shape it was narrowed around and
+   confirm the check stays silent. The four shapes worth replaying by hand are a slab or
+   stairs ramp for `flyEnvelope`, a strafe across a held crosshair for `triggerbot`, a
+   vanilla sword sweep for `multiTarget`, and an already-airborne victim for `noKnockback`.
+5. Exercise the intended suspicious-like trace in a controlled test.
+6. Confirm flags appear in `/ius hist` when expected.
+7. Confirm alert throttling, join grace, decay, and tier behavior.
+8. Confirm disabling the check stops new flags while preserving expected history behavior.
+9. Confirm `/ius clear <name>` resets the detection record without removing tracking.
+10. Confirm world change and disconnect reset transient state safely.
 
 A synthetic or controlled trace is evidence of code behavior, not proof that the detector is correct on every server.
 
@@ -98,7 +102,11 @@ For any new or changed mixin:
 3. Test third person if player rendering is involved.
 4. Test a target behind terrain where depth testing should apply.
 5. Test an unloaded or removed entity.
-6. Test a crowded scene if performance is relevant.
+6. Test a crowded scene if performance is relevant, and measure it rather than eyeball
+   it when a per-frame path changed: run `/ius debugfps`, spend a minute in a dense area
+   (a busy replay or clip with several players and mobs in view), then `/ius debugfps
+   stop` and read the report it writes under `.iustitia/debugfps/`. Compare the changed
+   path's share of frame time against the same run before the change.
 7. Check that the overlay does not appear over configuration or history screens.
 8. Capture a screenshot or short recording for visual changes when practical.
 9. Verify that an exception in one rendered object does not remove the live scene.
@@ -124,10 +132,15 @@ For any new or changed mixin:
 1. Capture a window that contains non-player entities; confirm the ghosts match kind and position, and that **Clip captures entities** off hides them all.
 2. Place and break blocks during a window, then replay/clip it; confirm the world shows the edits, and that seeking **backwards** restores the earlier state.
 3. Teleport (or change dimension) mid-window, export a clip, and confirm `/ius clip` reports more than one segment and replays each place instead of only the last.
-4. Confirm `/ius clip` returns without a multi-second freeze, and that turning **Clip captures full world** off stops the rolling capture.
-5. Confirm the segment's baked world is re-meshed after edits (no stale chunks or leaked buffers across segment switches).
-6. Confirm `/ius replay` still renders ghosts over the **live** world (it must not pull in a captured world).
-7. Confirm an older clip (v2–v12) still loads and that a SnapClip-era clip loads without a fabricated alert timeline.
+4. Confirm `/ius clip` returns without a multi-second freeze, and that turning **Clip
+   captures full world** off stops the rolling capture.
+5. Explore fast for over a minute through terrain you have not visited (a boat or elytra
+   run), then export. Confirm the clip holds the ground from the end of the run, not only
+   the first stretch; a capture that stops collecting once the rolling budget fills is the
+   failure this step is for.
+6. Confirm the segment's baked world is re-meshed after edits (no stale chunks or leaked buffers across segment switches).
+7. Confirm `/ius replay` still renders ghosts over the **live** world (it must not pull in a captured world).
+8. Confirm an older clip (v2-v12) still loads and that a SnapClip-era clip loads without a fabricated alert timeline. Confirm a clip with a truncated or trailing-byte tail is refused with a message rather than loaded from a shifted parse.
 
 ## Persistence and configuration
 

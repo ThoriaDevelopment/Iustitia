@@ -1313,9 +1313,11 @@ object IustitiaCommand {
             target == null -> { focus = null; secs = DEFAULT_REPLAY_SECS; focusTxt = "everyone" }
             target.toDoubleOrNull() != null -> {
                 focus = null
-                // A trailing <seconds> arg wins over the target number (`/ius replay 60 0.5` parses
-                // "60" as <target> and "0.5" as <seconds> — without this read the trailing value was
-                // silently discarded and the target number used instead). A fractional <target>
+                // A trailing <seconds> arg wins over the target number (`/ius replay 60 30` parses
+                // "60" as <target> and "30" as <seconds>). A value below 1.0 cannot reach this
+                // node at all (the argument is `doubleArg(1.0, 60.0)`), so "0.5" is only ever
+                // the [speed] word. Without this read the trailing value was silently
+                // discarded and the target number used instead. A fractional <target>
                 // (`/ius replay 1.5`) resolves as seconds here, not as a player name.
                 val s = try { DoubleArgumentType.getDouble(ctx, "seconds") } catch (_: Throwable) { -1.0 }
                 secs = (if (s >= 1.0) s else target.toDouble()).toInt()
