@@ -176,14 +176,22 @@ object ReplayRenderer {
     }
 
     private fun drawGhosts(ctx: WorldRenderContext) {
-        val frame = ReplayState.currentFrameLerped(MinecraftClient.getInstance().renderTickCounter.getTickProgress(false)) ?: return
+        val mc = MinecraftClient.getInstance()
+        // Partial-tick progress toward the next client tick. Two consumers: the playhead lerp just
+        // below, and [updateCameraState] (vanilla's own entity pass lerps with this value and
+        // `GameRenderer.updateCameraState` feeds it to `getLerpedPos`).
+        val tickDelta = mc.renderTickCounter.getTickProgress(false)
+        val frame = ReplayState.currentFrameLerped(tickDelta) ?: return
         // Draw when EITHER ghost set is non-empty: a frame whose tracked players have all logged off can
         // still carry captured mobs/vehicles (SnapClip short-circuits on empty snaps only, which drops
         // those entity ghosts).
         if (frame.snaps.isEmpty() && frame.entities.isEmpty()) return
-        val mc = MinecraftClient.getInstance()
         val camera = ctx.gameRenderer().camera
         val camPos = camera.getCameraPos()
+        // Refresh the shared camera input BEFORE any ghost draws, so the whole frame sees one state —
+        // the same discipline vanilla's GameRenderer uses (it fills one CameraRenderState per frame and
+        // every entity in that frame reads it). See [updateCameraState].
+        updateCameraState(camera, tickDelta)
         // The AFTER_ENTITIES modelview carries the CAMERA ROTATION (the view matrix; the camera
         // position is NOT on it, so we translate by -camPos below). A name tag drawn with no
         // counter-rotation inherits that view rotation and renders edge-on / back-facing → invisible.
@@ -685,11 +693,16 @@ object ReplayRenderer {
         val model = try { renderer.model } catch (_: Throwable) { return false }
         // Real skin via the per-UUID cache (async-loaded by vanilla; Steve/Alex fallback). Fail-open → box.
         val skin = try { ReplaySkins.resolve(s.uuid()) } catch (_: Throwable) { return false }
-        // Per-ghost walk state (rolling position-delta stride). The PlayerEntityRenderState is built
-        // fresh per ghost per frame — every field is overwritten below before render, so reuse would
-        // be safe, but createRenderState() is cheap (the profiler shows drawModel at ~0.4% of frame)
-        // and a fresh state keeps this path identical to the proven pre-B4 render. Fail-open → box.
+        // Per-ghost walk state (rolling position-delta stride).
         val ws = walkState.computeIfAbsent(s.uuid()) { WalkState() }
+        // A FRESH PlayerEntityRenderState per ghost per frame, deliberately — NOT the per-type reuse
+        // the entity ghosts below use, and the difference is not stylistic. This path submits the skin
+        // through the deferred entity-pass queue at the bottom of this method, and
+        // `OrderedRenderCommandQueueImpl.ModelCommand` is a record that holds the render state and is
+        // drained after the whole ghost loop. One shared state per type would therefore be overwritten
+        // by the next same-type ghost long before the first one's geometry was drawn — every player
+        // ghost would render with the last player's pose. (`createRenderState()` is also the cheap
+        // half: the profiler puts all of drawModel at ~0.4% of a frame.) Fail-open → box.
         val state: PlayerEntityRenderState = try { renderer.createRenderState() } catch (_: Throwable) { return false }
 
         // --- populate the render state so the ghost poses, faces, walks and swings like the live
@@ -919,6 +932,26 @@ object ReplayRenderer {
     /** typeId → a fabricated prototype non-living entity. */
     private val nonLivingPrototypeCache = ConcurrentHashMap<String, Entity?>()
 
+    /**
+     * typeId to the ONE render state that type's ghost is drawn with, every frame.
+     *
+     * Both entity-ghost paths used to call `createRenderState()` per ghost per frame, building a fresh
+     * object solely to overwrite all of it and hand it to a consumer that reads it synchronously.
+     * Reuse is sound here because the state is keyed per TYPE (so the concrete state class always
+     * matches the renderer that fills it), every field the draw reads is re-derived each frame by
+     * `updateRenderState` from the cached prototype plus the explicit overwrites below, and nothing
+     * retains the reference past the call -- [ImmediateRenderQueue] writes its vertices immediately,
+     * and the living path renders straight into a vertex buffer.
+     *
+     * The player path must NOT do this, and its own comment no longer claims otherwise: its state is
+     * captured by the deferred `queue.submitModel` command and drained after the ghost loop. Cleared in
+     * [clearGhostCaches] so a replay in another world cannot reuse a state seeded from the previous
+     * world's prototype.
+     */
+    private val entityStateCache = ConcurrentHashMap<String, LivingEntityRenderState>()
+    /** typeId to the reused render state for a non-living ghost (boats/minecarts); see [entityStateCache]. */
+    private val nonLivingStateCache = ConcurrentHashMap<String, EntityRenderState>()
+
     /** Resolve (and cache) the vanilla living renderer for a captured entity type id, or null. */
     private fun entityRendererFor(typeId: String): LivingEntityRenderer<*, *, *>? {
         entityRendererCache[typeId]?.let { return it }
@@ -986,7 +1019,11 @@ object ReplayRenderer {
         val cached = entityRendererFor(e.typeId) ?: return
         @Suppress("UNCHECKED_CAST")
         val r = cached as LivingEntityRenderer<net.minecraft.entity.LivingEntity, LivingEntityRenderState, EntityModel<LivingEntityRenderState>>
-        val state: LivingEntityRenderState = try { r.createRenderState() } catch (_: Throwable) { return }
+        // ONE state per entity type, reused every frame (see [entityStateCache] for why that is safe
+        // here and not on the player path). Fail-open → skip this ghost.
+        val state: LivingEntityRenderState = try {
+            entityStateCache.getOrPut(e.typeId) { r.createRenderState() }
+        } catch (_: Throwable) { return }
         val model: EntityModel<LivingEntityRenderState> = try { r.model } catch (_: Throwable) { return }
 
         val proto = entityPrototypeCache[e.typeId]
@@ -1092,7 +1129,12 @@ object ReplayRenderer {
         val cached = nonLivingRendererFor(e.typeId) ?: return
         @Suppress("UNCHECKED_CAST")
         val r = cached as EntityRenderer<Entity, EntityRenderState>
-        val state: EntityRenderState = try { r.createRenderState() } catch (_: Throwable) { return }
+        // ONE state per entity type, reused every frame — same rationale as [entityStateCache], and
+        // even safer here: [ImmediateRenderQueue] drains each submission on the spot, so this state is
+        // never held past the call below.
+        val state: EntityRenderState = try {
+            nonLivingStateCache.getOrPut(e.typeId) { r.createRenderState() }
+        } catch (_: Throwable) { return }
 
         val proto = nonLivingPrototypeCache[e.typeId]
         if (proto != null) {
@@ -1130,6 +1172,46 @@ object ReplayRenderer {
     private var reusedQueue: ImmediateRenderQueue? = null
     private val cameraState = CameraRenderState()
 
+    /**
+     * Fill the shared [cameraState] for this frame, mirroring vanilla `GameRenderer.updateCameraState`
+     * field for field (disassembled on 1.21.11): `initialized` = `Camera.isReady`, `pos` =
+     * `Camera.getCameraPos`, `blockPos` = `Camera.getBlockPos`, `entityPos` = the focused entity's
+     * lerped position at that partial tick, `orientation` = a copy of `Camera.getRotation`.
+     *
+     * This object goes straight into vanilla renderer code we do not own -- every entity renderer's
+     * `render(..., CameraRenderState)` and its overrides -- so leaving it at the constructor's defaults
+     * (a camera at the world origin, identity rotation, `initialized` false) means any consumer that
+     * does read it computes against a camera that is not there. The one consumer visible in this path is
+     * [ImmediateRenderQueue.submitLabel], which multiplies the label matrix by `cameraState.orientation`
+     * exactly as vanilla's label pass does, to cancel the view rotation already on the AFTER_ENTITIES
+     * stack; with an identity quaternion that counter-rotation silently does nothing.
+     *
+     * Reachability, stated plainly so the next reader does not over-read this: `EntityRenderer` gates
+     * that label path on `state.displayName != null`, and nothing sets `displayName` (or `nameLabelPos`)
+     * on the fabricated entity states we build -- `EntityRenderer.updateRenderState` does not, the
+     * dispatcher does, and we bypass the dispatcher. So this is a WRONG INPUT being made right, not a
+     * bug you can see on screen today. It is worth the four field writes per frame because the renderers
+     * are free to read it, and the field would otherwise stay wrong forever.
+     *
+     * `orientation` is written in place rather than assigned a fresh copy: the constructor already
+     * allocates it and this runs every frame. It is still a copy -- vanilla allocates for exactly that
+     * reason, so the state never aliases the camera's own mutable quaternion.
+     *
+     * Fail-open, and ordered so the camera-independent fields land first: a camera whose focused entity
+     * is missing or throws still gets `pos`/`blockPos`/`orientation` refreshed.
+     */
+    private fun updateCameraState(camera: net.minecraft.client.render.Camera, tickDelta: Float) {
+        try {
+            cameraState.initialized = camera.isReady()
+            cameraState.pos = camera.getCameraPos()
+            cameraState.blockPos = camera.getBlockPos()
+            cameraState.orientation.set(camera.getRotation())
+            val focused = camera.getFocusedEntity() ?: return
+            cameraState.entityPos = focused.getLerpedPos(tickDelta)
+        } catch (_: Throwable) {
+        }
+    }
+
     private fun immediateQueue(vcp: VertexConsumerProvider): ImmediateRenderQueue {
         val q = reusedQueue
         if (q != null) { q.bind(vcp); return q }
@@ -1137,7 +1219,7 @@ object ReplayRenderer {
     }
 
     /** Drop every replay-scoped ghost cache (called from [ReplayState.stop]). Idempotent.
-     *  The renderer/prototype caches are the important ones: their entries are fabricated
+     *  The renderer/prototype/state caches are the important ones: their entries are fabricated
      *  against the `mc.world`/dispatcher live at LOOKUP time, so a clip played in a
      *  different world/dimension after this replay would keep rendering ghosts with
      *  renderers + prototype entities bound to the previous world (the old version cleared
@@ -1152,6 +1234,8 @@ object ReplayRenderer {
             entityPrototypeCache.clear()
             nonLivingRendererCache.clear()
             nonLivingPrototypeCache.clear()
+            entityStateCache.clear()
+            nonLivingStateCache.clear()
             stackCache.clear()
             playerRenderer = null
             cachedAlertLabels = emptyMap()
