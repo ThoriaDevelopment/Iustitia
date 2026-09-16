@@ -134,11 +134,12 @@ Run the normal Gradle checks when available:
 If the project baseline is broken, do not hide that fact. State the baseline failure in the PR and explain whether your change is related. A PR that fixes the baseline should include the smallest reproducer and the verification output.
 
 Then run the automated live tests. They boot a real client in a deterministic flat
-world, drive legitimate and cheating bot players, and report false positives (first
-pass) and bypasses (second pass) — no account, server, or human input required:
+world, drive legitimate and cheating bot players, reporting false positives (legit
+pass), bypasses (cheat pass) and observer-tooling regressions (replay pass) — no
+account, server, or human input required:
 
 ```bash
-python scripts/live_selftest.py                  # full two-pass verification
+python scripts/live_selftest.py                  # full three-pass verification
 python scripts/live_selftest.py --check reach    # only one check's scenarios
 ```
 

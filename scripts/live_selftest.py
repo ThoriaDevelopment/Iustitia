@@ -5,7 +5,7 @@ This is the command an AI agent (or a human) runs to verify a change against the
 real client without anyone touching the game. It wraps the Fabric client gametest
 suite in `src/gametest` (see docs/automated-live-testing.md):
 
-    python scripts/live_selftest.py                       # full two-pass verification
+    python scripts/live_selftest.py                       # full three-pass verification
     python scripts/live_selftest.py --check reach         # only scenarios for one check
     python scripts/live_selftest.py --source LiquidBounce # only one reference client's drives
     python scripts/live_selftest.py --tag world           # only world-interaction drives
@@ -535,8 +535,8 @@ def summarise(reports: list[dict], require_multi_source: int, verbose: bool) -> 
               f" {r.get('source', '?'):<14}{detail}")
     print("-" * 78)
     print(f"  scenarios: {len(reports)}   passed: {sum(1 for r in reports if r.get('passed'))}")
-    print(f"  pass 1 (legit) false positives : {sorted(legit_fp) if legit_fp else 'none'}")
-    print(f"  pass 2 (cheat) bypasses        : {sorted(cheat_bypass) if cheat_bypass else 'none'}")
+    print(f"  legit pass false positives : {sorted(legit_fp) if legit_fp else 'none'}")
+    print(f"  cheat pass bypasses        : {sorted(cheat_bypass) if cheat_bypass else 'none'}")
     if findings:
         print(f"  documented findings ({len(findings)}, non-blocking unless --strict):")
         for line in findings:
@@ -659,8 +659,8 @@ def main() -> int:
             return 1
 
     # A run that dies mid-suite (client crash, teardown hang) still emits per-scenario status
-    # lines for every scenario it finished, so the reconstruction above can hand us 1 report
-    # out of 84 and look green. The manifest is printed by the same filtered scenario list the
+    # lines for every scenario it finished, so the reconstruction above can hand us a one-row
+    # report and look green. The manifest is printed by the same filtered scenario list the
     # game then runs, so a healthy run's report count must equal it exactly -- anything less
     # means the suite died part-way, which is a FAILURE even when every scenario that ran
     # happened to pass. Checked BEFORE merge_reports so a dead run also stops clobbering the

@@ -218,7 +218,7 @@ account, no server, and no human at the keyboard. Full guide:
 `docs/automated-live-testing.md`.
 
 ```bash
-python scripts/live_selftest.py                    # full two-pass verification
+python scripts/live_selftest.py                    # full three-pass verification
 python scripts/live_selftest.py --check reach      # the scenarios for one check
 python scripts/live_selftest.py --legit-only       # false-positive pass only
 python scripts/live_selftest.py --cheat-only       # bypass pass only
@@ -243,7 +243,7 @@ detection semantics, or `SelfTestHooks`/`Check.flag`. For a change scoped to one
 check, `--check <id>` is enough for iteration, but run the full suite before you claim
 the change verified.
 
-### The two passes and what a failure means
+### The three passes and what a failure means
 
 - **LEGIT pass** — vanilla-accurate bots. Any alert is a **FALSE POSITIVE**: fix the
   missing guard or the tuning in the check, never the scenario.
@@ -385,7 +385,7 @@ Verification:
 - ./gradlew test: PASS/FAIL/NOT RUN
 - ./gradlew build: PASS/FAIL/NOT RUN
 - Automated live tests (scripts/live_selftest.py): PASS/FAIL/NOT RUN
-  - scenarios: N passed/N total; pass 1 (legit) false positives: ...; pass 2 (cheat) bypasses: ...
+  - scenarios: N passed/N total; legit pass false positives: ...; cheat pass bypasses: ...
   - documented findings (detector gaps / false positives): added, closed, or unchanged
   - harness gaps: added, closed, or unchanged (checks whose drive does not reach them yet)
   - scenarios added/changed: ...

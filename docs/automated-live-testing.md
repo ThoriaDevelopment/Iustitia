@@ -12,7 +12,7 @@ detection pipeline actually caught. Nothing leaves the machine; there is no serv
 account, and no packet transmission.
 
 ```bash
-python scripts/live_selftest.py                  # full two-pass verification
+python scripts/live_selftest.py                  # full three-pass verification
 python scripts/live_selftest.py --check reach    # only the scenarios for one check
 python scripts/live_selftest.py --pass cheat     # only the unfair-advantage pass
 python scripts/live_selftest.py --legit-only     # only the false-positive pass
@@ -23,9 +23,11 @@ python scripts/live_selftest.py --legit-only     # only the false-positive pass
 
 ---
 
-## 1. The two-pass model
+## 1. The three-pass model
 
-Every detection change is judged by two passes that answer two different questions.
+Every detection change is judged by three passes. The first two answer the detection
+questions; the third guards the observer tooling, which changes on a different axis and fails
+differently.
 
 | Pass | Bot behavior | Question | Failure means |
 |---|---|---|---|
@@ -33,13 +35,13 @@ Every detection change is judged by two passes that answer two different questio
 | **CHEAT** (second pass) | Semi-blatant to ghost: glide-fly, sub-cap speed, 6-block reach, autoclicker, multi-aura, no-knockback | *Does a cheater get caught?* | **BYPASS** — the check does not see a pattern it is supposed to see |
 | **REPLAY** | Camera/observer tooling driven directly | *Do replay/clip mechanics survive?* | Broken observer feature (state not restored, capture empty, export corrupt) |
 
-A pass is only meaningful together with the other: a check that flags everything is
+A pass is only meaningful together with the others: a check that flags everything is
 not "more secure", and a check that flags nothing is not "tuned". The runner prints
-both verdict lines explicitly:
+both detection verdict lines explicitly:
 
 ```text
-  pass 1 (legit) false positives : none
-  pass 2 (cheat) bypasses        : none
+  legit pass false positives : none
+  cheat pass bypasses        : none
 ```
 
 ### Three outcomes, and they are not interchangeable
@@ -132,7 +134,10 @@ observer logic**, not bytecode injection or pixels.
 src/gametest/kotlin/dev/iustitia/selftest/
   SelfTestEntrypoint.kt   fabric-client-gametest entrypoint; scenario order + filtering
   SelfTest.kt             the engine: BotHandle, ScenarioBuilder DSL, scenario evaluation
-  Scenarios.kt            the LEGIT + CHEAT scenario library
+  Spec.kt                 the pass names (LEGIT/CHEAT/REPLAY) + the check inventory
+  Scenarios.kt            the LEGIT scenario library (incl. the pipeline smoke test)
+  CheatCombat.kt          the combat cheat drives
+  CheatMovement.kt        the movement/rotation cheat drives
   ReplayScenarios.kt      replay/clip scenarios
   PresetScenarios.kt      preset/config-management scenarios (REPLAY pass)
   Assertions.kt           PR-ready failure messages (bypass / false positive / tracking)
@@ -272,7 +277,7 @@ Last full run: **84 scenarios** (17 legit incl. the smoke test, 59 cheat, 8 repl
 | | count |
 |---|---|
 | cheat scenarios | 59 |
-| distinct reference clients driven | **13** (AvA, Fusion, Grim, Itami, Koid, LionClient, LiquidBounce, Meteor, NCM, Rain-Anticheat, Raven, Slinky, Vape) |
+| distinct reference sources driven | **13** — 9 cheat clients (Fusion, Itami, Koid, LionClient, LiquidBounce, Meteor, Raven, Slinky, Vape) + 4 anticheats (AvA, Grim, NCM, Rain-Anticheat) |
 | checks with an established cheat gate (the drive alerts) | **29 / 36** |
 | checks driven by >=2 clients | 10 (`flyEnvelope` 4, `clickStatistics` 3, `killAura` 3, `reach` 3, `criticals` 2, `multiTarget` 2, `noFallDamage` 2, `speedEnvelope` 2, `sprintHack` 2, `autoBlock` 2) |
 | detector gaps (drive reaches it, detector cannot alert) | **4** checks carry a `knownOpen` entry (`speedEnvelope`, `packetGap`, `stepHeight`, `longJump`) |
@@ -698,8 +703,8 @@ Paste the runner's table. That is the whole requirement for the automated portio
 ```text
 Automated live tests (python scripts/live_selftest.py --check <substring>):
 - scenarios: 5   passed: 5
-- pass 1 (legit) false positives : none
-- pass 2 (cheat) bypasses        : none
+- legit pass false positives : none
+- cheat pass bypasses        : none
 - documented findings: none new
 - harness gaps: 2 (pre-existing, unrelated to this change)
 - scenarios added/changed: cheat-mycheck-vape (new), legit-mycheck (new guard)

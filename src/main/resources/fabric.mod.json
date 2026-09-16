@@ -5,8 +5,11 @@
   "name": "Iustitia",
   "description": "Client-sided anticheat/inspector. Detects impossible world/combat interactions from other players by parsing incoming server packets. Local-only chat alerts.",
   "icon": "iustitia.png",
-  "authors": ["Iustitia"],
-  "contact": { "homepage": "" },
+  "authors": ["ThoriaDevelopment"],
+  "contact": {
+    "homepage": "https://thoria.fyi/iustitia",
+    "sources": "https://github.com/ThoriaDevelopment/Iustitia"
+  },
   "license": "MIT",
   "environment": "client",
   "entrypoints": {

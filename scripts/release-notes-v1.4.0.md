@@ -6,7 +6,7 @@ This one is a replay/clip overhaul plus a detection-accuracy pass. Your settings
 
 The world around a `/ius clip` used to be swept all at once the moment you saved, which froze the client while ~300 chunk snapshots went by in a single tick. It's now rolled up in the background while the scene is still live (16 chunks a tick, nearest first), so `/ius clip` returns instantly. A window that spans a teleport records one segment per place, and the replay shows both.
 
-Clips also capture the whole scene now: nearby mobs, animals, boats and minecarts, plus every block edit observed during the window. Replays draw them through their own vanilla entity models, so what you replay is what you saw. Four new options in `/ius config` back this: **Clip captures entities**, **Entity capture cap** (default 64), **Rolling world budget** (default 24,000 sections, roughly 14 MB), and **New-segment distance**. If you're running a long session on a tight machine, the budget is the one to turn down.
+Clips also capture the whole scene now: nearby mobs, animals, boats and minecarts, plus every block edit observed during the window. Replays draw them through their own vanilla entity models, so what you replay is what you saw. Four new options in `/ius config` back this: **Clip captures entities**, **Entity capture cap** (default 64), **Rolling world budget** (default 24,000 sections, roughly 20–95 MB of live captured world — a *fully captured* 17×17-radius segment is ~3,500 sections ≈ 14 MB and about seven of those fit the default), and **New-segment distance**. If you're running a long session on a tight machine, the budget is the one to turn down.
 
 Clip format is now v13: per-segment worlds, block-edit deltas, entity capture, and body/head yaw. Every older clip (v2 through v12, including SnapClip's v9-v12) still loads here. The reverse is not true: an older Iustitia build can't read a v13 clip, so re-export one if you need to open it there.
 
@@ -22,11 +22,18 @@ The per-hit combat checks (reach, killAura, wTap, keepSprint, autoBlock, critica
 
 ## False positives
 
-The last two known false positives are gone: ladder climbs no longer trip `flyEnvelope`, and legitimate water walking no longer trips `waterWalk`. Both are guarded by live tests in the harness now, so they stay gone.
+Six known false positives are gone. Ladder climbs no longer trip `flyEnvelope`, and legitimate water walking no longer trips `waterWalk` — both guarded by live tests in the harness now, so they stay gone. Four more were closed in the release-audit pass, each one a legitimate shape that a detector misread as a cheat:
+
+- a **slab/stairs ramp** no longer trips `flyEnvelope` (a step-up is a single-tick Δy spike on a raw position delta, and the old streak counters spanned the level ground between two steps);
+- a **strafe across a held crosshair** no longer trips `triggerbot` (a crosshair-to-hitbox edge can be created by either party moving; the check now requires the attacker's own aim to have moved to call it a reaction);
+- an **already-airborne victim** no longer trips `noKnockback`'s VelocityB (the upward-KB comparison was never defined for a victim who was not on the ground at the hit); and
+- a **vanilla sword sweep** no longer trips `multiTarget`'s pair gate (the gate's window counted attack *events*, so one sweep's packets satisfied a gate whose whole point is repetition — it is tick-keyed now).
+
+Each ships with the legitimate shape as a permanent harness regression, and the corresponding cheat scenario is re-run against the narrowed detector in the same pass, so the fixes narrow the false positive without opening a bypass.
 
 ## For contributors
 
-Iustitia is now an open-collaboration project. `CONTRIBUTING.md`, `SECURITY.md`, `SUPPORT.md` and a code of conduct are in the repo, along with issue and PR templates and CI workflows. The centerpiece for anyone hacking on detection: a two-pass live-test harness (`python scripts/live_selftest.py`) that runs 74 automated scenarios in a real game client. The legit pass plays like a vanilla player and asserts silence (false-positive guards); the cheat pass reproduces modules from 11 reference cheat clients and asserts alerts (bypass guards). Detection and replay scenarios are both covered, and every scenario names the client or anticheat it mirrors.
+Iustitia is now an open-collaboration project. `CONTRIBUTING.md`, `SECURITY.md`, `SUPPORT.md` and a code of conduct are in the repo, along with issue and PR templates and CI workflows. The centerpiece for anyone hacking on detection: a three-pass live-test harness (`python scripts/live_selftest.py`) that runs 84 automated scenarios in a real game client. The legit pass plays like a vanilla player and asserts silence (false-positive guards); the cheat pass reproduces modules from 9 reference cheat clients and 4 reference anticheats and asserts alerts (bypass guards); the replay pass covers the observer tooling. Every scenario names the client or anticheat it mirrors.
 
 ## Install
 

@@ -20,9 +20,9 @@ Detects **both 1.8-era and 1.21.11-era cheats** by passively observing *other* p
 - **Clips capture the whole scene.** Nearby non-player entities (mobs, animals, boats, minecarts) and every block edit observed during the window are captured alongside the players, and replays draw them through their own vanilla entity models. New config toggles: **Clip captures entities**, **Entity capture cap**, **Rolling world budget**, **New-segment distance**.
 - **Clip format v13.** Per-segment worlds, block-edit deltas, entity capture, body/head yaw. Every older clip (v2–v12, including SnapClip v9–v12) still loads. An older Iustitia build cannot read a v13 clip, so re-export one if you need to open it there.
 - **Detection pass.** Combat detection-rate work: a shared sustained-episode gate across the per-hit combat checks, a ghost-reach tier for `reach` (motionless-pair branch with a 3.2-block ceiling), an occlusion fix so `throughWalls` actually sees hits behind walls, and a `noFallDamage` burst re-base that keeps wind-charge jumps legal while burst-spoof falls still flag. The last two known false positives (ladder climbs under `flyEnvelope`, water walking) are gone.
-- **Open collaboration.** Contributor infrastructure: `CONTRIBUTING.md` / `SECURITY.md` / `SUPPORT.md` / `CODE_OF_CONDUCT.md`, issue + PR templates, CI workflows, an automated two-pass live-test harness (`scripts/live_selftest.py`, 74 scenarios), and an agent-facing contributor skill (`.claude/skills/iustitia-contributor/`).
+- **Open collaboration.** Contributor infrastructure: `CONTRIBUTING.md` / `SECURITY.md` / `SUPPORT.md` / `CODE_OF_CONDUCT.md`, issue + PR templates, CI workflows, an automated three-pass live-test harness (`scripts/live_selftest.py`, 84 scenarios: legit / cheat / replay), and an agent-facing contributor skill (`.claude/skills/iustitia-contributor/`).
 
-The detection pipeline and `IustitiaConfig.CONFIG_VERSION` are unchanged from v1.1.0: existing settings carry straight over, and every older `.iusclip` still loads.
+Your existing settings carry straight over: every option added since v1.1.0 is an additive config field with a `has(...)` back-compat guard, and `IustitiaConfig.CONFIG_VERSION` is unchanged in this release (it is **5**, last bumped in v1.3.0). Every older `.iusclip` still loads.
 
 ---
 
@@ -77,7 +77,7 @@ That's it. Alerts appear in chat; other players get a colored tier prefix on the
 /ius session         # session summary: tracked players, tier counts, who peaked highest
 /ius report <name>   # full report card → clipboard (markdown, json, or text)
 /ius snapshot [name] # one-line evidence snapshot of your crosshair target → clipboard
-/ius replay <name> <sec> [1|0.5|0.25]  # rewind the last N seconds in-world as ghost models (1× by default; 0.5/0.25 = slow-mo)
+/ius replay [<player>|<sec>] [<sec>] [1|0.5|0.25]  # rewind the last N seconds in-world as ghost models (1× by default; 0.5/0.25 = slow-mo; bare = 30s, no focus)
 /ius replay pause|resume|seek <s>|step +|-|speed 1|0.5|0.25|cam free|follow|pov|freecam|off  # playback controls while a replay runs
 /ius clip <sec> [name]  # export the last N seconds of positions + alerts (+ the loaded chunk world) to a portable .iusclip file
 /ius playclip [name] [1|0.5|0.25]  # play a saved clip back in-world as a solid textured world + ghosts, relocated to you (/ius playclip off to stop; bare = list clips)
@@ -170,12 +170,12 @@ Each check has its own config slice (`enabled`, `setbackVL`, `decay`, `threshold
 | `jumpOnHurt` | Jumped instantly on taking damage (anti-KB hop). | |
 | `backtrack` | Hit a victim from a stale (backtracked) position. | |
 | `hitsWithoutSwing` | Dealt melee damage with no swing animation (no-swing / hit-select). | |
-| `killAura` | Silent-aim / aim-snap suite (ten sub-components, one VL pool). | |
+| `killAura` | Silent-aim / aim-snap suite (thirteen sub-components, one VL pool). | |
 | `autoBlock` | Swung while a shield was raised (auto-block / block-hit). | ✓ |
 | `hitFlick` | Redirected aim off the hitbox at the attack tick (HitFlick). | ✓ |
 | `triggerbot` | Auto-attacked the instant the crosshair reached a hitbox (sub-reaction). | |
 
-`killAura` is a port of Rain-Anticheat's 1.8.9 silent-aim suite (corroborator-tier: ten sub-components, one VL pool); `hitFlick` is a Vape/Slinky-style knockback-redirect detector; `triggerbot` is a lax, blatant-only rising-edge reaction-timing detector (deliberately **not** definitive — yellow tier — pending live validation). `maceSmash` catches the 1.21 mace fall-damage fake; `hitsWithoutSwing` is a weak no-swing corroborator that never initiates a tier alone.
+`killAura` is a port of Rain-Anticheat's 1.8.9 silent-aim suite (corroborator-tier: thirteen sub-components, one VL pool); `hitFlick` is a Vape/Slinky-style knockback-redirect detector; `triggerbot` is a lax, blatant-only rising-edge reaction-timing detector (deliberately **not** definitive — yellow tier — pending live validation). `maceSmash` catches the 1.21 mace fall-damage fake; `hitsWithoutSwing` is a weak no-swing corroborator that never initiates a tier alone.
 
 ### Movement / rotation / packet (20)
 
@@ -264,7 +264,7 @@ A moderator-style "instant replay" of the scene and a portable evidence-clip for
 - **`/ius clear <name|all>`**: wipes one player's flags (detection vl, flag timeline, tier, and alert routing → nametag back to green) or, with `all`, everyone's. Tracking and replay keep running; **exemptions are untouched**. A bare `/ius clear` prints usage (a bare clear is too easy to fat-finger into a wipe).
 - **`/ius exempt [name [on|off]]`**: exempts a player from **every** check at the `Check.flag` chokepoint (the very first line, before vl is incremented), so they stop flagging entirely. Bare `/ius exempt` lists the currently-exempted players; a bare name toggles; `on`/`off` set explicitly. Exemptions persist to `exemptions.json` (under `%APPDATA%/.iustitia` when persistence is on) and are **not** cleared on world change, so a trusted regular stays exempt across sessions and server hops. Exempting does **not** clear existing flags; pair it with `/ius clear <name>` to reset the tier.
 
-All four instant-replay tools have toggles in `/ius config` (Replay capture buffer / Replay hides live players / Replay player models / Relocate scene to me / Clip captures full world / Chunk capture radius / Clip chunk render distance / Clip captures entities / Entity capture cap / Rolling world budget / New-segment distance). **`/ius replay` plays ghosts at their exact recorded world coordinates** (it's instant, same-server/same-dimension, so no anchoring is needed; v1.1.0 behavior), while **`/ius playclip` relocates the scene to you** (the focus player starts at your spot), gated by `Relocate scene to me`. `/ius replay` never carries the map (same-server, same-map use); only `/ius clip` captures it and only `/ius playclip` renders it. Note the chunk-world capture is **loaded-chunks-only** (the client only has chunks in render distance) and is **radius-bounded** to keep the file size down: a larger radius means a bigger file and a bigger rolling capture in memory (bounded by **Rolling world budget**, default 24 000 sections ≈ 14 MB per fully-captured 17×17 segment, so lower it on a memory-tight client and raise it if a long `/ius record` keeps losing its earliest world). The **Clip chunk render distance** slider (default 6, range 4..12) bounds how far the clip's solid world draws around the camera each frame: a lower value trades visible distance for FPS (the per-chunk block draw is the main playclip cost), a higher value shows more of the captured world at once. The chunk world also **bakes lazily**: only in-range chunks are built, nearest-first a few per frame, so the world streams in from the camera outward instead of loading in one spike. Far-from-focus chunks are never built unless you fly toward them.
+All four instant-replay tools have toggles in `/ius config` (Replay capture buffer / Replay hides live players / Replay player models / Relocate scene to me / Clip captures full world / Chunk capture radius / Clip chunk render distance / Clip captures entities / Entity capture cap / Rolling world budget / New-segment distance). **`/ius replay` plays ghosts at their exact recorded world coordinates** (it's instant, same-server/same-dimension, so no anchoring is needed; v1.1.0 behavior), while **`/ius playclip` relocates the scene to you** (the focus player starts at your spot), gated by `Relocate scene to me`. `/ius replay` never carries the map (same-server, same-map use); only `/ius clip` captures it and only `/ius playclip` renders it. Note the chunk-world capture is **loaded-chunks-only** (the client only has chunks in render distance) and is **radius-bounded** to keep the file size down: a larger radius means a bigger file and a bigger rolling capture in memory (bounded by **Rolling world budget**: a section is up to 4096 bytes of palette indices, so the 24 000-section default is roughly **20–95 MB** of live captured world depending on how full the segments are — a *fully captured* 17×17-radius segment is ~3 500 sections ≈ 14 MB, and about seven of those fit the default budget; lower it on a memory-tight client and raise it if a long `/ius record` keeps losing its earliest world). The **Clip chunk render distance** slider (default 6, range 4..12) bounds how far the clip's solid world draws around the camera each frame: a lower value trades visible distance for FPS (the per-chunk block draw is the main playclip cost), a higher value shows more of the captured world at once. The chunk world also **bakes lazily**: only in-range chunks are built, nearest-first a few per frame, so the world streams in from the camera outward instead of loading in one spike. Far-from-focus chunks are never built unless you fly toward them.
 
 ### World/HUD overlays (all render-only, depth-tested — no wallhack)
 - **Target highlight**. A tier-colored wireframe box around the player your crosshair is on.
@@ -313,14 +313,14 @@ Human and AI-assisted contributors follow the same review standard: the contribu
 # from the repository root
 python scripts/verify_contribution.py --static --run-build
 ./gradlew test
-python scripts/live_selftest.py   # automated live tests: real client, two passes, no input needed
+python scripts/live_selftest.py   # automated live tests: real client, three passes, no input needed
 ./gradlew runClient               # only for what the automated suite cannot see
 ```
 
 The verification tool checks project structure, Fabric metadata, mixin registration, check/config parity, generated check metadata, documentation links, and the build result. It also reports which live checks are required based on changed files.
 
 `scripts/live_selftest.py` boots a real client, drives legitimate and cheating bot
-players, and reports false positives (pass 1) and bypasses (pass 2) — see
+players, and reports false positives (the LEGIT pass) and bypasses (the CHEAT pass) — see
 [Automated live testing](docs/automated-live-testing.md). For changes to runtime client
 behavior that the suite cannot observe (mixin packet decode, rendering), follow the
 [live verification checklist](docs/live-verification.md) before opening a pull request.

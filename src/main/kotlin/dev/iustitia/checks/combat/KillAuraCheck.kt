@@ -26,7 +26,7 @@ import kotlin.math.sqrt
  * Unified killaura / silent-aim detector, ported from Rain-Anticheat's 1.8.9
  * `KillauraCheck` (the flagship, ~34 KB). Rain is *also* a client-sided observer
  * of other players — the same architecture as Iustitia — so its detection logic
- * ports directly, unlike MX's server-side ML. Seven sub-components share one VL
+ * ports directly, unlike MX's server-side ML. Thirteen sub-components share one VL
  * pool and one alert id (`killAura`), each flagged with a distinct label so the
  * chat alert shows which signal fired.
  *

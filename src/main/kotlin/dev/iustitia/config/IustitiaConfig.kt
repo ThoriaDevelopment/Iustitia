@@ -289,7 +289,7 @@ data class IustitiaConfig(
     var wTap: CheckConfig = CheckConfig(true, 5.0, 0.5, 2.0),
     var jumpOnHurt: CheckConfig = CheckConfig(true, 5.0, 0.2, 0.3), // threshold = min Δy within ±1 tick of a hit (was hardcoded 0.3; now wired)
     var backtrack: CheckConfig = CheckConfig(true, 10.0, 0.25, 3.0),
-    /** Rain-Anticheat killaura/silent-aim suite (7 sub-components, one VL pool). threshold unused.
+    /** Rain-Anticheat killaura/silent-aim suite (13 sub-components, one VL pool). threshold unused.
      *  decay 0.10 (was 0.05): the 0.05 break-even (~1 flag/sec) was low enough that normal PvP
      *  cadence over-accumulated to alert on Polar-clean players (cosYT vl 10.8, devilseeker 9.5).
      *  0.10 raises the break-even to ~2 flags/sec — spread-out FP accumulation decays between

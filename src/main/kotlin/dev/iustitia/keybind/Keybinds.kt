@@ -57,8 +57,11 @@ object Keybinds {
             "Read the moderator note on your crosshair target (if any)."),
         bind("compact", GLFW.GLFW_KEY_F7, "Compact mode",
             "Toggle compact one-line alerts + condensed screens."),
-        bind("watch", GLFW.GLFW_KEY_F9, "Watch (Phase B)",
-            "Follow-cam orbit — reserved; enabled in the Phase B render pass."),
+        bind("watch", GLFW.GLFW_KEY_F9, "Watch (follow-cam)",
+            "Follow-cam orbit on your crosshair target — same as /ius spectate. Forces F1 and a " +
+                "third-party view with all entities visible; move the mouse to orbit, walk or get " +
+                "hit to stop, press the bind again to exit. Handled by FollowCam when that mod is " +
+                "installed."),
         bind("replayPause", GLFW.GLFW_KEY_KP_5, "Replay pause/resume",
             "Pause or resume an active instant-replay (/ius replay). Default: numpad 5."),
         bind("replaySeekFwd", GLFW.GLFW_KEY_KP_ADD, "Replay seek +5s",
