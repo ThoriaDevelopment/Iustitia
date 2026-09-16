@@ -83,7 +83,8 @@ object IustitiaCommand {
         "delclip" to "alias for /ius deleteclip",
         "record" to "record the live scene for later export: /ius record  (start), /ius record stop [name]  (save as <name>.iusclip, capped at 10 min/segment)",
         "chathist" to "chat history for tracked players: /ius chathist <username> [page], /ius chathist phrase <phrase> [page], /ius chathist target <username> <phrase> [page], /ius chathist panel user|phrase|target ...",
-        "preset" to "apply a named config preset: /ius preset <name>  (bare = list; built-ins: standard; custom presets via /ius createpreset)",
+        // The built-in list is derived, so adding a preset cannot leave this row claiming the old set.
+        "preset" to "apply a named config preset: /ius preset <name>  (bare = list; built-ins: ${dev.iustitia.config.PresetManager.builtInNames.joinToString("/")}; custom presets via /ius createpreset)",
         "presets" to "list all presets (built-in + custom): /ius presets",
         "createpreset" to "save the current config as a custom preset: /ius createpreset <name>",
         "deletepreset" to "delete a custom preset: /ius deletepreset <name>  (built-ins can't be deleted)",
@@ -1562,11 +1563,19 @@ object IustitiaCommand {
         return if (ok) 1 else 0
     }
 
-    /** `/ius preset` / `/ius presets` — list all presets (built-ins + customs). */
+    /** `/ius preset` / `/ius presets` — list all presets (built-ins + customs). The built-in lines
+     *  carry the profile's own blurb, so a reader learns what a profile costs before applying it and
+     *  not after; the same wording the setup wizard's buttons show. */
     private fun presetList(ctx: CommandContext<FabricClientCommandSource>): Int {
         send(ctx, "$tag §7presets §8(built-in + custom)§7:")
-        for (n in dev.iustitia.config.PresetManager.builtInNames) {
-            send(ctx, " §b$n §7— §f/ius preset $n")
+        for (b in dev.iustitia.config.PresetManager.builtIns) {
+            val mark = when {
+                b.recommended -> " §a(recommended)"
+                b.diagnostic -> " §8(diagnostic, not offered by the wizard)"
+                else -> ""
+            }
+            send(ctx, " §b${b.label}§7$mark §8— §f/ius preset ${b.name}")
+            b.blurb.forEach { line -> send(ctx, "   §7$line") }
         }
         val customs = try { dev.iustitia.config.PresetManager.listCustom() } catch (_: Throwable) { emptyList() }
         if (customs.isEmpty()) {

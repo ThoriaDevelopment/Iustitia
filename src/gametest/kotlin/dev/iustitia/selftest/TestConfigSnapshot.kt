@@ -33,6 +33,15 @@ import java.util.UUID
  *   the run failed with "Timed out waiting for predicate" and the wizard screen in
  *   the log). Setting the flag is exactly what the wizard itself does on first open.
  *
+ * [restore] also puts back the whole PRESET CONTENT of the config it captured, parsed fresh and read
+ * back through `ConfigManager.configFromJsonInto`. That is the backstop for every field the explicit
+ * list above does not name, and the two that matter are per-check calibration and the display
+ * fields: a scenario that applies a scaled preset (`lenient` doubles every `setbackVL`) would
+ * otherwise leave every LATER scenario in the same boot running at the wrong sensitivity, and one
+ * that applies `debug` would leave the wrong transcript/HUD/replay toggles on. It runs from
+ * [SelfTest.runScenario]'s `finally`, so it holds even when a scenario throws before reaching its own
+ * restore code. A capture that fails leaves the backstop null and the explicit list still runs.
+ *
  * The snapshot also clears and restores the session exemption list, because an
  * exempted player is invisible to every check at the `Check.flag` chokepoint and
  * would silently empty both passes.
@@ -44,6 +53,7 @@ import java.util.UUID
 class TestConfigSnapshot private constructor(
     private val savedFields: Map<String, Any?>,
     private val savedExemptions: List<Pair<UUID, String>>,
+    private val savedPresetContent: String?,
 ) {
     companion object {
         /** Capture the live config, stash the harness-touched fields, and apply the profile. */
@@ -66,7 +76,10 @@ class TestConfigSnapshot private constructor(
                 )
                 val exemptions = Exemptions.all()
                 Exemptions.clear()
-                snap = TestConfigSnapshot(saved, exemptions)
+                // The whole preset content, for restore()'s backstop: per-check calibration and the
+                // display fields, none of which the explicit map above covers.
+                val presetContent = try { ConfigManager.presetContentJson(c) } catch (_: Throwable) { null }
+                snap = TestConfigSnapshot(saved, exemptions, presetContent)
                 c.joinGraceTicks = 0
                 c.alertThrottleTicks = 0
                 c.alertBatching = false
@@ -105,6 +118,19 @@ class TestConfigSnapshot private constructor(
             @Suppress("UNCHECKED_CAST")
             val savedEnabled = savedFields["checkEnabled"] as Map<String, Boolean>
             c.checks().forEach { (id, cc) -> cc.enabled = savedEnabled[id] ?: cc.enabled }
+            // Backstop for everything the explicit lines above do not name: per-check calibration
+            // (setbackVL/decay/threshold) and the display fields. A scenario that applies a scaled
+            // preset would otherwise leave every later scenario in this boot at the wrong
+            // sensitivity. configFromJsonInto MUTATES the JsonObject it is handed (it strips the
+            // excluded keys), so this parses a fresh one rather than reusing a cached object.
+            savedPresetContent?.let { json ->
+                try {
+                    ConfigManager.configFromJsonInto(
+                        com.google.gson.JsonParser.parseString(json).asJsonObject,
+                        c,
+                    )
+                } catch (_: Throwable) {}
+            }
             Exemptions.clear()
             savedExemptions.forEach { (uuid, name) -> Exemptions.load(uuid, name) }
         }

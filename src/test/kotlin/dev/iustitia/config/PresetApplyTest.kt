@@ -207,7 +207,7 @@ class PresetApplyTest {
         assertFalse(PresetManager.saveCustom("STANDARD"))
         assertFalse(PresetManager.deleteCustom("standard"))
         assertTrue(PresetManager.isBuiltIn("Standard"))
-        assertFalse(PresetManager.isBuiltIn("Debug"))
+        assertTrue(PresetManager.isBuiltIn("Debug"))
     }
 
     @Test

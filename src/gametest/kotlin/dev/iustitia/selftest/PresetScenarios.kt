@@ -107,12 +107,19 @@ object PresetScenarios {
      * path: the formerly-drifted fields (replay/clip/chathist + `sensitivitySubstrate`)
      * are now preset content, the documented exclusions (`playclipMode`, mutes,
      * `persistenceEnabled`, `wizardCompleted`) still hold, and Standard's display profile
-     * lands on the config while the check slices stay at stock calibration. The check
+     * lands on the config while Standard's check slices stay at stock calibration (the
+     * scaled profiles are [PresetBuiltInCoverage]'s job). The check
      * `enabled` flags are asserted in both directions: exactly the seven on
      * [dev.iustitia.config.PresetManager.standardOffChecks] go off and every other check
      * stays on. That is the invariant this scenario exists to hold now that the built-in
      * ships a detection-scope choice: a preset that silently disabled an eighth check, or
      * one that let the seven drift back on, would be invisible everywhere else.
+     *
+     * The tail of this scenario re-applies `standard` and saves, which is how the run-dir
+     * config comes back to the built-in baseline. It is no longer what protects the LATER
+     * scenarios in the same boot: `TestConfigSnapshot.restore()` now puts the captured
+     * preset content back (calibration + display fields), from a `finally`, so the tail is
+     * about leaving a sensible file on disk rather than about isolation.
      */
     class PresetApplyCoverage : SelfTest.Scenario("preset-apply-coverage", "REPLAY") {
         override fun run(b: SelfTest.ScenarioBuilder) {
@@ -165,7 +172,8 @@ object PresetScenarios {
                     fail("persistenceEnabled was overwritten by the preset apply — persistence is documented as not-touched.")
 
                 // (c) standard semantics: the display profile landed; the server-normalized checks
-                //     are DISABLED by the built-in and nothing else is; calibration is not scaled.
+                //     are DISABLED by the built-in and nothing else is; standard's calibration is
+                //     not scaled (the four scaled profiles are asserted in PresetBuiltInCoverage).
                 if (ConfigManager.config.alertLevel != 1)
                     fail("standard alertLevel did not land on the live config (want 1).")
                 val off = dev.iustitia.config.PresetManager.standardOffChecks
@@ -180,7 +188,7 @@ object PresetScenarios {
                 val want = dev.iustitia.config.IustitiaConfig().slice("reach").setbackVL
                 val got = ConfigManager.config.slice("reach").setbackVL
                 if (kotlin.math.abs(got - want) > 1e-6)
-                    fail("standard touched reach setbackVL: got $got, stock default $want; built-ins must not scale calibration.")
+                    fail("standard touched reach setbackVL: got $got, stock default $want. Standard ships stock calibration; only lenient/strict/moderation/debug scale setbackVL.")
             }
 
             // ---- restore pre-apply user state ----
@@ -204,6 +212,121 @@ object PresetScenarios {
                 // built-in baseline; save() mirrors what an apply does (debounced, off-thread).
                 try { PresetManager.apply("standard") } catch (_: Throwable) {}
                 ConfigManager.save()
+            }
+        }
+    }
+
+    /**
+     * Every built-in preset must reach the LIVE config with the values `PresetBuiltInsTest` holds:
+     * the check-enable contract, the `setbackVL` ratio with `decay`/`threshold` untouched, the alert
+     * tier, and a display canary set.
+     *
+     * [PresetApplyCoverage] proves one built-in travels the schema-derived path and that the
+     * exclusions hold. This scenario covers the part that would fail silently: a profile that landed
+     * its display flags but not its scaling, or a scaled profile whose factor was mistyped, still
+     * resolves, applies and saves, and every downstream assertion in the suite runs at whatever
+     * sensitivity leaked out of it. The full 13-field table stays in the JVM test; the canaries here
+     * exist to prove the values actually arrive on the live config object.
+     *
+     * The config is restored from its own captured preset content in a `finally`, and saved, so a
+     * failure mid-run cannot leave the run-dir `iustitia.json` holding a scaled profile. The harness
+     * `TestConfigSnapshot` restore would fix it in memory but writes nothing.
+     */
+    class PresetBuiltInCoverage : SelfTest.Scenario("preset-builtin-coverage", "REPLAY") {
+
+        /** What a live apply of one built-in must land. [checksOff] means "ships the seven on
+         *  [dev.iustitia.config.PresetManager.standardOffChecks] disabled"; the rest are canaries. */
+        private data class Want(
+            val factor: Double,
+            val checksOff: Boolean,
+            val alertLevel: Int,
+            val compactMode: Boolean,
+            val lagHudIcon: Boolean,
+            val nametagBurstPulse: Boolean,
+            val audioCues: Boolean,
+            val transcriptPanel: Boolean,
+            val joinGraceTicks: Int,
+            val alertThrottleTicks: Int,
+            val sensitivitySubstrate: Boolean,
+        )
+
+        private val wanted: Map<String, Want> = mapOf(
+            "standard" to Want(1.0, true, 1, false, true, false, false, false, 600, 40, false),
+            "lenient" to Want(2.0, true, 0, false, false, true, false, false, 600, 40, false),
+            "strict" to Want(0.5, false, 1, true, true, false, false, false, 600, 40, false),
+            "moderation" to Want(0.75, true, 2, true, true, false, true, true, 100, 20, true),
+            "debug" to Want(0.5, false, 2, true, true, true, true, true, 0, 0, true),
+        )
+
+        override fun run(b: SelfTest.ScenarioBuilder) {
+            // The live config's own preset content, restored in the finally below.
+            val saved = ClientThread.computeOnClient { _ -> ConfigManager.presetContentJson(ConfigManager.config) }
+            // Other subsystems hold the config REFERENCE, so an apply has to mutate the object
+            // rather than swap a new one in. Compared by identity, not by value.
+            val instance = ClientThread.computeOnClient { _ -> ConfigManager.config }
+
+            try {
+                ClientThread.computeOnClient { _ ->
+                    fun fail(msg: String): Nothing = throw ScenarioFailed("PRESET/BUILTIN failure: $msg")
+                    val stock = dev.iustitia.config.IustitiaConfig()
+
+                    for (name in PresetManager.builtInNames) {
+                        val want = wanted[name]
+                            ?: fail("built-in '$name' has no expectation in this scenario; add it rather than let a new profile go unverified")
+                        if (!PresetManager.apply(name)) fail("PresetManager.apply(\"$name\") returned false")
+
+                        val c = ConfigManager.config
+                        for ((id, cc) in c.checks()) {
+                            val s = stock.slice(id)
+                            val wantVl = s.setbackVL * want.factor
+                            if (kotlin.math.abs(cc.setbackVL - wantVl) > 1e-9)
+                                fail("'$name' left $id setbackVL at ${cc.setbackVL}, expected $wantVl (stock ${s.setbackVL} x${want.factor})")
+                            if (cc.decay != s.decay || cc.threshold != s.threshold)
+                                fail("'$name' moved $id decay/threshold to ${cc.decay}/${cc.threshold} (stock ${s.decay}/${s.threshold}); only setbackVL differs between profiles")
+                            val wantEnabled = if (want.checksOff) id !in PresetManager.standardOffChecks else true
+                            if (cc.enabled != wantEnabled)
+                                fail("'$name' left $id enabled=${cc.enabled}, expected $wantEnabled")
+                        }
+
+                        if (c.alertLevel != want.alertLevel) fail("'$name' alertLevel=${c.alertLevel}, expected ${want.alertLevel}")
+                        if (c.compactMode != want.compactMode) fail("'$name' compactMode=${c.compactMode}, expected ${want.compactMode}")
+                        if (c.lagHudIcon != want.lagHudIcon) fail("'$name' lagHudIcon=${c.lagHudIcon}, expected ${want.lagHudIcon}")
+                        if (c.nametagBurstPulse != want.nametagBurstPulse) fail("'$name' nametagBurstPulse=${c.nametagBurstPulse}, expected ${want.nametagBurstPulse}")
+                        if (c.audioCues != want.audioCues) fail("'$name' audioCues=${c.audioCues}, expected ${want.audioCues}")
+                        if (c.transcriptPanel != want.transcriptPanel) fail("'$name' transcriptPanel=${c.transcriptPanel}, expected ${want.transcriptPanel}")
+                        if (c.joinGraceTicks != want.joinGraceTicks) fail("'$name' joinGraceTicks=${c.joinGraceTicks}, expected ${want.joinGraceTicks}")
+                        if (c.alertThrottleTicks != want.alertThrottleTicks) fail("'$name' alertThrottleTicks=${c.alertThrottleTicks}, expected ${want.alertThrottleTicks}")
+                        if (c.sensitivitySubstrate != want.sensitivitySubstrate) fail("'$name' sensitivitySubstrate=${c.sensitivitySubstrate}, expected ${want.sensitivitySubstrate}")
+                        // Green is the nametag tier, not a chat band; no profile may drop it.
+                        if (!c.nametagGreenEnabled) fail("'$name' turned the green nametag tick off; green is the nametag tier and every profile keeps it")
+                    }
+
+                    // An unknown name applies nothing at all, and reports that it did not.
+                    val beforeName = ConfigManager.config.alertLevel
+                    val beforeVl = ConfigManager.config.slice("reach").setbackVL
+                    if (PresetManager.apply("no-such-preset-xyz")) fail("apply() reported success for a name that is not a preset")
+                    if (ConfigManager.config.alertLevel != beforeName || ConfigManager.config.slice("reach").setbackVL != beforeVl)
+                        fail("a FAILED apply still changed the live config (alertLevel $beforeName -> ${ConfigManager.config.alertLevel}, reach setbackVL $beforeVl -> ${ConfigManager.config.slice("reach").setbackVL})")
+                }
+
+                val after = ClientThread.computeOnClient { _ -> ConfigManager.config }
+                check(after === instance) {
+                    "PRESET/BUILTIN failure: the live config instance changed across preset applies. " +
+                        "Subsystems hold that reference, so an apply must mutate it in place; a swapped " +
+                        "instance means half the running mod is now reading a config nobody updates."
+                }
+            } finally {
+                // Put the run-dir config back the way this scenario found it. The harness snapshot
+                // restore covers the in-memory config from a finally of its own; this covers the file.
+                try {
+                    ClientThread.runOnClient { _ ->
+                        ConfigManager.configFromJsonInto(
+                            com.google.gson.JsonParser.parseString(saved).asJsonObject,
+                            ConfigManager.config,
+                        )
+                        ConfigManager.save()
+                    }
+                } catch (_: Throwable) {}
             }
         }
     }

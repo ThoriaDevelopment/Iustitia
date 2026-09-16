@@ -136,8 +136,9 @@ abstract class Check {
     ) {
         try {
             // Disabled-check gate: a check whose config slice is disabled (via /ius toggle, the
-            // YACL screen, or a preset apply such as Lenient's disableSubtleChecks) produces NO
-            // flags at all — no VL accumulation, no FlagHistory/tier update, no alert. This gate
+            // YACL screen, or a preset apply, which ships its own enabled flags because `enabled`
+            // is preset content) produces NO flags at all — no VL accumulation, no FlagHistory/tier
+            // update, no alert. This gate
             // lives at the flag chokepoint rather than at the dispatch sites because combat checks
             // are bus-driven (each subscribes to AttackEvent/SwingSignal in its own init), so the
             // tick loop's `if (!c.enabled) continue` never reaches them: without this gate a

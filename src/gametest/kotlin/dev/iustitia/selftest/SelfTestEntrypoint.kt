@@ -197,6 +197,7 @@ class SelfTestEntrypoint : FabricClientGameTest {
         ReplayScenarios.PlayclipRelocation(),
         PresetScenarios.PresetDisabledGate(),
         PresetScenarios.PresetApplyCoverage(),
+        PresetScenarios.PresetBuiltInCoverage(),
     )
 
     /**

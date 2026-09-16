@@ -7,7 +7,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * Named configuration presets — one built-in ([builtInNames]) plus user-created custom presets
+ * Named configuration presets — five built-ins ([builtIns]) plus user-created custom presets
  * persisted as JSON under the presets dir (see [presetsDir]). `/ius preset <name>` resolves a
  * built-in first, then a custom file, and **applies** it onto the live [ConfigManager.config] IN
  * PLACE (never replacing the reference — other subsystems hold it), then [ConfigManager.save] +
@@ -15,10 +15,30 @@ import java.nio.file.Path
  * (saved via [ConfigManager.presetContentJson], the main serializer minus the per-user keys), so
  * they round-trip the user's exact tuned values and carry no per-user state.
  *
- * The one built-in, `standard`, is the everyday-play profile: the shipped defaults with the
- * on-world and overlay extras switched off, plus the server-normalized checks on
- * [standardOffChecks] disabled. It scales no calibration: every check it leaves on keeps its
- * stock setbackVL/decay/threshold.
+ * ## The five built-ins
+ *
+ * They trade what gets caught against how much noise and how many false positives the reader has to
+ * wade through. Only [IustitiaConfig.CheckConfig.setbackVL] moves between them, through
+ * [scaleSetback]: `decay` and `threshold` keep their stock values everywhere, so a scaled profile
+ * is the same detector with a different trip point rather than a different detector. Nothing here
+ * recalibrates a default, so no `CONFIG_VERSION` bump is involved.
+ *
+ *  - `standard` is the everyday profile and the recommended one: stock sensitivity, the on-world
+ *    and overlay extras off, the lag indicator on, and the server-normalized checks on
+ *    [standardOffChecks] disabled.
+ *  - `lenient` doubles setbackVL and takes the quiet alert tier, so a chat line needs roughly six
+ *    times the stock deviation. It catches blatant combat modules and lets ghost cheats pass.
+ *  - `strict` turns every check on (the seven included) and halves setbackVL, for competitive
+ *    players who read their own alerts. It false-positives more, which is the trade it makes.
+ *  - `moderation` scales setbackVL x0.75, reports every severity band one line per flag, plays audio
+ *    cues, and shortens the join grace to 100 ticks and the throttle to 20, with the sensitivity
+ *    substrate on. Staff review rather than everyday play.
+ *  - `debug` sets every boolean in the config true, turns every check on, halves setbackVL, and
+ *    zeroes both suppression timers. Diagnostic only, and the setup wizard does not offer it.
+ *
+ * `enabled` is preset content, so an apply rewrites the flag for all 36 checks: the profiles that
+ * ship the seven off turn them off, and `strict`/`debug` turn every check back on, including one
+ * the user had switched off by hand. User mutes live in `mutedChecks`, which is excluded.
  *
  * ## What is and isn't preset content (schema-derived)
  *
@@ -39,7 +59,74 @@ import java.nio.file.Path
  */
 object PresetManager {
 
-    val builtInNames: List<String> = listOf("standard")
+    /**
+     * A built-in preset's identity and the words used to describe it: the [name] `/ius preset <name>`
+     * resolves, the [label] a wizard button or a listing line shows, whether it is the recommended
+     * default, whether it is a diagnostic profile the setup wizard leaves out, and the [blurb] lines
+     * that say what the profile costs.
+     *
+     * This list is the single source for the built-ins ([builtInNames] is derived from it), so the
+     * wizard, the `/ius help` row, the preset listing, the apply-failure message and the docs cannot
+     * disagree about which presets exist or what they do. [label] is deliberately the name in display
+     * case: someone who picks "Strict" in the wizard then types `/ius preset strict`, and nothing has
+     * to be translated in their head. The recommended and diagnostic markers are separate flags
+     * rather than baked into the label, because each surface renders them its own way (the wizard
+     * appends a marker, the listing colors one).
+     *
+     * Each [blurb] line is kept under ~55 characters so it fits a chat line and a wizard button
+     * without wrapping. The wizard still wraps as a safety net, and drops lines on a short window.
+     */
+    data class BuiltIn(
+        val name: String,
+        val label: String,
+        val recommended: Boolean = false,
+        val diagnostic: Boolean = false,
+        val blurb: List<String>,
+    )
+
+    /** The built-ins in listing order. Exactly one is [BuiltIn.recommended] (`standard`) and exactly
+     *  one is [BuiltIn.diagnostic] (`debug`), which is what keeps the wizard at four buttons; both
+     *  facts are asserted by `PresetBuiltInsTest`. */
+    val builtIns: List<BuiltIn> = listOf(
+        BuiltIn(
+            "standard", "Standard", recommended = true,
+            blurb = listOf(
+                "Everyday play.",
+                "Stock sensitivity, seven minigame checks off.",
+            ),
+        ),
+        BuiltIn(
+            "lenient", "Lenient",
+            blurb = listOf(
+                "Blatant combat cheats only.",
+                "Needs about 6x the deviation, so most cheats pass.",
+            ),
+        ),
+        BuiltIn(
+            "strict", "Strict",
+            blurb = listOf(
+                "Every check on, twice as sensitive.",
+                "Expect more false positives.",
+            ),
+        ),
+        BuiltIn(
+            "moderation", "Moderation",
+            blurb = listOf(
+                "Staff review.",
+                "Every flag, one line each. Audio on, history saved.",
+            ),
+        ),
+        BuiltIn(
+            "debug", "Debug", diagnostic = true,
+            blurb = listOf(
+                "Everything on, every check, no timers.",
+                "Diagnostic; not offered by the wizard.",
+            ),
+        ),
+    )
+
+    /** The built-in names in listing order, derived from [builtIns] so the two can never disagree. */
+    val builtInNames: List<String> get() = builtIns.map { it.name }
 
     /** Check ids the built-in `standard` preset ships DISABLED.
      *
@@ -160,25 +247,101 @@ object PresetManager {
 
     // ---- built-in templates ----
 
+    /** The everyday profile every other built-in starts from: the shipped defaults with the
+     *  on-world and overlay extras off, the lag indicator left on, `alertLevel = 1`, batching on,
+     *  green nametag ticks on, and the seven checks on [standardOffChecks] disabled.
+     *
+     *  Every [builtIn] branch calls this FRESH rather than sharing one instance: an apply mutates
+     *  the config it gets back, so a shared object would let one apply's deltas show up in the
+     *  next one's template. `enabled` is preset content, so this writes the flag for all 36 checks.
+     */
+    private fun everyday(): IustitiaConfig = IustitiaConfig().apply {
+        targetHighlight = false; watchFollowCam = false; burstSparks = false
+        hoverTooltip = false; tabListBadge = false; nametagBurstPulse = false
+        lagHudIcon = true   // the one light visual: explains WHY alerts soften during lag bursts
+        confidenceHud = false; transcriptPanel = false
+        alertLevel = 1; alertBatching = true; compactMode = false; verbose = false
+        replayCapture = true; nametagPrefixes = true; nametagGreenEnabled = true
+        // Server-normalized movement / damage checks off; the list and its reasoning are on
+        // [standardOffChecks]. One source for the set so the preset, the live-test gate and the
+        // JVM test can never disagree about which checks the profile turns off.
+        for (id in standardOffChecks) slice(id).enabled = false
+    }
+
     /** A fresh [IustitiaConfig] with the per-preset overrides applied (or null for an unknown name).
-     *  The returned config is a fully-realized snapshot that [apply] can copy 1:1. */
-    fun builtIn(name: String): IustitiaConfig? {
-        val base = IustitiaConfig()
-        return when (name.lowercase()) {
-            "standard" -> base.apply {
-                targetHighlight = false; watchFollowCam = false; burstSparks = false
-                hoverTooltip = false; tabListBadge = false; nametagBurstPulse = false
-                lagHudIcon = true   // the one light visual: explains WHY alerts soften during lag bursts
-                confidenceHud = false; transcriptPanel = false
-                alertLevel = 1; alertBatching = true; compactMode = false; verbose = false
-                replayCapture = true; nametagPrefixes = true; nametagGreenEnabled = true
-                // Server-normalized movement / damage checks off; the list and its reasoning are
-                // on [standardOffChecks]. One source for the set so the preset, the live-test gate
-                // and the JVM test can never disagree about which checks the profile turns off.
-                for (id in standardOffChecks) slice(id).enabled = false
-            }
-            else -> null
+     *  The returned config is a fully-realized snapshot that [apply] can copy 1:1. Each branch builds
+     *  its own object, so nothing is shared between calls. What each profile is for, and what it
+     *  costs, is in the class KDoc. */
+    fun builtIn(name: String): IustitiaConfig? = when (name.lowercase()) {
+        "standard" -> everyday()
+
+        // Least noise. A chat line needs roughly six times the stock deviation: setbackVL doubles
+        // and alertLevel 0 drops everything below the red band, so only a blatant combat module
+        // reaches a reader and a ghost cheat is meant to pass. The lag HUD indicator goes off with
+        // the other extras; the nametag burst pulse stays as the one on-screen cue.
+        "lenient" -> everyday().apply {
+            scaleSetback(2.0)
+            alertLevel = 0
+            lagHudIcon = false
+            nametagBurstPulse = true
         }
+
+        // The opposite trade: every check on, half the deviation, so a flag lands at about the
+        // stock setback value. Compact one-liners for a competitive player who reads their own
+        // alerts and accepts the extra false positives.
+        "strict" -> everyday().apply {
+            for ((_, cc) in checks()) cc.enabled = true
+            scaleSetback(0.5)
+            compactMode = true
+        }
+
+        // Staff review: three quarters of the deviation, every band reported, and one line per flag
+        // (batching off) instead of a collapsed summary. Audio cues and the sensitivity substrate
+        // are on so a live read matches what a written report would show. The join grace and the
+        // throttle are short because a staff session is watched rather than lived in.
+        "moderation" -> everyday().apply {
+            scaleSetback(0.75)
+            alertLevel = 2
+            alertBatching = false
+            alertThrottleTicks = 20
+            joinGraceTicks = 100
+            audioCues = true
+            audioVolume = 0.8
+            compactMode = true
+            transcriptPanel = true
+            sensitivitySubstrate = true
+        }
+
+        // Diagnostic: every boolean in the config true, every check on, the same detection tuning as
+        // strict, and neither suppression timer. `alertBatching` stays true because it IS a boolean;
+        // `verbose` carries the per-flag detail that batching would collapse in chat. The setup
+        // wizard does not offer this one; reach it with `/ius preset debug`.
+        "debug" -> IustitiaConfig().apply {
+            enabled = true; verbose = true; legitScaffoldStrictGates = true; sensitivitySubstrate = true
+            alertsEnabled = true; nametagPrefixes = true; nametagGreenEnabled = true
+            alertBatching = true; audioCues = true; lagSuppressAlerts = true; nametagBurstPulse = true
+            compactMode = true; transcriptPanel = true; lagHudIcon = true; confidenceHud = true
+            targetHighlight = true; watchFollowCam = true; burstSparks = true; hoverTooltip = true
+            tabListBadge = true; replayCapture = true; replayHideLive = true; replayPlayerModels = true
+            replayRelocate = true; clipTerrain = true; clipChunkWorld = true
+            clipHealthIndicator = true; clipTotemPopCounter = true; clipGhostEquipment = true
+            clipEntities = true; chathistEnabled = true; chathistCaptureUnknown = true
+            alertLevel = 2
+            joinGraceTicks = 0
+            alertThrottleTicks = 0
+            for ((_, cc) in checks()) cc.enabled = true
+            scaleSetback(0.5)
+        }
+
+        else -> null
+    }
+
+    /** Scale every check's [IustitiaConfig.CheckConfig.setbackVL] by [factor], leaving `decay` and
+     *  `threshold` wherever they are. One place to express "the same detector with a different trip
+     *  point", so a profile's sensitivity is a single number instead of 36 hand-edited values that
+     *  can drift apart. */
+    private fun IustitiaConfig.scaleSetback(factor: Double) {
+        for ((_, cc) in checks()) cc.setbackVL *= factor
     }
 
     // ---- internals ----
