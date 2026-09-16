@@ -100,6 +100,13 @@ class SelfTestEntrypoint : FabricClientGameTest {
         // The second half of the swing-source audit: a digging player is a permanently eligible
         // attacker for attack inference, so a teammate's unattributed damage nearby lands on them.
         Scenarios.legitMiningNearHurt(),
+        // The attribution follow-up. Each of these three isolates one branch of the rule that a hurt
+        // is attributed only to the player the server named: an unnamed hurt beside a swinger who is
+        // not digging, a named cause that resolves to nobody plus the knockback that comes with it,
+        // and the same non-player cause seen by `hitsWithoutSwing`'s own resolver.
+        Scenarios.legitHurtIdlessBystander(),
+        Scenarios.legitHurtMobKnockback(),
+        Scenarios.legitHitsWithoutSwingBystander(),
     )
 
     /**

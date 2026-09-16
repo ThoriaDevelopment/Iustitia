@@ -28,6 +28,24 @@ object ProtocolDetector {
     @Volatile
     private var protocol: Int = FALLBACK
 
+    /**
+     * True once the server has been seen naming the cause of a damage event in this session
+     * (an `EntityDamageS2CPacket`), i.e. once the modern damage channel is known to be in use.
+     * On such a protocol an unnamed hurt is never attributable to a player; see
+     * [dev.iustitia.inference.AttackInference] and [dev.iustitia.checks.combat.HitsWithoutSwingCheck].
+     *
+     * A latch, not a version comparison, and deliberately so. A protocol constant that read a
+     * 1.9-1.19.3 server as modern would switch the named-cause policy on for a protocol that
+     * cannot name anyone (those releases carry only the status byte and the health update), which
+     * would silently kill attack attribution there for the whole session. A latch can only be
+     * false *before* the first damage event of a session: the cost is at most one unattributed
+     * hurt, and it self-heals on the next one. Cleared by [redetect], so it is re-learned per join
+     * and per world change.
+     */
+    @Volatile
+    var namesDamageCauses: Boolean = false
+        private set
+
     val current: Int get() = protocol
 
     /** True iff the connected server speaks 1.8-or-earlier protocol. */
@@ -38,8 +56,21 @@ object ProtocolDetector {
      *  GCD signal (plan §1.1). */
     val fullFloatLook: Boolean get() = protocol >= PROTOCOL_FULL_FLOAT_LOOK
 
+    /**
+     * Record that the server named the cause of a damage event. Set from the consumers of
+     * [dev.iustitia.event.HurtSignal] rather than from the packet mixin, so a signal published on
+     * the bus (the live-test harness does exactly that) teaches the same lesson as the packet path.
+     * Idempotent. See [namesDamageCauses].
+     */
+    fun noteDamagePacket() {
+        namesDamageCauses = true
+    }
+
     /** Re-detect via ViaFabricPlus reflection; falls back to modern on any error. */
     fun redetect() {
+        // The named-cause capability belongs to the connection being joined, not to the previous
+        // one: re-learn it (see [namesDamageCauses]).
+        namesDamageCauses = false
         protocol = try {
             val cls = Class.forName("de.florianmichael.viafabricplus.protocoltranslator.ProtocolTranslator")
             val getTarget = cls.getMethod("getTargetVersion")

@@ -147,7 +147,9 @@ class ClientPlayNetworkHandlerMixin {
     private fun iustitia_onEntityStatus(packet: EntityStatusS2CPacket, ci: CallbackInfo) {
         try {
             val w = world() ?: return
-            // EntityStatus byte 2 == living-entity "play hurt animation / took damage".
+            // EntityStatus byte 2: `KINETIC_ATTACK` (a mace smash) on 1.21, the living entity's
+            // "play hurt animation" on legacy protocols. Either way it is a real hit on the victim,
+            // so it is published as an unnamed hurt; consumers must not read a name out of it.
             if (packet.status == 2.toByte()) {
                 val victim = otherPlayer(packet.getEntity(w)) ?: return
                 Iustitia.bus.publish(HurtSignal(victim, Iustitia.tickCounter, -1, HurtSource.STATUS))
@@ -221,6 +223,11 @@ class ClientPlayNetworkHandlerMixin {
         } catch (_: Throwable) {}
     }
 
+    // The victim of a damage tilt is the damaged player, and the server sends this packet to that
+    // player's own client only (`ServerPlayerEntity.tiltScreen`), so in the wild this inject fires
+    // for the LOCAL player and `otherPlayer` filters it out. The channel it feeds is exercised by
+    // the live-test harness, which publishes the signal directly; it is not evidence an observer
+    // ever has about somebody else's hit.
     @Inject(method = ["onDamageTilt"], at = [At("HEAD")])
     private fun iustitia_onDamageTilt(packet: DamageTiltS2CPacket, ci: CallbackInfo) {
         try {

@@ -7,6 +7,7 @@ import dev.iustitia.event.HurtSignal
 import dev.iustitia.event.HurtSource
 import dev.iustitia.event.SwingSignal
 import dev.iustitia.history.Evidence
+import dev.iustitia.protocol.ProtocolDetector
 import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
@@ -21,11 +22,13 @@ import java.util.UUID
  * legitimately skip swing — low VL"), so it sits in the [dev.iustitia.history.FlagHistory.CORROBORATOR]
  * tier: it corroborates a killaura/silent-aim case but is not red-capable alone.
  *
- * Attacker inference: if the hurt channel carries `attackerEntityId` (ENTITY_DAMAGE), resolve
- * that tracked player directly. Otherwise (STATUS / DAMAGE_TILT carry -1) attribute the hit
- * to the nearest tracked player within melee range ([MELEE_RANGE]) of the victim — and
- * FAIL-OPEN if no tracked player is that close (the hurt likely came from an unseen/out-of-
- * view attacker, fall, fire, etc. — never a confirmed no-swing attack we can attribute).
+ * Attacker inference: the hurt is attributed to the player the server named
+ * (`attackerEntityId`, the ENTITY_DAMAGE channel), and to nobody else. A name that resolves to no
+ * tracked player is a mob, an arrow or a TNT block, and a hurt that names nobody at all is
+ * environmental: both fail open. Only where the protocol cannot name anyone (legacy 1.8-1.19.3,
+ * where [ProtocolDetector.namesDamageCauses] never becomes true) does the check fall back to
+ * proximity, and there it requires a candidate within melee range ([MELEE_RANGE_SQ]) of the victim
+ * with a recent swing ([SWING_RECENCY]) — and still fails open when nobody qualifies.
  *
  * FP mitigation: a single no-swing hurt is noisy (unseen attacker, packet ordering, a swing
  * just outside the window). Require ≥ [threshold] (default 3) no-swing hurts from the SAME
@@ -63,6 +66,11 @@ class HitsWithoutSwingCheck : Check() {
         try {
             // Only melee hurt channels. VELOCITY is a knockback follow-up, not a swing-attack.
             if (sig.source == HurtSource.VELOCITY) return
+            // Learn the protocol's damage-cause capability from the signal this check reads: an
+            // ENTITY_DAMAGE hurt is the server naming a cause, and from then on an unnamed hurt is
+            // environmental by construction. Set here as well as in AttackInference so this check's
+            // gate does not depend on that class being registered. Idempotent.
+            if (sig.source == HurtSource.ENTITY_DAMAGE) ProtocolDetector.noteDamagePacket()
             val victim = EntityTrackerManager.get(sig.victim) ?: return
             val attacker = inferAttacker(sig, victim) ?: return
             val actx = contextOf(attacker.uuid) as HitsWithoutSwingContext
@@ -108,28 +116,27 @@ class HitsWithoutSwingCheck : Check() {
     }
 
     /**
-     * Resolve the attacker: the tracked player matching [HurtSignal.attackerEntityId] when
-     * the channel provides one, else the nearest tracked player within [MELEE_RANGE] of
-     * the victim — with the proximity fallback gated on recent swing activity (see
-     * [SWING_RECENCY]). Returns null (fail-open) when no tracked player qualifies — the
-     * hurt is then attributable to an unseen attacker / environment, not a no-swing cheat.
+     * Resolve the attacker: the tracked player the hurt names, and nobody else.
+     *
+     * A named cause that resolves to no tracked player is a mob, an arrow or a TNT block, and the
+     * server has told us the hurt is not a player's — so this returns null (fail-open) instead of
+     * falling through to the proximity loop. It used to fall through, which was a live false
+     * positive: a mob hit on a teammate charged whoever had swung nearby in the last 60 ticks.
+     *
+     * The proximity fallback survives for the channels that name nobody (legacy STATUS /
+     * DAMAGE_TILT, which carry -1) and only where the protocol cannot name causes at all — see
+     * [ProtocolDetector.namesDamageCauses]. There it still requires recent swing activity
+     * ([SWING_RECENCY]): a bystander never swung because they never attacked, and without that gate
+     * environmental damage next to them charged their no-swing episode. A fully swing-suppressing
+     * disabler is caught through the direct channel and other checks.
      */
     private fun inferAttacker(sig: HurtSignal, victim: TrackedPlayer): TrackedPlayer? {
-        if (sig.attackerEntityId >= 0) {
-            val direct = EntityTrackerManager.byEntityId(sig.attackerEntityId)
-            if (direct != null) return direct
-        }
+        if (sig.attackerEntityId >= 0) return EntityTrackerManager.byEntityId(sig.attackerEntityId)
+        if (ProtocolDetector.namesDamageCauses) return null
         var nearest: TrackedPlayer? = null
         var nearestSq = MELEE_RANGE_SQ
         for (cand in EntityTrackerManager.all()) {
             if (cand.uuid == victim.uuid) continue
-            // The -1-attacker channels (STATUS / DAMAGE_TILT) also carry lava / fall / mob
-            // damage, all with no attacker id. Only attribute such a hurt to a candidate with
-            // recent swing activity: a bystander never swung because they never attacked —
-            // without this gate, environmental damage next to them charged their no-swing
-            // episode (audit FP). A real hit-select attacker still swings in normal play (the
-            // cheat skips only the attack swings), so the fallback keeps its signal; a fully
-            // swing-suppressing disabler is caught via the direct channel and other checks.
             val cctx = contextOf(cand.uuid) as HitsWithoutSwingContext
             if (cctx.lastSwingTick == Int.MIN_VALUE || sig.tick - cctx.lastSwingTick > SWING_RECENCY) continue
             val dsq = cand.pos.squaredDistanceTo(victim.pos)

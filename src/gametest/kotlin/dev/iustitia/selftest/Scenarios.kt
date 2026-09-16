@@ -1125,6 +1125,12 @@ object Scenarios {
      * damage-suppressing aura a bypass. The dig state is published here for the same reason the swing is:
      * the harness bots are client-side display entities the server never sees, so no
      * `BlockBreakingProgressS2CPacket` is ever sent for them.
+     *
+     * Three more guards landed after this scenario was written, and this drive is now their regression as
+     * well: an unnamed hurt on a non-VELOCITY channel is not attributed to anyone on a protocol that names
+     * damage causes, which is the same case one layer up from the dig guard, and it is why the dig guard
+     * reads as the legacy one today. See `legit-hurt-idless-bystander` for that rule on its own, without a
+     * digger in the picture.
      */
     fun legitMiningNearHurt(): Spec = Spec(
         "legit-mining-near-hurt", Pass.LEGIT, "vanilla", setOf(Tags.COMBAT),
@@ -1146,8 +1152,133 @@ object Scenarios {
             victim.setOnGround(true)
         }
         b.everyTick(4) { digger.swing() }
-        // Environmental damage, exactly as an observer sees it: a hurt on the victim with no attacker id.
-        b.everyTick(10) { victim.hurt(attackerEntityId = -1, source = HurtSource.DAMAGE_TILT) }
+        // Environmental damage, exactly as an observer sees it: a damage event on the victim with no
+        // attacker id. `EntityDamageS2CPacket.sourceCauseId` is -1 exactly when the damage had no
+        // attacker, and it is this packet (not the status byte, and not the damage tilt, which the server
+        // sends only to the victim's own client) that carries fall, fire and drowning to an observer.
+        b.everyTick(10) { victim.hurt(attackerEntityId = -1, source = HurtSource.ENTITY_DAMAGE) }
+        b.runFor(120)
+    }
+
+    /**
+     * A damage cause id that resolves to no tracked player: a mob, an arrow, a TNT block. The harness
+     * spawns only client-side player-display entities, so none of those can be modelled directly, and the
+     * only thing an observer learns from any of them is a damage event naming an id the player tracker does
+     * not index. Far above any live entity id, so it cannot resolve to a bot by accident.
+     */
+    private const val NON_PLAYER_CAUSE_ID = 900_000
+
+    /**
+     * A player swinging in place 6 blocks from a teammate who is taking **environmental** damage that names
+     * nobody, and who is not digging.
+     *
+     * This is `legit-mining-near-hurt` with the digger removed, and that is the whole point: it pins the
+     * second half of the attribution rule on its own. A hurt with no attacker id on a non-VELOCITY channel
+     * must not be attributed to anyone on a protocol that names damage causes, because that packet names
+     * nobody exactly when the damage had no attacker. The digguard in `correlate` covered the measured
+     * false positive but only for diggers; this is the class, and the swinger here is an ordinary player
+     * who happens to be swinging.
+     *
+     * The drive is built so the correlation succeeds for every hurt before the fix, and the assertion is
+     * the same `reach` motionless discriminator the mining scenario uses: 6 blocks is inside the
+     * correlator's 8.0 reach and far outside `reach`'s 3.2 bar, the swing every 5 ticks coincides exactly
+     * with the 10-tick damage beat, and both bodies are motionless. Facing 180 degrees keeps the drive
+     * from being a genuine aim match, so `rotationTracking` stays out of it.
+     *
+     * 24 swings in 120 ticks is a deliberate ceiling: `clickStatistics` needs 40 tick-interval samples
+     * before its StDev signal is armed at all, so this cadence cannot be mistaken for a fixed-delay
+     * clicker, whatever it does.
+     */
+    fun legitHurtIdlessBystander(): Spec = Spec(
+        "legit-hurt-idless-bystander", Pass.LEGIT, "vanilla", setOf(Tags.COMBAT),
+    ) { b ->
+        val swinger = b.bot("Onlooker", 0.0, 0.0)
+        val victim = b.bot("Teammate", 0.0, 6.0)
+        b.expectQuiet(swinger, CheckIds.COMBAT)
+        b.expectFlagCount(swinger, "reach", "Reach", atMost = 0, subLabel = "motionless")
+
+        b.everyTick {
+            swinger.look(180f, 0f)
+            swinger.setOnGround(true)
+            victim.setOnGround(true)
+        }
+        b.everyTick(5) { swinger.swing() }
+        b.everyTick(10) { victim.hurt(attackerEntityId = -1, source = HurtSource.ENTITY_DAMAGE) }
+        b.runFor(120)
+    }
+
+    /**
+     * A player swinging in place 6 blocks from a teammate who is being mauled: the damage event names a
+     * cause that is not a tracked player, and the knockback that comes with it is the unnamed impulse a real
+     * server broadcasts.
+     *
+     * The two halves of this drive are guarded separately, and it is worth keeping them together because
+     * that is how they arrive. The named half is already safe before the fix (a hurt that names its attacker
+     * can only be claimed by that attacker, and a cause that resolves to nobody matches no candidate, so
+     * nothing is emitted). The impulse is the half that was open: it is unnamed by construction, so on the
+     * old guessing path the mob's knockback landed on whoever had swung nearby, which is the shape in the
+     * release notes about mining beside a teammate who takes a mob hit.
+     *
+     * The fix credits an unnamed impulse only when the damage it came from was never observed. Here it
+     * always is, at the same tick, so the impulse is a duplicate and contributes nothing. On a legacy
+     * protocol no damage event exists at all and the impulse is the only evidence there is, which is exactly
+     * why that exception is narrow rather than a blanket removal of the channel.
+     *
+     * Both bodies stay still in the tracker's eyes (the impulse is published as a signal, it does not move
+     * the entity), so `reach`'s motionless discriminator is the assertion again.
+     */
+    fun legitHurtMobKnockback(): Spec = Spec(
+        "legit-hurt-mob-knockback", Pass.LEGIT, "vanilla", setOf(Tags.COMBAT),
+    ) { b ->
+        val swinger = b.bot("Watcher", 0.0, 0.0)
+        val victim = b.bot("Mauled", 0.0, 6.0)
+        b.expectQuiet(swinger, CheckIds.COMBAT)
+        b.expectFlagCount(swinger, "reach", "Reach", atMost = 0, subLabel = "motionless")
+
+        b.everyTick {
+            swinger.look(180f, 0f)
+            swinger.setOnGround(true)
+            victim.setOnGround(true)
+        }
+        b.everyTick(5) { swinger.swing() }
+        b.everyTick(10) {
+            // The server named a cause that is not a tracked player, then applied the knockback.
+            victim.hurt(attackerEntityId = NON_PLAYER_CAUSE_ID)
+            victim.velocity(0.3, 0.36, 0.28)
+        }
+        b.runFor(120)
+    }
+
+    /**
+     * A player loitering 3 blocks from a teammate who takes non-player damage, swinging at a cadence that
+     * never coincides with the damage beat.
+     *
+     * `hitsWithoutSwing` reads the opposite shape from the two scenarios above: not "a hurt I cannot
+     * attribute", but "a hurt with no swing to go with it". Its resolver treated a cause that resolves to
+     * nobody as if the hurt had named no cause at all and fell through to the proximity guess, so a mob hit
+     * on a teammate charged whoever had swung nearby in the last 60 ticks. Three such charges in an episode
+     * is a flag, and with `decay 0.5` against a one-flag-per-episode latch that flag is the whole alert.
+     *
+     * 3 blocks is inside the resolver's 4-block melee range, and the 7-tick swing against a 5-tick damage
+     * beat puts most hurts outside the +/-2-tick swing window without ever approaching the 60-tick recency
+     * limit: three charges land by tick 20, and the drive runs 120. The victim's damage is named, so this
+     * drive never reaches attack inference and cannot be mistaken for a `reach` false positive.
+     */
+    fun legitHitsWithoutSwingBystander(): Spec = Spec(
+        "legit-hitswithoutswing-bystander", Pass.LEGIT, "vanilla", setOf(Tags.COMBAT),
+    ) { b ->
+        val loiterer = b.bot("Loiterer", 0.0, 0.0)
+        val victim = b.bot("Bitten", 0.0, 3.0)
+        b.expectQuiet(loiterer, CheckIds.COMBAT)
+        b.expectFlagCount(loiterer, "hitsWithoutSwing", "HitsWithoutSwing", atMost = 0)
+
+        b.everyTick {
+            loiterer.look(180f, 0f)
+            loiterer.setOnGround(true)
+            victim.setOnGround(true)
+        }
+        b.everyTick(7) { loiterer.swing() }
+        b.everyTick(5) { victim.hurt(attackerEntityId = NON_PLAYER_CAUSE_ID) }
         b.runFor(120)
     }
 }
