@@ -755,7 +755,7 @@
     "name": "AimWrap",
     "group": "Rotation",
     "definitive": false,
-    "what": "Max-rotation-rate / snap detector — flags a single-tick yaw rotation larger than threshold (150deg) coming out of a near-still tick (previous wrapped delta < 30deg): a classic aimbot snap from rest.",
+    "what": "Max-rotation-rate / snap detector — flags a single-tick yaw rotation larger than threshold (165deg) coming out of a near-still tick (previous wrapped delta < 30deg): a classic aimbot snap from rest.",
     "signature": "wrappedDelta = wrapDegrees(yaw - lastYaw); flags when |wrappedDelta| > threshold && |lastWrappedDelta| < 30.0. Delta measured as shortest angular distance so legit boundary crossings (179deg -> -179deg, actual 2deg) do NOT false-flag.",
     "fpGuards": [
       "Wrapped (shortest-path) delta eliminates +-180deg boundary-crossing FPs",

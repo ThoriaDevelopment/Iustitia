@@ -12,7 +12,7 @@ import dev.iustitia.checks.LagWindows
 
 /**
  * Max-rotation-rate / snap detector. Flags a single-tick yaw rotation larger than
- * [IustitiaConfig.CheckConfig.threshold] (default 150°) that comes out of a near-still tick
+ * [IustitiaConfig.CheckConfig.threshold] (default 165°) that comes out of a near-still tick
  * (previous wrapped delta < 30°) — a classic aimbot snap from rest. The delta is measured as
  * the **shortest angular distance** ([AimGeometry.wrapDegrees]) so a legitimate turn that
  * crosses the ±180° boundary (179°→-179°, raw Δ -358°, actual 2°) does NOT false-flag: its
@@ -73,7 +73,7 @@ class AimWrapCheck : Check() {
     private companion object {
         /** Rolling window of snap opportunities the episode is judged over. */
         private const val WINDOW = 8
-        /** Snaps required in the window. The per-event rotation (>=150 deg in one tick) is already
+        /** Snaps required in the window. The per-event rotation (>=165 deg in one tick) is already
          *  well past human reaction, so 3 of 8 is generous to the cheater and still cannot be
          *  reached by a legitimate flick, which cannot repeat the superhuman delta. */
         private const val MIN_VIOLATIONS = 3
