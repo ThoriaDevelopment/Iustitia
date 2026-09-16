@@ -107,7 +107,12 @@ object PresetScenarios {
      * path: the formerly-drifted fields (replay/clip/chathist + `sensitivitySubstrate`)
      * are now preset content, the documented exclusions (`playclipMode`, mutes,
      * `persistenceEnabled`, `wizardCompleted`) still hold, and Standard's display profile
-     * lands on the config while the check slices stay at stock calibration.
+     * lands on the config while the check slices stay at stock calibration. The check
+     * `enabled` flags are asserted in both directions: exactly the seven on
+     * [dev.iustitia.config.PresetManager.standardOffChecks] go off and every other check
+     * stays on. That is the invariant this scenario exists to hold now that the built-in
+     * ships a detection-scope choice: a preset that silently disabled an eighth check, or
+     * one that let the seven drift back on, would be invisible everywhere else.
      */
     class PresetApplyCoverage : SelfTest.Scenario("preset-apply-coverage", "REPLAY") {
         override fun run(b: SelfTest.ScenarioBuilder) {
@@ -159,16 +164,23 @@ object PresetScenarios {
                 if (!c.persistenceEnabled)
                     fail("persistenceEnabled was overwritten by the preset apply — persistence is documented as not-touched.")
 
-                // (c) standard semantics: display profile landed, and the check slices stay at
-                //     stock calibration — no setbackVL scaling, no disabled checks.
+                // (c) standard semantics: the display profile landed; the server-normalized checks
+                //     are DISABLED by the built-in and nothing else is; calibration is not scaled.
                 if (ConfigManager.config.alertLevel != 1)
                     fail("standard alertLevel did not land on the live config (want 1).")
-                if (!ConfigManager.config.slice("wTap").enabled)
-                    fail("standard disabled wTap — built-ins must not disable checks.")
+                val off = dev.iustitia.config.PresetManager.standardOffChecks
+                for ((id, cc) in ConfigManager.config.checks()) {
+                    if (id in off) {
+                        if (cc.enabled) fail("standard left '$id' enabled; the everyday profile ships the server-normalized checks off.")
+                    } else if (!cc.enabled) {
+                        fail("standard disabled '$id', which is not on standardOffChecks; the profile must turn off exactly the declared seven.")
+                    }
+                }
+                if (off.size != 7) fail("standardOffChecks has ${off.size} entries, expected 7.")
                 val want = dev.iustitia.config.IustitiaConfig().slice("reach").setbackVL
                 val got = ConfigManager.config.slice("reach").setbackVL
                 if (kotlin.math.abs(got - want) > 1e-6)
-                    fail("standard touched reach setbackVL: got $got, stock default $want — built-ins must not scale calibration.")
+                    fail("standard touched reach setbackVL: got $got, stock default $want; built-ins must not scale calibration.")
             }
 
             // ---- restore pre-apply user state ----

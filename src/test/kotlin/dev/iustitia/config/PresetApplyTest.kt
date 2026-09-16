@@ -69,9 +69,52 @@ class PresetApplyTest {
         // the one light visual the standard preset keeps: the lag indicator must be forced ON
         // even when the pre-apply state had it off
         assertTrue(target.lagHudIcon)
-        // calibration untouched: the only built-in left must not scale or disable check slices
+        // calibration untouched: the built-in must not scale any check's numbers
         assertEquals(IustitiaConfig().slice("reach").setbackVL, target.slice("reach").setbackVL)
         assertTrue(target.slice("wTap").enabled)
+    }
+
+    @Test
+    fun `standard disables exactly the server-normalized checks and nothing else`() {
+        val target = IustitiaConfig()
+        // Pre-apply state where a check the profile turns OFF is on and one it leaves alone is
+        // off, so neither direction can pass by accident.
+        target.slice("teleport").enabled = true
+        target.slice("killAura").enabled = false
+
+        assertTrue(applyInto(PresetManager.builtIn("standard")!!, target))
+
+        for (id in PresetManager.standardOffChecks) {
+            assertFalse(
+                target.slice(id).enabled,
+                "standard left '$id' enabled: the everyday profile must ship the server-normalized checks off",
+            )
+        }
+        // The other direction: `enabled` is preset content, so the apply writes it for every check
+        // it knows about. Nothing outside the declared seven may end up off, and a check the profile
+        // does not name comes back ON even when the pre-apply state had it off (that is what makes an
+        // apply a profile rather than a patch; user mutes live in `mutedChecks`, which is excluded).
+        val all = IustitiaConfig().checks().map { it.first }
+        assertEquals(all.size, all.toSet().size, "duplicate check id in checks()")
+        for (id in all) {
+            if (id in PresetManager.standardOffChecks) continue
+            assertTrue(
+                target.slice(id).enabled,
+                "standard left '$id' disabled, and it is not on standardOffChecks",
+            )
+        }
+        assertTrue(target.slice("killAura").enabled, "standard did not write killAura's enabled flag")
+    }
+
+    @Test
+    fun `every id on standardOffChecks is a real check`() {
+        // The preset disables through slice(id), and slice() fails open to a throwaway config for an
+        // unknown id, so a typo in the list would disable nothing while the tests above happily
+        // agreed with it. Anchor the list to the registry.
+        val registry = IustitiaConfig().checks().map { it.first }.toSet()
+        for (id in PresetManager.standardOffChecks) {
+            assertTrue(id in registry, "'$id' is on standardOffChecks but is not a registered check id")
+        }
     }
 
     @Test

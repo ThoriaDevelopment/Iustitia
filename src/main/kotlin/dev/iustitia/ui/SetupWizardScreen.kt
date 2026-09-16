@@ -16,8 +16,14 @@ import net.minecraft.text.Text
  *  - **General** — everyday play: applies [dev.iustitia.config.PresetManager]'s `standard` preset
  *    (one "everyday" profile, not two drift-prone field lists) plus the wizard's own display deltas
  *    (overlays + transcript panel off) and persistence off. NOTE: this DOES set detection
- *    calibration — the wizard button re-applies it, which is the point (fresh install → the tuned
- *    default calibration; a `/ius wizard` re-run → back to standard tuning).
+ *    calibration AND detection scope. The wizard button re-applies the preset, which is the point
+ *    (fresh install → the tuned default calibration; a `/ius wizard` re-run → back to standard
+ *    tuning), and since v1.4.0 `standard` also ships the server-normalized checks disabled
+ *    ([dev.iustitia.config.PresetManager.standardOffChecks]). The other two buttons below are
+ *    display/alert profiles only and do NOT touch check enabled flags, so re-running the wizard and
+ *    picking one of them leaves whatever detection scope is live in place. A moderator who wants
+ *    those seven back switches them on in `/ius config` (or applies a custom preset built from a
+ *    full-coverage config).
  *  - **Moderation** — staff reviewing a server: verbose alerts, audio cues, no batching (every
  *    individual flag), nametag-suspects-only (no green ticks), persistence on so notes + history
  *    survive restarts, transcript panel on.
@@ -33,7 +39,7 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
         // this used to be a hand-rolled field list that had diverged from PresetManager's
         // `standard`). The wizard only layers its own display deltas on top (overlays off,
         // transcript panel off); persistence stays a wizard decision, not preset content.
-        Preset("§aGeneral", "Everyday play. Normal alerts, nametag on, silent, no persistence.") {
+        Preset("§aGeneral", "Everyday play. Normal alerts, nametag on, silent, no persistence, server-normalized movement off.") {
             try { dev.iustitia.config.PresetManager.apply("standard") } catch (_: Throwable) {}
             val c = ConfigManager.config
             c.transcriptPanel = false

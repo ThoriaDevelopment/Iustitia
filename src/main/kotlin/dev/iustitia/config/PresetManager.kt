@@ -15,6 +15,11 @@ import java.nio.file.Path
  * (saved via [ConfigManager.presetContentJson], the main serializer minus the per-user keys), so
  * they round-trip the user's exact tuned values and carry no per-user state.
  *
+ * The one built-in, `standard`, is the everyday-play profile: the shipped defaults with the
+ * on-world and overlay extras switched off, plus the server-normalized checks on
+ * [standardOffChecks] disabled. It scales no calibration: every check it leaves on keeps its
+ * stock setbackVL/decay/threshold.
+ *
  * ## What is and isn't preset content (schema-derived)
  *
  * A preset captures detection calibration + display/UX + replay/chathist — everything that
@@ -35,6 +40,34 @@ import java.nio.file.Path
 object PresetManager {
 
     val builtInNames: List<String> = listOf("standard")
+
+    /** Check ids the built-in `standard` preset ships DISABLED.
+     *
+     *  Every one of these reads a behaviour that a minigame server is free to implement itself, and
+     *  the client has no way to tell a server feature from a cheat: a dash or jump pad is a speed
+     *  envelope violation, a lobby or double-jump is flight, a fall-damage-free arena is exactly the
+     *  no-fall-damage signature, a warp or teleport pad is a position discontinuity, and a
+     *  right-click ability deals damage with no swing packet behind it. On the server where that is
+     *  normal the check fires on honest players, and the moderator reading the alert has no evidence
+     *  to weigh it against, so the mod looks broken rather than the player looking cheaty. Standard
+     *  is the everyday-play profile, so it leaves those seven out and keeps the checks whose signal
+     *  a server feature cannot fake.
+     *
+     *  This is a detection-scope choice, not a statement that the checks are wrong. They stay
+     *  implemented, they stay in the registry, they stay switchable in `/ius config`, and every one
+     *  of them has a live-test gate. A competitive or moderation profile that wants the full set
+     *  should turn them back on rather than assume this list is empty. Note that `enabled` is preset
+     *  content, so applying this preset writes the flag for all 36 checks: these seven go off and
+     *  every other check comes back on, including one you had switched off by hand.
+     *
+     *  Two of the seven (`speedEnvelope`, `longJump`) are also on the suite's declared detector-gap
+     *  list, so they do not reach their setback at the default tuning in the first place; disabling
+     *  them costs nothing today and changes the gap from "tuned too weak to alert" to "off in the
+     *  everyday profile". See docs/automated-live-testing.md. */
+    val standardOffChecks: Set<String> = linkedSetOf(
+        "hitsWithoutSwing", "speedEnvelope", "flyEnvelope", "noFallDamage",
+        "phaseClip", "longJump", "teleport",
+    )
 
     fun isBuiltIn(name: String): Boolean = name.lowercase() in builtInNames
 
@@ -139,6 +172,10 @@ object PresetManager {
                 confidenceHud = false; transcriptPanel = false
                 alertLevel = 1; alertBatching = true; compactMode = false; verbose = false
                 replayCapture = true; nametagPrefixes = true; nametagGreenEnabled = true
+                // Server-normalized movement / damage checks off; the list and its reasoning are
+                // on [standardOffChecks]. One source for the set so the preset, the live-test gate
+                // and the JVM test can never disagree about which checks the profile turns off.
+                for (id in standardOffChecks) slice(id).enabled = false
             }
             else -> null
         }

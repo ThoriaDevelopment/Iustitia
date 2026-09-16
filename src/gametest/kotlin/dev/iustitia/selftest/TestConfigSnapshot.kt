@@ -18,6 +18,14 @@ import java.util.UUID
  *   every alert in a 200-tick scenario.
  * - `alertThrottleTicks = 0` -- each crossing is independently observable.
  * - `alertBatching = false` -- no quiet-window flush dependency in assertions.
+ * - `alertsEnabled = true` -- a contributor who silenced chat must not lose the alert tap.
+ * - **every check's `enabled` flag = true** -- the bypass assertions are the reason. Nine cheat
+ *   scenarios require an alert from a check the `standard` preset ships disabled
+ *   (`flyEnvelope`, `teleport` x2, `noFallDamage` x3, `phaseClip`, `hitsWithoutSwing` x2), and
+ *   the first-launch wizard's General button applies exactly that preset. Without this a
+ *   contributor who picked General (or toggled a check off by hand) would read nine confident
+ *   "BYPASS" rows for drives that work. The flags are restored in [restore], so a run still
+ *   leaves the developer's config as it found it.
  * - `persistenceEnabled = false` -- the harness never touches the roaming store.
  * - `wizardCompleted = true` -- the first-launch setup wizard otherwise opens
  *   `SetupWizardScreen` the instant the world joins, which blocks the client
@@ -52,6 +60,9 @@ class TestConfigSnapshot private constructor(
                     "verbose" to c.verbose,
                     "wizardCompleted" to c.wizardCompleted,
                     "replayCapture" to c.replayCapture,
+                    // Per-check enabled flags: restored in restore(). Keyed by id so a check added
+                    // later is covered without touching this map.
+                    "checkEnabled" to c.checks().associate { (id, cc) -> id to cc.enabled },
                 )
                 val exemptions = Exemptions.all()
                 Exemptions.clear()
@@ -61,6 +72,10 @@ class TestConfigSnapshot private constructor(
                 c.alertBatching = false
                 c.persistenceEnabled = false
                 c.alertsEnabled = true
+                // Every check ON: an applied preset (standard ships seven checks off) or a manual
+                // /ius toggle would otherwise read as a bypass on a drive that works. See the
+                // class doc.
+                c.checks().forEach { (_, cc) -> cc.enabled = true }
                 // Verbose is normally off (the flag tap is what the report reads), but the
                 // calibration loop needs the *sub-flag label* + measured value behind a false
                 // positive or a bypass -- set -Pselftest.verbose (live_selftest.py
@@ -87,6 +102,9 @@ class TestConfigSnapshot private constructor(
             c.verbose = savedFields["verbose"] as Boolean
             c.wizardCompleted = savedFields["wizardCompleted"] as Boolean
             c.replayCapture = savedFields["replayCapture"] as Boolean
+            @Suppress("UNCHECKED_CAST")
+            val savedEnabled = savedFields["checkEnabled"] as Map<String, Boolean>
+            c.checks().forEach { (id, cc) -> cc.enabled = savedEnabled[id] ?: cc.enabled }
             Exemptions.clear()
             savedExemptions.forEach { (uuid, name) -> Exemptions.load(uuid, name) }
         }
