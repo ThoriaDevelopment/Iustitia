@@ -14,7 +14,8 @@
       "Pose-aware victim hitbox (sneak/prone/gliding)",
       "1.8 protocol widens hitbox margin by +0.1",
       "No-intercept only flagged when the nearest face genuinely exceeds reach (close-range misses dropped as inconclusive)",
-      "Motionless-pair branch requires both attacker and victim stationary; a moving pair is judged by the ray path only"
+      "Motionless-pair branch requires both attacker and victim stationary; a moving pair is judged by the ray path only",
+      "AttackEvent misattribution guard: a hurt that names its attacker is only claimable by that attacker, and an unattributed non-knockback hurt near a player the server has digging is not attributed to them (see AttackInference)"
     ],
     "defaults": { "enabled": true, "setbackVL": 10.0, "decay": 0.25, "threshold": 3.0 },
     "constants": [
@@ -50,11 +51,12 @@
     "group": "Combat",
     "definitive": false,
     "what": "Autoclicker via four independent signals on a swing: CPS, Robot (sub-10ms nano-delta), StDev (too-uniform intervals), and Kurtosis (near-uniform fixed-delay). Ported from Nemesis AutoClickerA-D.",
-    "signature": "CPS: swings in last 20 ticks > threshold (20) -> level 1. Robot: first nanoInterval < 10ms AND second < 50ms -> level 2. StDev: populationStDev of last 40 intervals < 0.45 -> level 1. Kurtosis: excess kurtosis over a 600-sample window < -0.7, fired once per episode at level setbackVL + 1.0.",
+    "signature": "CPS: swings in last 20 ticks > threshold (20) -> level 1. Robot: first nanoInterval < 10ms AND second < 50ms -> level 2. StDev: populationStDev of last 40 intervals < 0.45 -> level 1. Kurtosis: excess kurtosis over a 600-sample window < -0.7, fired once per episode at level setbackVL + 1.0. A swing relayed while the server has a dig live for that player is skipped for the cadence windows when its interval is >= 2 ticks (as fast as a relay runs in vanilla), so a bedrock miner's exactly-constant 4-tick stream no longer reads as a fixed-delay clicker. CPS still counts those swings.",
     "fpGuards": [
       "Same-tick swing batches (server/lag collapse) excluded from nano/stat windows",
       "Strict kurtosis bar (-0.7) excludes legit jitter/drag clicking",
-      "Kurtosis transition gate fires once per episode, re-arms at kurt >= -0.2"
+      "Kurtosis transition gate fires once per episode, re-arms at kurt >= -0.2",
+      "Server-relayed dig swings (>= 2-tick interval) excluded from the StDev/Kurt/Record cadence windows, since the digger's arm runs on the server's clock, not theirs"
     ],
     "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.05, "threshold": 20.0 },
     "constants": [

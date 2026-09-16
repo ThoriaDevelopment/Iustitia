@@ -24,20 +24,26 @@ That gate had a second bug of its own. Two of the checks using it, `hitsWithoutS
 
 `noFallDamage` was rebuilt around a launch-floor re-base, which fixes two false positives and closes a spoof gap in one move. A fall caught on a water bucket, hay block or powder snow reduces damage the vanilla way and doesn't accumulate VL, and falling onto a wind-charge launch (or jumping on one) reads as a reset. But descent that starts above the launch floor never got a floor in the first place, so burst-spoof falls from 35+ blocks above a wind charge still flag.
 
+Attack attribution got a source it never had. `reach`, `multiTarget` and every other check that reads a correlated attack used to accept a hurt from whoever happened to be swinging nearby, because the correlation was proximity and timing alone. A hurt now has to be claimed by the player it names whenever the server names one, and a hurt that names nobody is not attributed to a player the server can currently see digging. Mining next to a teammate who takes an arrow, a fall or a mob hit was the case that produced wrong flags.
+
 ## False positives
 
-Six known false positives are gone. Ladder climbs no longer trip `flyEnvelope`, and legitimate water walking no longer trips `waterWalk` — both guarded by live tests in the harness now, so they stay gone. Four more were closed in the release-audit pass, each one a legitimate shape that a detector misread as a cheat:
+Eight known false positives are gone. Ladder climbs no longer trip `flyEnvelope`, and legitimate water walking no longer trips `waterWalk` — both guarded by live tests in the harness now, so they stay gone. Four more were closed in the release-audit pass, and two in the swing-source audit, each one a legitimate shape that a detector misread as a cheat:
 
 - a **slab/stairs ramp** no longer trips `flyEnvelope` (a step-up is a single-tick Δy spike on a raw position delta, and the old streak counters spanned the level ground between two steps);
 - a **strafe across a held crosshair** no longer trips `triggerbot` (a crosshair-to-hitbox edge can be created by either party moving; the check now requires the attacker's own aim to have moved to call it a reaction);
 - an **already-airborne victim** no longer trips `noKnockback`'s VelocityB (the upward-KB comparison was never defined for a victim who was not on the ground at the hit); and
-- a **vanilla sword sweep** no longer trips `multiTarget`'s pair gate (the gate's window counted attack *events*, so one sweep's packets satisfied a gate whose whole point is repetition — it is tick-keyed now).
+- a **vanilla sword sweep** no longer trips `multiTarget`'s pair gate (the gate's window counted attack *events*, so one sweep's packets satisfied a gate whose whole point is repetition — it is tick-keyed now);
+- **digging a block that cannot break** no longer trips `clickStatistics` (holding left click on bedrock swings the arm every tick, and the server relays that animation on its own fixed clock, so the interval stream is exactly constant, which is the StDev fingerprint of a fixed-delay autoclicker: 35 flags and a peak VL of 28.20 against a 5.0 setback); and
+- **mining near a damaged teammate** no longer trips `reach` (attack attribution was proximity alone, so a digger's stride-4 swing stream made them a permanently eligible attacker for a hurt that names nobody, including falls, fire and mob damage).
+
+The last two share one root cause, and it is the interesting part: while a dig is live, the swings a client observes are the *server's*, not the player's. Both fixes read a new dig-state observation and exempt it, and both are bounded so the exemption cannot be used to hide. Swings relayed on the server's dig clock are excluded from the cadence windows only at an interval of 2 ticks or more, as fast as a relay runs in vanilla, so a fast clicker is still evaluated. A hurt that names its attacker can only be claimed by that attacker, and a named hit clears the dig state for that attacker, so a client that fakes a dig loses the exemption the moment it lands a hit the observer can see. Both are covered by permanent harness regressions on the legitimate shapes, plus a new cheat row that holds a fake dig open while a reach module runs.
 
 Each ships with the legitimate shape as a permanent harness regression, and the corresponding cheat scenario is re-run against the narrowed detector in the same pass, so the fixes narrow the false positive without opening a bypass.
 
 ## For contributors
 
-Iustitia is now an open-collaboration project. `CONTRIBUTING.md`, `SECURITY.md`, `SUPPORT.md` and a code of conduct are in the repo, along with issue and PR templates and CI workflows. The centerpiece for anyone hacking on detection: a three-pass live-test harness (`python scripts/live_selftest.py`) that runs 84 automated scenarios in a real game client. The legit pass plays like a vanilla player and asserts silence (false-positive guards); the cheat pass reproduces modules from 9 reference cheat clients and 4 reference anticheats and asserts alerts (bypass guards); the replay pass covers the observer tooling. Every scenario names the client or anticheat it mirrors.
+Iustitia is now an open-collaboration project. `CONTRIBUTING.md`, `SECURITY.md`, `SUPPORT.md` and a code of conduct are in the repo, along with issue and PR templates and CI workflows. The centerpiece for anyone hacking on detection: a three-pass live-test harness (`python scripts/live_selftest.py`) that runs 88 automated scenarios in a real game client. The legit pass plays like a vanilla player and asserts silence (false-positive guards); the cheat pass reproduces modules from 9 reference cheat clients and 4 reference anticheats and asserts alerts (bypass guards); the replay pass covers the observer tooling. Every scenario names the client or anticheat it mirrors.
 
 ## Verification
 
@@ -45,7 +51,7 @@ Every number below was produced at `ca12ec8`, the source tree this release is cu
 
 - `python scripts/verify_contribution.py --static`: pass. Six detector defaults in `scripts/checks.json` had drifted from the code they describe, so the verifier now compares them value by value against `IustitiaConfig.kt`; perturbing one makes it exit 1 instead of passing quietly.
 - `./gradlew test --no-daemon`: 21 tests, 0 failures.
-- `python scripts/live_selftest.py`: the full three-pass suite in a real game client. 84 scenarios, all green, 0 false positives, 0 bypasses. The 4 recorded detector gaps and 6 drive gaps are unchanged and still listed.
+- `python scripts/live_selftest.py`: the full three-pass suite in a real game client. 88 scenarios, all green, 0 false positives, 0 bypasses. The 4 recorded detector gaps and 6 drive gaps are unchanged and still listed.
 
 The two re-arm regressions were observed in both directions: one alert each against the pre-fix checks, where two were required, and two each against the fixed ones.
 

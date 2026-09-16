@@ -60,9 +60,11 @@ For a changed check:
 2. Confirm its config slice is present and editable.
 3. Confirm a normal movement/combat trace does not immediately produce an alert.
 4. If the detector was narrowed, play the legitimate shape it was narrowed around and
-   confirm the check stays silent. The four shapes worth replaying by hand are a slab or
+   confirm the check stays silent. The six shapes worth replaying by hand are a slab or
    stairs ramp for `flyEnvelope`, a strafe across a held crosshair for `triggerbot`, a
-   vanilla sword sweep for `multiTarget`, and an already-airborne victim for `noKnockback`.
+   vanilla sword sweep for `multiTarget`, an already-airborne victim for `noKnockback`,
+   and holding left click on bedrock for `clickStatistics` and `reach` (see the dig pass
+   in the packet section, since that one needs a real server).
 5. Exercise the intended suspicious-like trace in a controlled test.
 6. Confirm flags appear in `/ius hist` when expected.
 7. Confirm alert throttling, join grace, decay, and tier behavior.
@@ -83,6 +85,32 @@ A synthetic or controlled trace is evidence of code behavior, not proof that the
 7. Test a player leaving render range and reappearing.
 8. Test a death-respawn separately from a dimension/world change.
 9. Confirm no outgoing gameplay behavior was added unintentionally.
+
+### The dig pass (swing-source audit)
+
+The harness cannot reach this one. The gametest bots are client-side display entities the server
+never tracks, so no `BlockBreakingProgressS2CPacket` is ever sent for them and the
+`onBlockBreakingProgress` inject cannot fire in a suite run. The scenarios drive the *consumers* of
+the dig state; only a real server can prove the *producer*. Run this on a test server with a second
+account, or on any server where another player will take damage near you:
+
+1. Hold left click on a block you cannot break (bedrock, or obsidian with a wooden pickaxe) and
+   keep holding for at least a minute, long enough for `clickStatistics` to accumulate well past its
+   5.0 setback if the fix were absent. Confirm no alert, and confirm `/ius hist` shows no
+   `ClickStats` flags for you.
+2. Confirm the signal reached the pipeline at all. The dig state is otherwise silent, so watch for
+   `DiggingSignal` in the verbose log (or confirm the second step below behaves differently when you
+   stop digging). A dig that never publishes looks identical to a working fix from the alert alone.
+3. Still digging, have a second player take damage that names no attacker within a few blocks of
+   you: a fall, fire, drowning, or a mob hit. Confirm `reach` does not flag you. Repeat with the
+   damage arriving while you are *not* digging and confirm the check's behavior changes, which is
+   what shows step 1 was passing for the right reason.
+4. Reverse it and confirm the exemption is not a hiding place: keep a dig alive while landing hits
+   on another player from over 3.2 blocks and confirm `reach` still alerts. A named hit is never
+   gated and it clears your dig state, so a faking client loses the exemption on its first visible
+   hit. `cheat-reach-digging-koid` is the automated twin of this step.
+5. Release the button and confirm the next swings are evaluated normally, with no alert left over
+   from the dig.
 
 ## Mixin changes
 
