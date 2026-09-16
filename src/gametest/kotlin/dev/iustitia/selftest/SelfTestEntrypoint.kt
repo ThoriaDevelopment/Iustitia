@@ -85,6 +85,14 @@ class SelfTestEntrypoint : FabricClientGameTest {
         Scenarios.legitLadder(),
         Scenarios.legitElytra(),
         Scenarios.legitShieldEat(),
+        // FP-direction coverage for the four detectors hardened in the v1.4.0 audit pass. Each
+        // presents the *legitimate* shape the detector used to read as a cheat; the assertions and
+        // the discriminating observable per scenario are documented in the scenario KDoc and in the
+        // §5 coverage table (docs/automated-live-testing.md).
+        Scenarios.legitFlyRamp(),
+        Scenarios.legitTriggerbotStrafe(),
+        Scenarios.legitNoKbAirborne(),
+        Scenarios.legitMultiTargetSweep(),
     )
 
     /**
@@ -221,7 +229,7 @@ class SelfTestEntrypoint : FabricClientGameTest {
     /**
      * Keep every Nth scenario of a stable sort, so `--shard 1/3`, `2/3`, `3/3` partition the
      * suite exactly and reproducibly (no overlap, nothing dropped). Splitting matters as the
-     * library grows: the full two-pass run boots a client once but exercises every drive, and
+     * library grows: the full three-pass run boots a client once but exercises every drive, and
      * shards let CI fan that across jobs without any scenario going unrun.
      *
      * A malformed shard spec or an out-of-range index THROWS for the same reason an empty

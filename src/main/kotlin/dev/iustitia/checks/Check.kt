@@ -190,9 +190,13 @@ abstract class Check {
             // Carries `label` and `tick` as well as the id: the harness counts alert *episodes*
             // per (check, label) so a scenario can assert a check re-armed and alerted a second
             // time. Both are already in scope here — this is the one recordFlag call site.
+            // `evidence?.subLabel` rides along so a check that flags two different patterns under
+            // ONE label stays separable to a flag-count assertion (see `SelfTestHooks.FlagKey`).
             try {
                 if (SelfTestHooks.isEnabled()) {
-                    SelfTestHooks.recordFlag(tp.uuid, id, label, ctx.vl, ctx.vl > setbackVL, tick)
+                    SelfTestHooks.recordFlag(
+                        tp.uuid, id, label, evidence?.subLabel, ctx.vl, ctx.vl > setbackVL, tick,
+                    )
                 }
             } catch (_: Throwable) {}
             if (ctx.vl > setbackVL) {

@@ -59,7 +59,10 @@ import kotlin.math.hypot
  *    we know the upward KB ([kbVy]); the victim's first-airborne-tick Δy should be ≈ kbVy. A
  *    Velocity cheat that cancels the upward KB shows Δy/kbVy < [VELOCITYB_RATIO] (the victim
  *    barely leaves the ground). The vanilla 0.42 jump band is exempt (a Δy there is a jump,
- *    ambiguous with the ~0.4 upward KB). Fail-open on non-broadcast servers (kbVy stays 0).
+ *    ambiguous with the ~0.4 upward KB). Gated on the victim being **grounded at the hit** — the
+ *    "launches them off the ground" premise is only defined for a grounded victim, and an
+ *    already-airborne one contributes its own motion. Fail-open on non-broadcast servers (kbVy
+ *    stays 0).
  *  - **`NoKB(Vector)`** (KB-vector vs attacker-yaw mismatch, Axis C): the server applies KB
  *    along the attacker's broadcast facing (Vape HitFlick / Slinky Knockback-Displace flick to
  *    redirect KB). For a victim ~stationary before the hit ([preHitH] < [PRE_HIT_STILL]) the
@@ -122,6 +125,13 @@ class NoKnockbackCheck : Check() {
             ctx.windowTicks = 0
             ctx.firstAirborneDy = Double.NaN
             ctx.firstAirborneCaptured = false
+            // VelocityB's grounded precondition, snapshotted at the hit (see the capture site in
+            // process()). The signal is "the upward KB launched them off the ground", which is only
+            // defined for a victim who WAS on the ground; a victim already airborne when the hit
+            // lands has a Δy of their own — a jump arc, a fall, a mid-air strafe — that has nothing
+            // to do with the vertical KB and reads as a 0%-of-KB cancel. Sampled here rather than
+            // at capture time because by then the launch has already happened.
+            ctx.kbVictimGrounded = victim.groundedProxy || victim.onGroundPacket
             ctx.evaluated = false
             // Reset the captured impulse too: a stale VelocitySignal from before this hit (a prior
             // hit's KB, an environmental launch) must NOT be used as this hit's expected-impulse
@@ -177,7 +187,19 @@ class NoKnockbackCheck : Check() {
                 // VelocityB: capture the Δy on the FIRST airborne tick after the hit (the upward
                 // KB launches a grounded victim; that first-tick Δy is the vertical-KB response a
                 // Velocity cheat cancels). NaN sentinel ⇒ not yet captured.
-                if (!ctx.firstAirborneCaptured && !tp.groundedProxy && !tp.onGroundPacket) {
+                //
+                // Gated on [NoKnockbackContext.kbVictimGrounded] — the precondition the class KDoc
+                // has always stated ("the upward KB launches a **grounded** victim") and the code
+                // never checked. An already-airborne victim's first-airborne Δy is their own motion
+                // (jump arc, fall speed, mid-air strafe, all well outside the [JUMP_LO, JUMP_HI]
+                // band that exempts a vanilla jump), and dividing it by kbVy reads as a vertical-KB
+                // cancel: on a broadcast-velocity server a mid-air victim hit by a sprinting
+                // attacker false-flagged on every such hit. The gate removes only the un-grounded
+                // cases the signal was never meant to cover — an anti-KB victim standing in combat
+                // still has groundedProxy true at the hit and is still caught.
+                if (!ctx.firstAirborneCaptured && ctx.kbVictimGrounded &&
+                    !tp.groundedProxy && !tp.onGroundPacket
+                ) {
                     ctx.firstAirborneDy = tp.deltaY
                     ctx.firstAirborneCaptured = true
                 }
@@ -348,6 +370,9 @@ class NoKnockbackCheck : Check() {
         var firstAirborneDy: Double = Double.NaN
         /** True once [firstAirborneDy] has been captured for this hit's window. */
         var firstAirborneCaptured: Boolean = false
+        /** Was the victim on the ground when this hit landed? VelocityB's precondition — an
+         *  airborne victim's Δy is its own motion, not the vertical-KB response. */
+        var kbVictimGrounded: Boolean = false
         /** Horizontal magnitude of the last captured KB impulse (from VelocitySignal); 0 if the
          *  server doesn't broadcast other-player velocity. */
         var kbImpulseH: Double = 0.0

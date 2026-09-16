@@ -15,8 +15,9 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * - [isEnabled] reads a JVM system property once. Normal clients never set it, so
  *   the flag path costs one volatile boolean read.
- * - [recordFlag] only appends to maps keyed by the flagging player's uuid (and, for the
- *   episode counter, by the alert label — see [alertCountFor]).
+ * - [recordFlag] only appends to maps keyed by the flagging player's uuid (and, for the flag and
+ *   episode counters, by the alert label and the flag site's `subLabel` — see [flagCountFor] and
+ *   [alertCountFor]).
  * - [clear] wipes the recording between scenarios.
  *
  * No persistence, no I/O, no reflection — the recorded state is process-local and
@@ -45,8 +46,18 @@ object SelfTestHooks {
      */
     private const val SAME_EPISODE_TICKS = 30
 
-    /** Identity of one flagged sub-pattern: a check id plus the alert label it flags under. */
-    private data class FlagKey(val checkId: String, val label: String)
+    /**
+     * Identity of one flagged sub-pattern: a check id, the alert label it flags under, and the
+     * flag site's `Evidence.subLabel` (null when the site carries no evidence).
+     *
+     * The subLabel is what separates two flag sites that deliberately share one label. `multiTarget`
+     * is the worked example: its legitimate same-tick sweep flag and its `pair-sustained` module
+     * flag both report as `"MultiTarget"`, so a label-only count cannot assert "the pair path
+     * stopped firing on legitimate play" without counting the ~11 legitimate sweep flags with it.
+     * Episode counting ignores the subLabel (see [recordFlag]) — an episode is per label, which is
+     * what a re-arm assertion asks about.
+     */
+    private data class FlagKey(val checkId: String, val label: String, val subLabel: String?)
 
     /** Running episode count for one [FlagKey]: how many distinct alert episodes, and when the last crossing was. */
     private class AlertEpisodes {
@@ -80,6 +91,19 @@ object SelfTestHooks {
      */
     private val alertEpisodes = ConcurrentHashMap<UUID, ConcurrentHashMap<FlagKey, AlertEpisodes>>()
 
+    /**
+     * Raw flag count per player, per [FlagKey] since the last [clear] — every [recordFlag], not just
+     * the crossings.
+     *
+     * Exists because a flag below its setback is otherwise unobservable. A check that flags at a
+     * level smaller than `setbackVL` and is evaluated at most once per event (one hit, one swing)
+     * can never accumulate past the decay, so it never appears in [alerted] *by construction* — and
+     * a scenario asserting only "no alert" cannot tell "the false positive was removed" from "the
+     * check was never driven". Counting the flags themselves is the observable that distinguishes
+     * them: the FP shape flags N times, the fixed shape flags 0.
+     */
+    private val flagCounts = ConcurrentHashMap<UUID, ConcurrentHashMap<FlagKey, Int>>()
+
     fun isEnabled(): Boolean = enabled
 
     fun startRecording() {
@@ -95,18 +119,28 @@ object SelfTestHooks {
         peakVl.clear()
         alerted.clear()
         alertEpisodes.clear()
+        flagCounts.clear()
     }
 
     /** Called from [dev.iustitia.checks.Check.flag] when self-test mode is active. */
-    fun recordFlag(uuid: UUID, checkId: String, label: String, vl: Double, crossedAlert: Boolean, tick: Int) {
+    fun recordFlag(
+        uuid: UUID, checkId: String, label: String, subLabel: String?,
+        vl: Double, crossedAlert: Boolean, tick: Int,
+    ) {
         if (!recording) return
         val perPlayer = peakVl.getOrPut(uuid) { ConcurrentHashMap() }
         perPlayer.merge(checkId, vl) { a, b -> maxOf(a, b) }
+        flagCounts.getOrPut(uuid) { ConcurrentHashMap() }
+            .merge(FlagKey(checkId, label, subLabel), 1) { a, b -> a + b }
         if (crossedAlert) {
             alerted.getOrPut(uuid) { ConcurrentHashMap.newKeySet() }.add(checkId)
+            // Episodes are counted per (check, label) with the subLabel normalised away: the
+            // re-arm contract is the check's single `episodeActive` latch, which is per context and
+            // therefore per check, not per flag site. Keeping the subLabel here would split one
+            // latch's crossings across several keys and read a single alert as several episodes.
             val episodes = alertEpisodes
                 .getOrPut(uuid) { ConcurrentHashMap() }
-                .getOrPut(FlagKey(checkId, label)) { AlertEpisodes() }
+                .getOrPut(FlagKey(checkId, label, null)) { AlertEpisodes() }
             // A gap of at least SAME_EPISODE_TICKS since the previous crossing starts a new episode;
             // anything closer is the same episode still ringing. lastCrossingTick advances either
             // way, so a continuous burst keeps chaining forward instead of re-counting each tick.
@@ -124,7 +158,26 @@ object SelfTestHooks {
      * [clear]. See [SAME_EPISODE_TICKS] for what separates two episodes.
      */
     fun alertCountFor(uuid: UUID, checkId: String, label: String): Int =
-        alertEpisodes[uuid]?.get(FlagKey(checkId, label))?.count ?: 0
+        alertEpisodes[uuid]?.get(FlagKey(checkId, label, null))?.count ?: 0
+
+    /**
+     * How many times [checkId] flagged for [uuid] under [label] since the last [clear] — every flag,
+     * crossing or not. See [flagCounts] for why a sub-setback flag count is the assertion a
+     * false-positive fix needs.
+     *
+     * With [subLabel] set, counts only that flag site. With it null (the default), sums every site
+     * that reports under [label] — the original label-scoped behaviour, so existing callers are
+     * unchanged. Pass a subLabel when a check deliberately shares one label across sites and the
+     * assertion is about one of them; `multiTarget` is the worked example (see [FlagKey]).
+     */
+    fun flagCountFor(uuid: UUID, checkId: String, label: String, subLabel: String? = null): Int {
+        val perPlayer = flagCounts[uuid] ?: return 0
+        val exact = perPlayer[FlagKey(checkId, label, subLabel)]
+        if (exact != null || subLabel != null) return exact ?: 0
+        var total = 0
+        for ((key, n) in perPlayer) if (key.checkId == checkId && key.label == label) total += n
+        return total
+    }
 
     fun peakVlFor(uuid: UUID): Map<String, Double> =
         peakVl[uuid]?.toMap() ?: emptyMap()

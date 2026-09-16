@@ -333,6 +333,25 @@ object SelfTest {
         val atLeast: Int,
     )
 
+    /**
+     * A **sub-setback flag-count ceiling**: [checkId] may flag for [bot] under [label] at most
+     * [atMost] times.
+     *
+     * The FP-direction twin of [AlertCountExpectation]. A check that flags below its `setbackVL` and
+     * is evaluated at most once per event never appears in `alerted`, so `expectQuiet` alone cannot
+     * tell a removed false positive from an undriven check — both read as "no alert". Counting the
+     * flags separates them, and the ceiling is one-sided on purpose: the interesting failure is
+     * "still flags", not "stopped flagging for an unrelated reason".
+     */
+    internal data class FlagCountExpectation(
+        val bot: UUID,
+        val checkId: String,
+        val label: String,
+        val atMost: Int,
+        /** Restrict the count to one flag site; null sums every site reporting under [label]. */
+        val subLabel: String? = null,
+    )
+
     /** Builder DSL for a scenario body. */
     class ScenarioBuilder internal constructor(
         private val ctx: ClientGameTestContext,
@@ -341,6 +360,7 @@ object SelfTest {
         internal val tickActions = mutableListOf<Pair<Int, TickAction>>() // (everyN, action)
         internal val expectations = mutableListOf<Triple<UUID, String, Boolean>>() // bot, check, mustAlert
         internal val alertCounts = mutableListOf<AlertCountExpectation>() // bot, check, label, atLeast
+        internal val flagCounts = mutableListOf<FlagCountExpectation>() // bot, check, label, atMost
         internal val knownOpen = mutableListOf<Triple<UUID, String, String>>() // bot, check, note
         internal val documentedFp = mutableListOf<Triple<UUID, String, String>>() // bot, check, note
         internal val driveGaps = mutableListOf<Triple<UUID, String, String>>() // bot, check, note
@@ -431,6 +451,28 @@ object SelfTest {
             require(atLeast >= 2) { "use expect(bot, checkId, mustAlert = true) for a single alert" }
             expectations.add(Triple(bot.uuid, checkId, true))
             alertCounts.add(AlertCountExpectation(bot.uuid, checkId, label, atLeast))
+        }
+
+        /**
+         * Assert a **sub-setback flag-count ceiling**: [checkId] may flag under [label] at most
+         * [atMost] times.
+         *
+         * For a false-positive fix on a check whose flags never reach `setbackVL`. `expectQuiet`
+         * reads "no alert", which is also what an undriven check reads, so it cannot prove the FP
+         * shape was removed. This can: the FP shape flags once per event, the fixed shape flags
+         * zero, and the failure message carries both numbers.
+         *
+         * A count over the ceiling is a hard failure (it joins [evaluate]'s `alertCountMisses`), and
+         * the plain quiet expectation is registered too, so `missed` and `--coverage` keep working.
+         *
+         * Pass [subLabel] to count one flag site of a check that deliberately shares one label
+         * across sites. `multiTarget` needs it: its legitimate same-tick sweep flag and its
+         * `pair-sustained` module flag both report as `"MultiTarget"`, so a label-wide ceiling of 0
+         * would fail on the ~11 legitimate sweep flags the scenario itself produces.
+         */
+        fun expectFlagCount(bot: BotHandle, checkId: String, label: String, atMost: Int, subLabel: String? = null) {
+            expectations.add(Triple(bot.uuid, checkId, false))
+            flagCounts.add(FlagCountExpectation(bot.uuid, checkId, label, atMost, subLabel))
         }
 
         /**
@@ -807,6 +849,22 @@ object SelfTest {
                 )
             }
         }
+        // Sub-setback flag ceilings: the FP-direction assertions. A check that flags under its
+        // setback is invisible to `alerted`, so these live in the same hard-failure bucket as the
+        // recurrence misses -- both are regression assertions, not documented findings.
+        for (e in builder.flagCounts) {
+            val observed = SelfTestHooks.flagCountFor(e.bot, e.checkId, e.label, e.subLabel)
+            val peak = SelfTestHooks.peakVlFor(e.bot)[e.checkId] ?: 0.0
+            if (peak > (vl[e.checkId] ?: 0.0)) vl[e.checkId] = peak
+            observedCounts["${e.checkId}[${e.label}${e.subLabel?.let { ":$it" } ?: ""}]#flags"] = observed
+            if (observed > e.atMost) {
+                val site = e.subLabel?.let { " subLabel='$it'" } ?: ""
+                countMisses.add(
+                    "FLAG COUNT: '${e.checkId}' [${e.label}]$site flagged $observed time(s), expected <= ${e.atMost} " +
+                        "(peakVL=${"%.2f".format(peak)}). The legitimate shape still produces this flag."
+                )
+            }
+        }
 
         return EvalResult(vl, alerted, missed.toSet(), fps.toSet(), knownOpen, driveGaps, observedCounts, countMisses)
     }
@@ -855,7 +913,7 @@ object SelfTest {
     }
 
     /**
-     * The two-pass runner: runs the scenarios in order and returns all reports. A
+     * The three-pass runner: runs the scenarios in order and returns all reports. A
      * scenario that throws yields a failed report instead of aborting the run, so one
      * bad scenario never masks the rest. The one exception is a frozen integrated server
      * (see [awaitServerTeardown] / [suiteFatal]): once the teardown barrier gives up, every

@@ -174,7 +174,7 @@ class CheatReach : SelfTest.Scenario("cheat-reach", "CHEAT") {
 | `bot.look(yaw, pitch)` | Yaw/pitch (rotations, aim, pitch bounds) |
 | `bot.swing()` | A swing signal (+ the visible animation) |
 | `bot.hurt()` | A hurt for this bot (damage received) |
-| `bot.velocity(vx, vy, vz)` | Knockback impulse |
+| `bot.velocity(vx, vy, vz)` | Knockback impulse. **Fidelity gap:** this publishes the `VelocitySignal` only. A real `EntityVelocityUpdate` also sets `TrackedPlayer.velocityTick` (via `EntityTrackerManager.markVelocity`, called from the packet mixin and from nowhere else), and no signal subscriber does that here -- so on a harness bot `velocityTick` is never set and the `kbHop`/velocity exemptions in `jumpOnHurt`, `flyEnvelope`, `longJump`, `speedEnvelope` and `teleport` are **unreachable**. A drive that would lean on them must not; see the `legit-nokb-airborne` KDoc for the case that hit this. Closing it is its own workstream -- it would change what every existing velocity-carrying scenario already means. |
 | `bot.speedEffect(added, amplifier)` | Speed effect add/remove (cap-raise path) |
 | `b.expect(bot, checkId, mustAlert)` | The pass expectation for a check |
 | `b.expectAlertCount(bot, checkId, label, atLeast)` | The **recurrence** expectation: the check must produce that many distinct alert **episodes** under `label`. Crossings less than 30 ticks apart count as one episode. This is the only assertion that can see an episode latch which never re-arms (see §4). |
@@ -267,17 +267,18 @@ two blocks of flag lines names the scenario they belong to.
 catch state) and `--list`. Read them before claiming a check is covered; they are generated from
 the run, this table is maintained by hand.
 
-Last full run: **80 scenarios** (13 legit incl. the smoke test, 59 cheat, 8 replay incl. the two preset gates), all green, run as three shards.
+Last full run: **84 scenarios** (17 legit incl. the smoke test, 59 cheat, 8 replay incl. the two preset gates), all green in a single unsharded pass.
 
 | | count |
 |---|---|
 | cheat scenarios | 59 |
 | distinct reference clients driven | **13** (AvA, Fusion, Grim, Itami, Koid, LionClient, LiquidBounce, Meteor, NCM, Rain-Anticheat, Raven, Slinky, Vape) |
-| checks with an established cheat gate (the drive alerts) | **27 / 36** |
+| checks with an established cheat gate (the drive alerts) | **29 / 36** |
 | checks driven by >=2 clients | 10 (`flyEnvelope` 4, `clickStatistics` 3, `killAura` 3, `reach` 3, `criticals` 2, `multiTarget` 2, `noFallDamage` 2, `speedEnvelope` 2, `sprintHack` 2, `autoBlock` 2) |
-| detector gaps (drive reaches it, detector cannot alert) | 7 checks carry a `knownOpen` entry (4 of them have no gate at all) |
-| harness gaps (a drive does not reach it) | 5 checks, none gated |
-| verified detector false positives | **0** |
+| detector gaps (drive reaches it, detector cannot alert) | **4** checks carry a `knownOpen` entry (`speedEnvelope`, `packetGap`, `stepHeight`, `longJump`) |
+| harness gaps (a drive does not reach it) | **5** checks across 6 scenarios; 4 of the 5 are ungated (`sprintHack` alerts on two other drives, so its water variant is a drive gap, not a detector gap) |
+| verified detector false positives | **0** (four resolved this cycle -- §6.3) |
+| FP-direction regressions (a legit drive guarding a detector that was narrowed) | **4** -- `legit-fly-ramp`, `legit-triggerbot-strafe`, `legit-nokb-airborne`, `legit-multitarget-sweep` |
 | checks carrying any documented finding | 12 |
 
 Every check below has a drive; what differs is whether that drive **establishes a gate**. The four
@@ -294,14 +295,14 @@ outcomes are deliberately distinct and the runner reports them in separate secti
 
 | Check | Cheat clients that trip it |
 |---|---|
-| `flyEnvelope` | Fusion, Itami, LiquidBounce, Meteor |
+| `flyEnvelope` | Fusion, Itami, LiquidBounce, Meteor (four sub-signals; also guarded by the `legit-fly-ramp` FP regression) |
 | `clickStatistics` | Koid, LionClient, Meteor |
 | `speedEnvelope` | Koid, LiquidBounce |
 | `killAura` | LiquidBounce, Raven, Vape (snap, rate-capped drift, and on-target track; the drift path also carries a **re-arm regression**, `cheat-killaura-drift-rearm-raven`) |
 | `reach` | Koid (3.6 ghost), LiquidBounce (4.2), Vape (6.0) |
 | `criticals` | Meteor, Slinky |
 | `maceSmash` | LiquidBounce |
-| `multiTarget` | Meteor (3 same-tick victims), LiquidBounce (2-victim pair path) |
+| `multiTarget` | Meteor (3 same-tick victims), LiquidBounce (2-victim pair path; also guarded by the `legit-multitarget-sweep` FP regression) |
 | `noFallDamage` | Vape (landed-no-hurt); Meteor (faked-burst evasion attempt, still caught); Vape (mace swing with **no** confirmed hit -- the smash exemption's own evasion attempt, still caught) |
 | `phaseClip` | Koid |
 | `spider` | AvA |
@@ -310,11 +311,11 @@ outcomes are deliberately distinct and the runner reports them in separate secti
 | `waterWalk` | Slinky |
 | `throughWalls` | Vape (occluded hits behind a wall) |
 | `backtrack` | Vape (stale-position snap) |
-| `noKnockback` | Rain-Anticheat |
+| `noKnockback` | Rain-Anticheat (also guarded by the `legit-nokb-airborne` FP regression) |
 | `keepsprint` | LiquidBounce |
 | `wTap` | Vape |
 | `hitFlick` | Vape |
-| `triggerbot` | Vape |
+| `triggerbot` | Vape (also guarded by the `legit-triggerbot-strafe` FP regression) |
 | `hitsWithoutSwing` | Slinky (plus a **re-arm regression**, `cheat-hitsswing-rearm-slinky`) |
 | `jumpOnHurt` | Rain-Anticheat |
 | `autoBlock` | Grim, Rain-Anticheat |
@@ -343,6 +344,26 @@ the cause has so far always been one of two things -- the **signal is not reachi
 all** (see the signal-threading bug in the harness lessons, which cost the suite a whole family of
 false bypasses) or the **state change is written a tick later than it is observed** (see the
 tracker-lag lesson). Check those two before rewriting a drive.
+
+### FP-direction regressions (4 -- the guards on this cycle's narrowed detectors)
+
+A detector narrowed to stop a false positive is only half-verified by that: the fix could equally
+have been a bypass. Each of the four detectors hardened this cycle therefore keeps the *legitimate*
+shape it used to misread as a cheat, as a permanent legit-pass scenario. Each asserts with
+`expectQuiet` **and** a bounded `expectFlagCount` on the specific flag site, because the FP was
+invisible to an alert-level assertion in every one of these cases -- the flag rate never reached
+`setbackVL`, which is exactly why the audit and the suite both missed them.
+
+| Scenario | Legitimate shape presented | What a naive narrowing would break | Observed pre-fix |
+|---|---|---|---|
+| `legit-fly-ramp` | a 20-step slab/stairs ramp climbed one step per 4 ticks (0.5/tick rise as a single-tick Δy spike, then three flat grounded ticks) | `cheat-fly-ascend-liquidbounce`, `cheat-fly-hover-meteor` | `Fly` 17 flags, peakVL 1.00 |
+| `legit-triggerbot-strafe` | a strafing victim crossing a **held** crosshair, clicking on each crossing (0-1 tick "reactions") | `cheat-triggerbot-vape` | `Triggerbot` alert, peakVL 6.00 |
+| `legit-nokb-airborne` | a victim already airborne on its own jump arc when the hit lands | `cheat-no-kb-rain` | `NoKB(VelocityB)` 18 flags, peakVL 1.00 |
+| `legit-multitarget-sweep` | two opponents jittering in and out of a vanilla sword sweep's arc, one swept per crossing | `cheat-multi-aura-meteor`, `cheat-multi-aura-pair-liquidbounce` | `MultiTarget` `pair-sustained` alert, peakVL 4.00 |
+
+The four cheat-direction rows above were re-run against the narrowed detectors in the same pass and
+all still alert: the fixes removed only the legitimate shapes. Mechanisms and the arithmetic behind
+each are in §6.3.
 
 ### Observer tooling
 
@@ -514,6 +535,79 @@ the fall damage normally (the hurt channel resets the accumulator the usual way)
 real-fall gates keep a grounded or hop-apex mace attack from ever arming the re-base. Same
 precedent as `CriticalsCheck`'s mace exemption. `legit-mace-smash` drives two real smashes from a
 24-block tower fall (the second proves the accumulator re-arms) and stays at **zero VL**.
+
+**Resolved (2026-09, this cycle): the v1.4.0-audit four.** These are the ones the audit named as
+FP-risk, and they share a signature worth stating once: **none of them could ever be seen by an
+alert-level assertion.** In all four the flag rate sits structurally below the decay, so the VL
+never approaches `setbackVL` and `expectQuiet` passes on the buggy code. They were only observable
+through a *flag count* on a specific flag site -- which is why the suite missed them too, and why
+the fix for each ships with an `expectFlagCount` regression in the same commit (§5). Each entry
+below records the audit's claim, the mechanism as measured, and the discriminator.
+
+- **`flyEnvelope` on a slab/stairs ramp** (was 17 `Fly` flags over a 20-step climb, peakVL 1.00;
+  `legit-fly-ramp`). The audit pointed at the **ascend** block ("a long continuous slab ramp
+  sustains dy ≈ 0.5 for 6+ ticks"). That is **not** the mechanism: on a fixed cadence `ascendTicks`
+  can never exceed **1**. The jump recognizer (`prevDeltaY < 0.15 && 0.3 < dy < 1.0`, re-armed only
+  after 6 quiet ticks) fires on a step spike and re-arms on every *other* step; on a re-arm tick
+  `lastJumpTick` is set to that very tick, so the ascend gate's own `tick - lastJumpTick > 2` reads
+  `0 > 2` and zeroes the counter, and on the steps where it does increment the three level ticks
+  zero it again (their `dy` is 0). Six consecutive ascending ticks are unreachable, so the streak
+  *length* is not what separates a ramp from a fly. The real mechanism is the **physics-breach**
+  counter: `deltaY` is a raw position delta (`Vec3d(e.getX(), e.getY(), e.getZ())` -- entity
+  fields, *not* render interpolation), so a 0.5 step-up is a **single-tick** spike followed by
+  three flat grounded ticks. The spike clears `expectedY + 0.1` easily -- `prevDeltaY ≈ 0` gives
+  `expectedY = (0 - 0.08)·0.98 ≈ -0.078` -- while the flat ticks returned early at the
+  `groundedProxy` branch. Only `hoverTicks` was cleared there, so `breachTicks` stood across the
+  level ground and **every step after the first was the second consecutive breach**. Two blocks of
+  hill satisfied a gate documented as "2 consecutive ticks". The fix is to clear all four streak
+  counters on a grounded tick, which is what makes each sub-signal a claim about a *continuous*
+  rise. Note the fix is **not** a threshold change: no length separates a long ramp from a fly,
+  because at a fixed cadence the ramp's rise is numerically the same signal. What separates them is
+  that a ramp is made of steps -- each rise is followed by level ground.
+- **`triggerbot` on a strafing victim under a held crosshair** (alerted at peakVL 6.00;
+  `legit-triggerbot-strafe`). The crosshair-to-hitbox rising edge is created by *whichever party
+  moved*. A player holding an aim while the target strafes across -- or walks into -- the crosshair
+  produces an edge on every crossing, and clicking as it crosses is exactly how a human hits a
+  moving target: 0-1 tick "reactions" on every hit, 4-of-5 in the window, and the check flagged
+  them. Fixed with a **held-aim discriminator** at the rising-edge site: an engagement clock is
+  started only when the **attacker's own aim** moved within `AIM_TURN_WINDOW = 3` ticks
+  (`AIM_TURN_EPS = 0.25`°/tick, the worst of yaw/pitch; the first sighting of an attacker *seeds*
+  rather than records a turn, so a bot spawned facing 90° does not read as a 90° sweep). An edge
+  created by the victim's motion gets no clock. The check's own premise is about the attacker
+  *sweeping onto* the target, which is what the aim-motion test measures, and a triggerbot is
+  unaffected because the user aims manually -- the Vape drive sweeps 90° onto the target on the
+  edge tick. Deliberately fail-open, like the rest of this LAX check: a triggerbot whose user holds
+  the mouse perfectly still is indistinguishable from a legit player clicking a target that moved
+  into them, and is left to `killAura`/`hitFlick` rather than guessed at here.
+- **`noKnockback` (`VelocityB`) on an already-airborne victim** (18 flags, peakVL 1.00;
+  `legit-nokb-airborne`). `VelocityB` captures `firstAirborneDy` without ever checking the
+  precondition its own KDoc states -- "the upward KB launches a **grounded** victim". An airborne
+  victim's first-airborne Δy is *their own* motion (jump arc, fall speed, mid-air strafe), all
+  outside the `[JUMP_LO, JUMP_HI]` band that exempts a vanilla jump, so dividing it by `kbVy` reads
+  as a vertical-KB cancel: on a broadcast-velocity server a mid-air victim hit by a sprinting
+  attacker false-flagged on every such hit. Fixed by snapshotting `kbVictimGrounded =
+  victim.groundedProxy || victim.onGroundPacket` **at the hit** (the launch has already happened by
+  capture time) and requiring it at the capture site. An anti-KB victim standing in combat still
+  has `groundedProxy` true at the hit and is still caught (`cheat-no-kb-rain` re-verified).
+- **`multiTarget`'s pair gate on a vanilla sword sweep** (alerted, peakVL 4.00; label
+  `MultiTarget`/`pair-sustained`; `legit-multitarget-sweep`). The pair gate's ring was
+  **event**-keyed while the gate and the class doc both said "the last PAIR_WINDOW **ticks**". A
+  vanilla 1.9+ sword sweep damages every entity in the arc on the *same* tick, so one sweep's
+  packets filled the ring by themselves -- two separate sweeps ten ticks apart were enough to
+  satisfy a gate whose entire point is *repetition*, and `flagEpisode` then added `setbackVL + 1`
+  on top of the sweep's own same-tick level and alerted a legitimate player. Fixed by making the
+  ring **tick-keyed** (one sample per tick, upgraded in place by that tick's later victims -- the
+  first attack of a sweep lands before the second victim is known, so an append-per-event ring
+  records `false` for the very tick about to become a pair) and pruned by *tick distance* rather
+  than by ring length. The distance pruning is load-bearing: the ring is advanced by attack ticks
+  only, so a size-bounded ring fills over any span of time -- a legitimate 2v1 player sweeping two
+  adjacent opponents once per vanilla sword cooldown (~12 ticks) would satisfy "2 of the last 4"
+  after four such sweeps, a minute into the fight, on nothing but ordinary melee.
+
+The four cheat-direction drives (`cheat-fly-hover-meteor`, `cheat-fly-ascend-liquidbounce`,
+`cheat-triggerbot-vape`, `cheat-no-kb-rain`, `cheat-multi-aura-meteor`,
+`cheat-multi-aura-pair-liquidbounce`) were re-run against the narrowed detectors in the same pass
+and every one still alerts -- the fixes removed only the legitimate shapes.
 
 ### 6.4 Harness lessons (encoded in the helpers)
 

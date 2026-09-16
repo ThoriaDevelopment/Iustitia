@@ -651,4 +651,364 @@ object Scenarios {
         }
         b.runFor(230)
     }
+
+    /**
+     * Walking up a **slab/full-block staircase**: the legit terrain-following shape `flyEnvelope`
+     * used to read as flight.
+     *
+     * The staircase alternates a bottom slab (top at +0.5) and a full block (top at +1.0) so every
+     * column is exactly **0.5 higher** than the one before it -- a real ramp, built at the vanilla
+     * step height (vanilla steps 0.6; a slab is 0.5), so nothing about this drive exceeds what a
+     * player is allowed to walk up. The cadence is 4 ticks per column: one tick that steps up
+     * (+0.5, the tick the client resolves the collision) and three genuinely grounded ticks
+     * standing on the new column (Δy = 0). That is what a tracked player's step-up looks like to
+     * `EntityTrackerManager`, whose Δy comes from the **raw** entity position fields
+     * (`updateSnapshot`: `Vec3d(e.getX(), e.getY(), e.getZ())`), not from render interpolation --
+     * one 0.5 spike, then level ground. Horizontal motion is a constant 0.25/tick -- deliberately
+     * *below* `legitLocomotion`'s proven-clean 0.28/tick with no `sprint()`, so `speedEnvelope` and
+     * `stepHeight` (which needs a Δy above 0.6) are never the thing under test here. Measured: the
+     * step ticks do register a single sub-threshold `speedEnvelope` flag (peak VL 1.0 against
+     * setbackVL 5.0, from the 0.5 vertical rise joining the 0.25 horizontal in the envelope), so
+     * this drive is not a *silent* one for that check -- it is only asserted quiet in the sense
+     * every other legit scenario uses, i.e. no alert.
+     *
+     * **What this drive proves.** Two sustained counters span the grounded gaps unless a grounded
+     * tick clears them:
+     *
+     * - `breachTicks` — the physics-breach gate needs 2 *consecutive* breaches, and a step-up spike
+     *   breaches easily (its `prevDeltaY ≈ 0`, so `expectedY ≈ −0.078` and the 0.5 rise clears
+     *   `expectedY + threshold` by a wide margin). With the counter standing across the flat ticks,
+     *   step 2 is the second "consecutive" breach and `Fly` flags on **every step from the second**.
+     *   This is the assertion that discriminates: pre-fix **17** flags (measured), post-fix 0.
+     * - `ascendTicks` — asserted quiet here as a **forward guard, not a discriminator**. It reads 0
+     *   in both states, and why is worth recording, because the audit pointed at the ascend block
+     *   rather than the breach: on a fixed step cadence the counter can never exceed **1**, from two
+     *   independent directions. (i) The jump recognizer (`prevDeltaY < 0.15 && 0.3 < dy < 1.0`)
+     *   fires on a spike and re-arms only after 6 quiet ticks, so at a 4-tick cadence it re-arms on
+     *   every *other* step -- and on a re-arm tick `lastJumpTick` is set to that very tick, so the
+     *   ascend gate's own `tick - lastJumpTick > 2` fails (`0 > 2`) and zeroes the counter. (ii) On
+     *   the steps where it does increment, the three intervening level ticks zero it again (their
+     *   `dy` is 0, not `> 0.2`). Six *consecutive* ascending ticks are therefore unreachable. The
+     *   count is asserted anyway, so a future loosening of either gate is caught rather than
+     *   silently re-introducing the false positive.
+     *
+     * Every other fly sub-signal is inert by construction: `Fly(FlyB)`'s band tops out at
+     * `expectedY + 0.1 ≈ 0.02` so the 0.5 spike is far above it, `Fly(Hover)`/`Fly(Blink)`/
+     * `Fly(AntiKick)` all sit *after* the grounded branch (a grounded tick returns before them),
+     * the climbable branch never opens (stone/slab, not a ladder), and `hasBlockAbove` samples the
+     * bot's own column, which never has anything above the surface index.
+     */
+    fun legitFlyRamp(): Spec = Spec(
+        "legit-fly-ramp", Pass.LEGIT, "vanilla", setOf(Tags.MOVEMENT, Tags.WORLD),
+    ) { b ->
+        val bot = b.bot("Ramp", 0.0, 0.0)
+        b.expectQuiet(bot, CheckIds.MOVEMENT)
+        b.expectQuiet(bot, "criticals", "reach", "killAura", "multiTarget")
+        // The discriminating assertion: this check's flags sit below setbackVL (1.0 per flag against
+        // a 0.5/tick decay, at most one flag per 4-tick step), so `expectQuiet` alone cannot tell
+        // "the false positive was removed" from "the check was never driven". The flag count can.
+        b.expectFlagCount(bot, "flyEnvelope", "Fly", atMost = 0)
+        b.expectFlagCount(bot, "flyEnvelope", "Fly(Ascend)", atMost = 0)
+
+        val g = b.groundY
+        val gi = g.toInt()
+        val steps = 20
+        // surface(column s) = g + 0.5*s. Odd columns carry a bottom slab (collision top at
+        // top+0.5), even columns a full block (top at top+1); the stack below each is filled so the
+        // column is solid all the way down to the world's own surface block at gi - 1. Verified
+        // column by column: the slab's `top` is gi + (s-1)/2 and the full block's is gi + s/2 - 1,
+        // so floor(y - 0.05) lands on the surface block at every level tick (see the KDoc).
+        for (s in 1..steps) {
+            val slab = s % 2 == 1
+            val top = if (slab) gi + (s - 1) / 2 else gi + s / 2 - 1
+            b.place(
+                0, top, s,
+                if (slab) net.minecraft.block.Blocks.STONE_SLAB else net.minecraft.block.Blocks.STONE,
+            )
+            b.fill(0, gi - 1, s, 0, top - 1, s, net.minecraft.block.Blocks.STONE)
+        }
+        var t = 0
+        b.everyTick {
+            val i = t++
+            // One column per 4 ticks, entered as a **single-tick** +0.5 spike on the step tick and
+            // held flat for the other three -- the shape a remote player's raw position delta
+            // actually produces for a step-up (see the KDoc). Horizontal motion is a constant
+            // 0.25/tick, deliberately *below* `legitLocomotion`'s proven-clean 0.28/tick, so
+            // `speedEnvelope` is never the thing under test here.
+            val col = minOf(i / 4, steps)
+            bot.teleportTo(0.0, g + 0.5 * col, 0.25 * i)
+            bot.setOnGround(true)
+        }
+        // i runs 0..4*steps, so z ends at 20.0 -- exactly the last placed column. Running longer
+        // would walk the bot off the terrain into unloaded air at the same y.
+        b.runFor(4 * steps + 1)
+    }
+
+    /**
+     * Holding the crosshair still while the target **strafes across it** -- the legitimate timing
+     * shape `triggerbot` used to read as a sub-reaction auto-attacker.
+     *
+     * The attacker is stationary, does not sprint, and never moves its aim at all: the crosshair
+     * sits on the +Z lane at yaw 0 / pitch 0. The victim strafes sinusoidally through that lane
+     * (`|x| <= 0.3` is the hitbox half-width plus the check's own `RayAABB` margin), so the
+     * crosshair-to-hitbox **rising edge is created by the victim**, twice per cycle. The strike
+     * lands on the tick *after* the edge -- clicking as a target crosses your crosshair is how a
+     * human hits a strafer, and it is also the input the check measures, since `process` runs a
+     * tick behind the attack.
+     *
+     * **What this drive proves.** Pre-fix the edge unconditionally starts an engagement clock, so
+     * every hit reads as a reaction of 1 tick: ~15 hits, all "fast", ratio 1.0 -- past `MIN_SAMPLES`
+     * (5), past the 4-fast-hit threshold and past `RATIO` (0.75), which `flagEpisode`s at
+     * `setbackVL + 1` and **alerts**. Post-fix the held-aim discriminator requires the attacker's own
+     * aim to have moved within `AIM_TURN_WINDOW` (3) ticks, and it never does
+     * (`lastAimMoveTick` stays at its −10000 sentinel), so no clock is started, `fast` is false on
+     * every hit, and the check is silent. Both the alert and the flag count are asserted, because
+     * the flag count is what distinguishes a real fix from a scenario that stopped driving the edge.
+     *
+     * The strafe period is **varied** (26 / 30 / 34 ticks, switching every 8 ticks) on purpose: a
+     * metronomic hit cadence is `clickStatistics`' own uniform-auto-clicker signature, and a fixed
+     * period would make this legit drive trip a different check. The victim holds its yaw rather
+     * than sweeping it, matching `legitCombat`'s victims: a player strafing laterally at a fixed
+     * facing is ordinary play, and the victim is not the subject of any rotation assertion here.
+     *
+     * Assertions on the attacker are deliberately not `CheckIds.COMBAT` wholesale: the attacker's
+     * aim is byte-identical every tick, which is a constant-aim signature by construction, so the
+     * rotation family is left out of the quiet set exactly as `legit-knockback` leaves it out. What
+     * is asserted is the set this drive's preconditions actually create (a held crosshair on a
+     * moving target, a non-sprinting attacker, a metronomic-ish click rate).
+     */
+    fun legitTriggerbotStrafe(): Spec = Spec(
+        "legit-triggerbot-strafe", Pass.LEGIT, "vanilla", setOf(Tags.COMBAT),
+    ) { b ->
+        val attacker = b.bot("Camper", 0.0, 0.0)
+        val victim = b.bot("Strafer", 0.0, 2.2)
+        b.expectQuiet(attacker, "triggerbot", "reach", "throughWalls", "criticals", "keepSprint")
+        b.expectQuiet(attacker, "wTap", "hitFlick", "multiTarget", "hitsWithoutSwing")
+        b.expectFlagCount(attacker, "triggerbot", "Triggerbot", atMost = 0)
+        b.expectQuiet(victim, "noKnockback", "jumpOnHurt", "backtrack")
+        b.expectQuiet(victim, CheckIds.MOVEMENT)
+
+        val ground = b.groundY
+        var t = 0
+        var phase = 0.0
+        var x = 0.0
+        var pendingStrike = false
+        b.everyTick {
+            val i = t++
+            // held crosshair: a real player's aim is *here*, never on the target -- that is the
+            // whole point of the drive
+            attacker.look(0f, 0f)
+            attacker.setOnGround(true)
+
+            // Strafing through the lane. The period steps 26 -> 30 -> 34 so the hit cadence is not
+            // a metronome (see the KDoc).
+            phase += 2.0 * Math.PI / (26.0 + 4.0 * ((i / 8) % 3))
+            val xPrev = x
+            x = 0.9 * kotlin.math.sin(phase)
+            val inside = kotlin.math.abs(x) <= 0.3005
+            val wasIn = kotlin.math.abs(xPrev) <= 0.3005
+            // The victim's yaw is held, not swept: a player strafing laterally at a fixed facing is
+            // ordinary play, and `legitCombat`'s victims hold theirs too.
+            victim.teleportTo(x, ground, 2.2)
+            victim.setOnGround(true)
+
+            // The stale edge resolves FIRST, so the strike lands one tick *after* the crossing --
+            // that one-tick delay is exactly the "reaction" the check measures. It goes out only
+            // while the target is still on the crosshair: `process`'s disengage branch clears the
+            // engagement, which would leave no edge to measure.
+            if (pendingStrike) {
+                pendingStrike = false
+                if (inside) attacker.strike(victim)
+            }
+            // ... and this tick's rising edge is armed for the next one.
+            if (inside && !wasIn) pendingStrike = true
+        }
+        b.runFor(200)
+    }
+
+    /**
+     * A **sprinting attacker hitting an airborne victim** -- the legit shape `noKnockback`'s
+     * VelocityB sub-signal used to read as a vertical-KB cancel.
+     *
+     * VelocityB's premise is "the upward knockback launched them *off the ground*": on a
+     * broadcast-velocity server the victim's first-airborne Δy should be ≈ the KB's own `vy`. That
+     * premise is only defined for a victim who **was grounded** when the hit landed. This drive
+     * presents the case the code used to judge anyway: the victim is bunny-hopping in place, and
+     * the strike goes out **three ticks into the arc**, so at the hit the victim is already
+     * airborne and rising on its own 0.42 jump arc.
+     *
+     * **What this drive proves.** Pre-fix the capture was ungated, so the first in-window tick that
+     * found the victim airborne recorded the *jump's* Δy (0.083 by then, below `JUMP_LO` = 0.38, so
+     * it is not even spared by the vanilla-jump exemption) as the victim's vertical-KB response:
+     * ratio ≈ 0.23 against `kbVy` 0.36, well under `VELOCITYB_RATIO` (0.995), and `NoKB(VelocityB)`
+     * flags on every hit — 18 times over 220 ticks. Post-fix `kbVictimGrounded` is false at the hit,
+     * no capture happens, and the sub-signal is silent.
+     *
+     * The horizontal KB is **real**, not withheld: the victim takes the full server impulse and
+     * slides ~0.84 blocks across the window (the `legit-knockback` slide idiom, unwound afterwards
+     * so the 2.2-block geometry is unchanged), which is well over the `0.61 x impulse x friction`
+     * bar -- so the VelocityC magnitude test genuinely *passes* and the only thing this scenario
+     * isolates is the vertical sub-signal. Because the magnitude test passes, `NoKB`'s VL never
+     * accumulates and `expectQuiet(victim, "noKnockback")` holds in **both** states; the flag count
+     * on the distinct `NoKB(VelocityB)` label is the discriminating assertion.
+     *
+     * The three-tick offset is **not** cosmetic, and the RED run is what proved it: a strike on the
+     * first tick after a launch puts a Δy of 0.333 on the very tick of the hit, so *every* hit is a
+     * jump-on-hit — the `jumpOnHurt` (JumpReset) signature, which that check flagged, correctly, on
+     * this scenario's first run. A continuously hopping victim hit on an arbitrary arc tick is the
+     * legitimate case; a victim whose every hit coincides with a hop is the cheat. This scenario has
+     * to present the former to be about `noKnockback` at all.
+     *
+     * The victim's movement family is deliberately **not** asserted: the hop chain is a proven
+     * clean input (`legit-bunnyhop`) but the slide's snap-back is a 1.12-block single-tick step
+     * that belongs to a different check's business, and asserting it here would make this scenario
+     * a movement test wearing a combat label. Note also that the harness's `velocity()` publishes
+     * only the `VelocitySignal` half of what a real EntityVelocityUpdate does — the
+     * `EntityTrackerManager.markVelocity` half has no harness counterpart, so `tp.velocityTick` is
+     * never set for a bot and the `kbHop` exemptions in `jumpOnHurt`/`FlyEnvelope`/`LongJump`/
+     * `SpeedEnvelope`/`Teleport` are unreachable here. That is why the offset above has to be
+     * correct on its own rather than leaning on the KB-hop exemption.
+     */
+    fun legitNoKbAirborne(): Spec = Spec(
+        "legit-nokb-airborne", Pass.LEGIT, "Rain-Anticheat", setOf(Tags.COMBAT, Tags.GUARD),
+    ) { b ->
+        val attacker = b.bot("KbAir", 0.0, 0.0)
+        val victim = b.bot("Hopper", 0.0, 2.2)
+        b.expectQuiet(attacker, "noKnockback", "keepSprint", "hitFlick", "triggerbot")
+        b.expectQuiet(victim, "noKnockback", "jumpOnHurt", "backtrack")
+        b.expectFlagCount(victim, "noKnockback", "NoKB(VelocityB)", atMost = 0)
+
+        val ground = b.groundY
+        var t = 0
+        var y = ground
+        var v = 0.0
+        var air = false
+        var launchTick = -1000
+        var slide = 0
+        var slideZ = 0.0
+        b.everyTick {
+            val i = t++
+            attacker.look(0f, 0f)
+            attacker.sprint(true)
+            attacker.setOnGround(true)
+
+            // the victim's bunny hop: launch the tick after touchdown, vanilla jump impulse and
+            // the shared gravity+drag model (the arc `legit-bunnyhop` proves is clean)
+            if (air) {
+                v = (v - 0.08) * 0.98
+                y += v
+                if (y <= ground) { y = ground; v = 0.0; air = false }
+            } else {
+                air = true; v = 0.42; y += v; launchTick = i
+            }
+            // Strike THREE ticks into the arc: at the hit the victim is airborne on its own arc
+            // (which is the input this scenario exists to present) but nowhere near its launch
+            // impulse. `kbVictimGrounded` is sampled from the tracker snapshot at the hit, so the
+            // launch has to be earlier than the hit. Three ticks is the earliest offset that keeps
+            // the *whole* 3-tick check window airborne while keeping the hit off the hop: the arc's
+            // Δy is 0.42 on the launch tick and 0.333 on the next, then 0.248 / 0.165 / 0.083, and
+            // `jumpOnHurt` reads `Δy > 0.3` on the hit tick and the one after — so a strike at
+            // launch+1 presents a Δy of 0.333 on the very tick of the hit and is, by construction,
+            // a 100%-coincident jump-on-hit: the JumpReset signature, which that check flags
+            // correctly and which is emphatically not what this scenario is about. At launch+3 the
+            // victim is still rising on the arc (groundedProxy false, onGroundPacket false) while
+            // the hit's own Δy is 0.165, and `jumpOnHurt` resolves the hit as a counter-example.
+            if (i == launchTick + 3) {
+                attacker.strike(victim)
+                slide = 4
+            }
+            // the KB slide the server broadcasts, on the ticks after the hit -- 3 of the 4 fall in
+            // the check's 3-tick window
+            if (slide > 0) { slideZ += 0.28; slide-- } else slideZ = 0.0
+            victim.teleportTo(0.0, y, 2.2 + slideZ)
+            // `air` was just updated for this tick, so on-ground is its negation: false on the
+            // launch tick (they just jumped), true on the landing tick, false mid-arc.
+            victim.setOnGround(!air)
+        }
+        b.runFor(220)
+    }
+
+    /**
+     * A vanilla **sword sweep onto two adjacent opponents** -- the legit shape `multiTarget`'s pair
+     * path used to read as a two-target aura.
+     *
+     * A 1.9+ sword sweep damages every entity in the arc on the **same tick**, so two adjacent
+     * players at 2.2 and 2.6 blocks on the attacker's facing are hit legitimately, twice per second,
+     * by ordinary melee. That is exactly what the check's *same-tick* flag is for and is expected
+     * here: it fires at level 1.0 against a 1.0/tick decay, so it can never accumulate and never
+     * alerts (this scenario asserts the alert, not the flag).
+     *
+     * **What this drive proves.** The pair path is the module detector, and its gate says "2 of the
+     * last 4 *ticks*". Pre-fix the gate was fed by an **event** ring: two same-tick hurts per sweep
+     * push two `true` samples, so a single sweep fills half the window and the second sweep -- ten
+     * ticks later, on nothing but ordinary melee -- satisfied it. `flagEpisode` then added
+     * `setbackVL + 1` on top of the sweep's own same-tick flag (2 + 1 = 3 > setbackVL 2) and the
+     * legitimate player **alerted**. Post-fix the ring holds one sample per tick and prunes anything
+     * older than `tick - 3`, so at a 4+-tick cadence each sweep sees only its own tick: size 1,
+     * below `PAIR_MIN` (2), no episode flag, no alert.
+     *
+     * The `pair-sustained` subLabel assertion is what makes the fix observable rather than merely
+     * quiet: both the sweep's legitimate same-tick flag and the module flag report under the label
+     * `"MultiTarget"`, so a label-only count would read ~11 legitimate sweep flags and fail even on
+     * the fixed code (this is why `SelfTestHooks.flagCountFor` takes a subLabel).
+     *
+     * The chassis is `legit-combat`'s: the attackers chase along +Z at the vanilla pace, both victims
+     * retreat in lockstep (so the 2.2 / 2.6 geometry is constant and `reach` stays honest), each hit
+     * carries the real sprint-KB excursion and its unwind, and the hits land on a jittered 4-7 tick
+     * cadence -- so `noKnockback`, `keepSprint` and `clickStatistics` stay quiet on inputs this
+     * suite already proves they tolerate.
+     */
+    fun legitMultiTargetSweep(): Spec = Spec(
+        "legit-multitarget-sweep", Pass.LEGIT, "vanilla", setOf(Tags.COMBAT, Tags.ROTATION),
+    ) { b ->
+        val attacker = b.bot("Sweeper", 0.0, 0.0)
+        val near = b.bot("Near", 0.0, 2.2)
+        val far = b.bot("Far", 0.0, 2.6)
+        b.expectQuiet(attacker, CheckIds.COMBAT)
+        b.expectQuiet(attacker, "aimWrap", "rotationSnapBack", "rotationTracking")
+        b.expectQuiet(attacker, CheckIds.MOVEMENT)
+        b.expectQuiet(near, "noKnockback", "jumpOnHurt", "backtrack")
+        b.expectQuiet(far, "noKnockback", "jumpOnHurt", "backtrack")
+        // The module detector's own flag, isolated from the sweep's legitimate same-tick flag.
+        b.expectFlagCount(attacker, "multiTarget", "MultiTarget", atMost = 0, subLabel = "pair-sustained")
+
+        val ground = b.groundY
+        val jitter = listOf(4, 5, 5, 6, 5, 4, 7, 5, 6, 5)
+        val aim = Jitter()
+        var idx = 0
+        var since = -12
+        var slowTicks = 0
+        var z = -8.0
+        var victimZ = -5.8
+        var kbPush = 0.0
+        var kbTicksLeft = 0
+        b.everyTick {
+            attacker.look(0f, 12f + aim.deg(12.0))
+            attacker.sprint(true)
+            attacker.setOnGround(true)
+            val attacking = since >= jitter[idx % jitter.size]
+            val step = if (attacking || slowTicks > 0) 0.15 else 0.25
+            if (attacking) slowTicks = 3 else if (slowTicks > 0) slowTicks--
+            z += step
+            if (attacking) kbTicksLeft = 2
+            val kbTarget = if (kbTicksLeft > 0) { kbTicksLeft--; 0.6 } else 0.0
+            val kbPrev = kbPush
+            kbPush += (kbTarget - kbPush).coerceIn(-0.3, 0.3)
+            victimZ += step + (kbPush - kbPrev)
+            attacker.teleportTo(0.0, ground, z)
+            near.teleportTo(0.0, ground, victimZ)
+            far.teleportTo(0.0, ground, victimZ + 0.4)
+            near.setOnGround(true)
+            far.setOnGround(true)
+
+            if (attacking) {
+                // one swing, the whole arc damaged: the sweep's shape is two hurts on one tick
+                attacker.strike(near)
+                attacker.strike(far)
+                since = 0
+                idx++
+            } else since++
+        }
+        b.runFor(170)
+    }
 }

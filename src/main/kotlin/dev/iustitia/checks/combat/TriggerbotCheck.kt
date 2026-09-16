@@ -15,6 +15,7 @@ import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.abs
 import kotlin.math.max
 
 /**
@@ -31,7 +32,10 @@ import kotlin.math.max
  * Mechanism:
  *  - `process` runs every tick per attacker and raycasts the attacker's eye→look against each
  *    nearby victim's hitbox (within vanilla melee reach). It records the tick the crosshair FIRST
- *    reaches each victim's hitbox (the rising edge, [TriggerbotContext.engagementStart]).
+ *    reaches each victim's hitbox (the rising edge, [TriggerbotContext.engagementStart]) — but only
+ *    when the **attacker's own aim** moved recently enough to have created that edge (the held-aim
+ *    discriminator; see the rising-edge site). An edge created by the victim moving into a held
+ *    crosshair is legitimate play and gets no clock.
  *  - `onAttack` (an inferred attack A→V) reads V's engagement-start tick and classes the hit as
  *    "fast" when it lands within [MAX_REACTION_TICKS] of that rising edge.
  *  - A rolling window of recent hits (cap [WINDOW]) feeds a consistency gate: flag only when at
@@ -75,6 +79,27 @@ class TriggerbotCheck : Check() {
             // not flagged until they approach).
             if (BlockLookupBudget.beyondObserveRange(tp)) return
             val ctx = contextOf(tp.uuid) as TriggerbotContext
+
+            // Aim-motion history, sampled once per tick before the victim loop. A rising edge is
+            // only evidence of a *reaction* when the attacker's own aim created it — see the
+            // held-aim discriminator at the rising-edge site below.
+            val yaw = tp.yaw.toDouble()
+            val pitch = tp.pitch.toDouble()
+            if (ctx.aimYaw.isNaN()) {
+                // first sight of this attacker: seed, don't record a turn (a bot spawned facing
+                // 90° would otherwise read as a 90° sweep and arm every victim's engagement clock)
+                ctx.aimYaw = yaw
+                ctx.aimPitch = pitch
+            } else {
+                val moved = max(
+                    abs(Vectors.angleDiff(yaw, ctx.aimYaw)),
+                    abs(pitch - ctx.aimPitch),
+                )
+                ctx.aimYaw = yaw
+                ctx.aimPitch = pitch
+                if (moved >= AIM_TURN_EPS) ctx.lastAimMoveTick = tick
+            }
+
             val eye = tp.pos.add(0.0, tp.eyeHeight(), 0.0)
             val look = Vectors.lookVector(tp.yaw.toDouble(), tp.pitch.toDouble())
             val end = eye.add(look.multiply(LOOK_REACH + 1.0))
@@ -101,8 +126,31 @@ class TriggerbotCheck : Check() {
                 val onNow = RayAABB.calculateIntercept(box, eye, end) != null
                 val prev = ctx.onHitbox[victim.uuid] ?: false
                 if (onNow && !prev) {
-                    // rising edge: crosshair FIRST reached this victim's hitbox this tick
-                    ctx.engagementStart[victim.uuid] = tick
+                    // Rising edge: the crosshair FIRST reached this victim's hitbox this tick. Start
+                    // an engagement clock only when the attacker's own aim put it there.
+                    //
+                    // Held-aim discriminator (audit FP): the crosshair-to-hitbox edge is created by
+                    // whichever party moved. A legit player holding an aim while the target strafes
+                    // across — or walks into — the crosshair produces an edge on every crossing, and
+                    // clicking as it crosses is exactly how a human hits a moving target: 0-1 tick
+                    // "reactions" on every hit, 4-of-5 in the window, and this check flags them. The
+                    // check's own premise ("a real player has 5-12 ticks of visual reaction and only
+                    // occasionally sweeps onto a target") is about the *attacker sweeping onto* the
+                    // target, which is what the aim-motion test measures. When the attacker's aim has
+                    // been still for [AIM_TURN_WINDOW] ticks the edge was caused by the victim's
+                    // motion, so it is not a reaction and gets no clock.
+                    //
+                    // A triggerbot's module is unaffected: the user aims manually, so the crosshair
+                    // arrives on the target because the mouse moved (the referenced Vape drive sweeps
+                    // 90° onto the target on the edge tick). Deliberately fail-open, like the rest of
+                    // this LAX check: a triggerbot whose user holds the mouse perfectly still is
+                    // indistinguishable from a legit player clicking a target that moved into them,
+                    // and is left to KillAura/HitFlick rather than guessed at here.
+                    if (tick - ctx.lastAimMoveTick <= AIM_TURN_WINDOW) {
+                        ctx.engagementStart[victim.uuid] = tick
+                    } else {
+                        ctx.engagementStart.remove(victim.uuid)
+                    }
                 } else if (!onNow) {
                     // disengaged: clear so the next on-target is a fresh rising edge
                     ctx.engagementStart.remove(victim.uuid)
@@ -170,6 +218,11 @@ class TriggerbotCheck : Check() {
         /** rolling window of recent hits (most-recent first); bounded by [WINDOW].
          *  Mutated only in onAttack (network thread) — single-threaded, ArrayDeque is fine. */
         val samples: ArrayDeque<HitSample> = ArrayDeque()
+        /** Attacker's aim last tick (NaN = not sampled yet); feeds the held-aim discriminator. */
+        var aimYaw: Double = Double.NaN
+        var aimPitch: Double = Double.NaN
+        /** Tick the attacker's aim last moved by [AIM_TURN_EPS]; -10000 = never observed moving. */
+        var lastAimMoveTick: Int = -10000
     }
 
     private data class HitSample(val tick: Int, val fast: Boolean)
@@ -191,5 +244,12 @@ class TriggerbotCheck : Check() {
         private const val WINDOW = 24
         /** Min fast-hit ratio required to flag (4 of 5 ≈ 0.8 clears it; 3 of 5 = 0.6 does not). */
         private const val RATIO = 0.75
+        /**
+         * Per-tick aim change (degrees, worst of yaw/pitch) that counts as the attacker *aiming*.
+         * A held crosshair sits at ~0/tick; any deliberate mouse movement clears this.
+         */
+        private const val AIM_TURN_EPS = 0.25
+        /** How recently the attacker's aim must have moved for a rising edge to count as a reaction. */
+        private const val AIM_TURN_WINDOW = 3
     }
 }

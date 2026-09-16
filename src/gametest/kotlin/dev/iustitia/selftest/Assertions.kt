@@ -4,7 +4,7 @@ import dev.iustitia.history.FlagHistory
 import dev.iustitia.selftest.SelfTest.BotHandle
 
 /**
- * Assertion helpers for the two passes. Every failure message is written to be
+ * Assertion helpers for the three passes. Every failure message is written to be
  * pasted into a PR: it names the scenario, the expected evidence, and what was
  * actually observed (peak VLs, alerted checks).
  *
@@ -89,6 +89,31 @@ class Assertions(private val scenarioName: String) {
                     "  The check fired but never re-armed -- its episode latch is still held from the " +
                     "first episode. If the second episode was under-driven, lengthen or strengthen it " +
                     "before touching the detector."
+            )
+        }
+    }
+
+    /**
+     * The bot must have flagged [checkId] under [label] at most [atMost] times.
+     *
+     * The twin of `ScenarioBuilder.expectFlagCount` for scenarios that assert inside their own body.
+     * It is the assertion a false-positive fix needs when the flagging level never reaches
+     * `setbackVL`: [expectNoAlert] would pass on a check that was simply never driven, whereas this
+     * reports the flag count that proves the check *was* driven and stayed silent.
+     *
+     * [subLabel] restricts the count to one flag site of a check that shares one label across
+     * sites — see `ScenarioBuilder.expectFlagCount`.
+     */
+    fun expectFlagCount(bot: BotHandle, checkId: String, label: String, atMost: Int = 0, subLabel: String? = null) {
+        val observed = SelfTestHooks.flagCountFor(bot.uuid, checkId, label, subLabel)
+        if (observed > atMost) {
+            val peak = SelfTestHooks.peakVlFor(bot.uuid)[checkId]
+            throw ScenarioFailed(
+                "FALSE POSITIVE in $scenarioName: bot '${bot.name}' flagged '$checkId' [$label]" +
+                    (subLabel?.let { " subLabel='$it'" } ?: "") +
+                    " $observed time(s), expected <= $atMost (peakVL=$peak).\n" +
+                    "  The legitimate shape still reaches this flag. Narrow the check's guard rather " +
+                    "than the scenario, or the FP this assertion documents is not actually fixed."
             )
         }
     }

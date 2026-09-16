@@ -10,6 +10,7 @@ import dev.iustitia.tracking.EntityTrackerManager
 import dev.iustitia.tracking.TrackedPlayer
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedDeque
 import kotlin.math.max
 
 /**
@@ -24,9 +25,9 @@ import kotlin.math.max
  *  - the **pair path** covers the documented minimum (LiquidBounce `MultiTargets = 2`), where the
  *    level is exactly `1.0` and the flag fires at most once per tick against a `1.0`/tick decay —
  *    a measured break-even, so a two-target aura could run forever and never alert. The pair path
- *    demands the pair repeat (see [Check.sustained]/[Check.flagEpisode]): hitting two different
- *    players in the same tick is not something a legitimate client does even once, let alone on
- *    most of the last four ticks.
+ *    demands the pair repeat across distinct ticks (see [pairSustained]/[Check.flagEpisode]):
+ *    hitting two different players in the same tick is not something a legitimate client does even
+ *    once, let alone on most of the last four ticks.
  *
  * setbackVL 2, decay 1/tick, level = distinctCount - 1.
  */
@@ -67,11 +68,20 @@ class MultiTargetCheck : Check() {
                     pos = attacker.pos, extra = "victims=${set.size}"))
             }
 
-            // Pair path: 2 same-tick victims repeated — a sustained multi-aura whose per-tick
-            // level (1.0) exactly equals the decay. One pair is not asserted (a single same-tick
-            // pair is the documented minimum and the instantaneous form cannot alert); a pair on
-            // most of the last PAIR_WINDOW ticks is a module, and alerts one-shot per episode.
-            val pairNow = sustained(ctx, sameTick >= 2, PAIR_WINDOW, PAIR_MIN)
+            // Pair path: 2 same-tick victims repeated across DISTINCT ticks — a sustained
+            // multi-aura whose per-tick level (1.0) exactly equals the decay. One pair is not
+            // asserted (a single same-tick pair is the documented minimum and the instantaneous
+            // form cannot alert); a pair on ≥PAIR_MIN of the last PAIR_WINDOW ticks is a module,
+            // and alerts one-shot per episode.
+            //
+            // Tick-keyed, not event-keyed. A vanilla 1.9+ sword sweep damages every entity in the
+            // arc on the SAME tick, so an event-keyed ring reaches `size >= PAIR_WINDOW` from a
+            // single sweep's packets — two separate sweeps ten ticks apart were enough to satisfy a
+            // gate whose whole point is *repetition*, and `flagEpisode` then added setbackVL+1 on
+            // top of the sweep's own same-tick flag and alerted a legitimate player. One sample per
+            // tick, upgraded in place by that tick's later victims, is what [PAIR_WINDOW] and
+            // [PAIR_MIN] have always claimed to measure.
+            val pairNow = pairSustained(ctx, sameTick >= 2, ev.tick)
             if (pairNow) {
                 flagEpisode(attacker, ctx, "MultiTarget", ev.tick, Evidence(
                     subLabel = "pair-sustained", measurement = sameTick.toDouble(), threshold = 2.0,
@@ -100,6 +110,34 @@ class MultiTargetCheck : Check() {
         } catch (_: Throwable) {}
     }
 
+    /**
+     * Tick-keyed sustained gate for the pair path: at least [PAIR_MIN] of the last [PAIR_WINDOW]
+     * **ticks** carried a same-tick pair.
+     *
+     * One sample per tick, recorded in place — the first attack of a sweep lands before the second
+     * victim of the same sweep is known, so an append-per-event ring records `false` for the very
+     * tick that is about to become a pair. The upgrade assumes same-tick attacks are serial, which
+     * they are: [onAttack] is driven by the local client's own attack packets, and netty delivers
+     * those in order on one thread.
+     *
+     * Recency is enforced by *tick distance*, not by the ring's length, and that part is load
+     * bearing. The ring is advanced by attack ticks only — a tick with no attack contributes no
+     * sample — so a size-bounded ring fills over any span of time: a legitimate 2v1 player sweeping
+     * two adjacent opponents once per vanilla sword cooldown (~12 ticks) would satisfy "2 of the
+     * last 4" after four such sweeps, a minute into the fight, on nothing but ordinary melee.
+     * Dropping samples older than the window is what makes this the last [PAIR_WINDOW] *ticks*,
+     * which is what the class doc has always claimed it measures.
+     */
+    private fun pairSustained(ctx: MultiTargetContext, violating: Boolean, tick: Int): Boolean {
+        val pairs = ctx.pairTicks
+        if (violating && pairs.peekFirst() != tick) pairs.addFirst(tick)
+        while (true) {
+            val oldest = pairs.peekLast() ?: break
+            if (oldest < tick - PAIR_WINDOW + 1) pairs.pollLast() else break
+        }
+        return pairs.size >= PAIR_MIN
+    }
+
     /** Per-tick purge of stale tick→victim maps (called by the driver for every player). */
     override fun process(tp: TrackedPlayer, tick: Int) {
         try {
@@ -113,6 +151,13 @@ class MultiTargetCheck : Check() {
 
     private class MultiTargetContext : CheckContext() {
         val tickVictims = ConcurrentHashMap<Int, MutableSet<UUID>>()
+        /**
+         * Ticks that carried a same-tick pair, newest first, pruned to the last [PAIR_WINDOW]
+         * ticks by [pairSustained]. Pushed from [onAttack] (netty thread) while [process] iterates
+         * [tickVictims] on the client tick thread, hence the concurrent deque — the same
+         * reasoning as [tickVictims] itself.
+         */
+        val pairTicks: ConcurrentLinkedDeque<Int> = ConcurrentLinkedDeque()
     }
 
     private companion object {
