@@ -237,11 +237,26 @@ calling `SelfTest.silenceClientAudio(ctx)` first, before anything that can throw
 
 ### When it is required
 
-Run the full suite (and report it) for every change that touches: `checks/`,
-`tracking/`, `inference/`, `alert/`, `history/`, `session/`, `replay/`, `config/`
-detection semantics, or `SelfTestHooks`/`Check.flag`. For a change scoped to one
-check, `--check <id>` is enough for iteration, but run the full suite before you claim
-the change verified.
+Work out which checks the change can reach, then run only those scenarios. Booting the client costs
+~70s and each scenario adds ~9-30s, so a whole-suite pass is ~11-23 minutes of wall clock. Asked for
+after every task, that turns a plan into hours spent re-running scenarios the edit never touched.
+
+```bash
+python scripts/live_selftest.py --check a,b,c   # the scenarios for the checks this change reaches
+```
+
+- Batch the filter into one invocation: several `--check` runs pay several client boots, the comma
+  filter pays one.
+- Scope by the subscribers of what you changed, not by the check names in the request. A change in
+  `inference/`, or in a signal every check reads, reaches far more scenarios than the two checks it
+  targets. Narrow a detector in both directions: the legitimate shape that must stay quiet, and the
+  cheat shape that must still alert.
+- Run the full suite once, when the pull request is finished, and paste that result into the PR. It
+  is the only pass that has to be complete. Do not repeat it after each task, and do not re-run it
+  after a later commit unless that commit changes what the suite observes. Comment, doc-wording and
+  commit hygiene changes do not.
+- `verify_contribution.py --static`, `compileGametestKotlin` and `./gradlew test` are exempt from
+  this. They cost seconds, so run them as often as you like.
 
 ### The three passes and what a failure means
 
