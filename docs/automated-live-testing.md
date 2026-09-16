@@ -272,7 +272,7 @@ two blocks of flag lines names the scenario they belong to.
 catch state) and `--list`. Read them before claiming a check is covered; they are generated from
 the run, this table is maintained by hand.
 
-Last full run: **84 scenarios** (17 legit incl. the smoke test, 59 cheat, 8 replay incl. the two preset gates), all green in a single unsharded pass.
+Last full run: **84 scenarios** at `ca12ec8` (2026-09-16) -- 17 legit incl. the smoke test, 59 cheat, 8 replay incl. the two preset gates. All 84 green in a single unsharded pass, **0 false positives, 0 bypasses**, with the 4 detector gaps and 6 drive gaps below still open. The raw report is `build/selftest-report.json`.
 
 | | count |
 |---|---|
@@ -296,13 +296,14 @@ outcomes are deliberately distinct and the runner reports them in separate secti
 | **harness gap** (`driveGaps`) | the check logged **no flag at all** -- never asked | this suite's drive |
 | **false positive** (`documentedFp`) | a legit drive alerted | Iustitia's detector, release-blocking |
 
-### Established gates (27)
+### Established gates (29)
 
 | Check | Cheat clients that trip it |
 |---|---|
 | `flyEnvelope` | Fusion, Itami, LiquidBounce, Meteor (four sub-signals; also guarded by the `legit-fly-ramp` FP regression) |
 | `clickStatistics` | Koid, LionClient, Meteor |
 | `speedEnvelope` | Koid, LiquidBounce |
+| `elytraSpeed` | LiquidBounce |
 | `killAura` | LiquidBounce, Raven, Vape (snap, rate-capped drift, and on-target track; the drift path also carries a **re-arm regression**, `cheat-killaura-drift-rearm-raven`) |
 | `reach` | Koid (3.6 ghost), LiquidBounce (4.2), Vape (6.0) |
 | `criticals` | Meteor, Slinky |
@@ -310,6 +311,7 @@ outcomes are deliberately distinct and the runner reports them in separate secti
 | `multiTarget` | Meteor (3 same-tick victims), LiquidBounce (2-victim pair path; also guarded by the `legit-multitarget-sweep` FP regression) |
 | `noFallDamage` | Vape (landed-no-hurt); Meteor (faked-burst evasion attempt, still caught); Vape (mace swing with **no** confirmed hit -- the smash exemption's own evasion attempt, still caught) |
 | `phaseClip` | Koid |
+| `teleport` | Koid (both the vclip and the slyport drive) |
 | `spider` | AvA |
 | `sprintHack` | Itami (blind), LiquidBounce (sneak) |
 | `wallSprint` | Grim |
@@ -317,7 +319,7 @@ outcomes are deliberately distinct and the runner reports them in separate secti
 | `throughWalls` | Vape (occluded hits behind a wall) |
 | `backtrack` | Vape (stale-position snap) |
 | `noKnockback` | Rain-Anticheat (also guarded by the `legit-nokb-airborne` FP regression) |
-| `keepsprint` | LiquidBounce |
+| `keepSprint` | LiquidBounce |
 | `wTap` | Vape |
 | `hitFlick` | Vape |
 | `triggerbot` | Vape (also guarded by the `legit-triggerbot-strafe` FP regression) |

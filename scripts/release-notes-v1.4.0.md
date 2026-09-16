@@ -14,6 +14,8 @@ Clip format is now v13: per-segment worlds, block-edit deltas, entity capture, a
 
 The per-hit combat checks (reach, killAura, wTap, keepSprint, autoBlock, criticals, hitFlick, multiTarget and friends) now share a sustained-episode gate: a rolling window of per-hit verdicts, a required pattern, one flag per episode at a level that actually clears the setback threshold, and a re-arm only when the pattern breaks. Before, several of them could flag one hit per burst and lose the accumulated VL to decay.
 
+That gate had a second bug of its own. Two of the checks using it, `hitsWithoutSwing` and killAura's combat-ward drift, could never re-arm after their first episode, which made them effectively one-shot for a whole session. Both are fixed, and each now carries a regression scenario that drives a second episode and requires a second alert.
+
 `reach` catches the quiet tier now. The old check gave every attack 0.8 blocks of headroom, which is honest while either player is moving (client interpolation error is real) but pure slack when neither one has moved. On a motionless pair the check now compares the vanilla reach metric itself against a 3.2-block ceiling. Koid-style 3.6-block reach and LiquidBounce's 4.2 both alert.
 
 `throughWalls` had a raycast bug that made its occlusion verdicts effectively random. Fixed, so hits that land behind walls are seen for what they are.
@@ -34,6 +36,18 @@ Each ships with the legitimate shape as a permanent harness regression, and the 
 ## For contributors
 
 Iustitia is now an open-collaboration project. `CONTRIBUTING.md`, `SECURITY.md`, `SUPPORT.md` and a code of conduct are in the repo, along with issue and PR templates and CI workflows. The centerpiece for anyone hacking on detection: a three-pass live-test harness (`python scripts/live_selftest.py`) that runs 84 automated scenarios in a real game client. The legit pass plays like a vanilla player and asserts silence (false-positive guards); the cheat pass reproduces modules from 9 reference cheat clients and 4 reference anticheats and asserts alerts (bypass guards); the replay pass covers the observer tooling. Every scenario names the client or anticheat it mirrors.
+
+## Verification
+
+Every number below was produced at `ca12ec8`, the source tree this release is cut from.
+
+- `python scripts/verify_contribution.py --static`: pass. Six detector defaults in `scripts/checks.json` had drifted from the code they describe, so the verifier now compares them value by value against `IustitiaConfig.kt`; perturbing one makes it exit 1 instead of passing quietly.
+- `./gradlew test --no-daemon`: 21 tests, 0 failures.
+- `python scripts/live_selftest.py`: the full three-pass suite in a real game client. 84 scenarios, all green, 0 false positives, 0 bypasses. The 4 recorded detector gaps and 6 drive gaps are unchanged and still listed.
+
+The two re-arm regressions were observed in both directions: one alert each against the pre-fix checks, where two were required, and two each against the fixed ones.
+
+The suite cannot see everything. Mixin packet decode, rendering and screenshots, ViaFabricPlus 1.8 behaviour and multiplayer server interaction stay manual, and `docs/live-verification.md` is the checklist for them.
 
 ## Install
 

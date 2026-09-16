@@ -66,7 +66,7 @@ kotlin {
 // deterministic flat world, runs the scenarios, and exits with a report — no
 // human at the keyboard, no server, no packets leaving the machine.
 //
-// `./gradlew runClientGameTest`  — full two-pass verification (legit + cheat)
+// `./gradlew runClientGameTest`  — full three-pass verification (legit + cheat + replay)
 // `./gradlew compileGametestKotlin` — just typecheck the harness
 //
 // The test mod carries no mixins of its own; it reaches Iustitia's pipeline
