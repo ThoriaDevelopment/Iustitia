@@ -47,7 +47,7 @@ Iustitia is now an open-collaboration project. `CONTRIBUTING.md`, `SECURITY.md`,
 
 ## Verification
 
-Every number below was produced at `ca12ec8`, the source tree this release is cut from.
+Every number below was produced at `4f9545a`, the tree the live suite last passed on. Commits after it touch documentation and check prose only, which the suite does not observe.
 
 - `python scripts/verify_contribution.py --static`: pass. Six detector defaults in `scripts/checks.json` had drifted from the code they describe, so the verifier now compares them value by value against `IustitiaConfig.kt`; perturbing one makes it exit 1 instead of passing quietly.
 - `./gradlew test --no-daemon`: 21 tests, 0 failures.

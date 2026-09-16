@@ -272,15 +272,13 @@ two blocks of flag lines names the scenario they belong to.
 catch state) and `--list`. Read them before claiming a check is covered; they are generated from
 the run, this table is maintained by hand.
 
-Last full run: **84 scenarios** at `ca12ec8` (2026-09-16) -- 17 legit incl. the smoke test, 59 cheat, 8 replay incl. the two preset gates. All 84 green in a single unsharded pass, **0 false positives, 0 bypasses**, with the 4 detector gaps and 6 drive gaps below still open. The raw report is `build/selftest-report.json`.
+Last full run: **88 scenarios** at `4f9545a` (2026-09-16) -- 19 legit incl. the smoke test, 60 cheat, 9 replay incl. the two preset gates. All 88 green in a single unsharded pass, **0 false positives, 0 bypasses**, with the 4 detector gaps and 6 drive gaps below still open. The raw report is `build/selftest-report.json`.
 
-`replay-show-self` and its row below landed after that run, so the inventory is now **85 scenarios** (9 replay) and the green pass quoted above does not cover it. `--list` prints the live inventory, which is the authoritative count.
-
-The swing-source audit added three more (`legit-mining-cadence`, `legit-mining-near-hurt`, `cheat-reach-digging-koid`), so the inventory is **88 scenarios**: 19 legit (incl. the smoke test), 60 cheat, 9 replay.
+That pass is the first to cover `replay-show-self` and the three scenarios added by the swing-source audit (`legit-mining-cadence`, `legit-mining-near-hurt`, `cheat-reach-digging-koid`); the previously recorded pass was 84 at `ca12ec8`. `--list` prints the live inventory, which is the authoritative count.
 
 | | count |
 |---|---|
-| cheat scenarios | 59 |
+| cheat scenarios | 60 |
 | distinct reference sources driven | **13** — 9 cheat clients (Fusion, Itami, Koid, LionClient, LiquidBounce, Meteor, Raven, Slinky, Vape) + 4 anticheats (AvA, Grim, NCM, Rain-Anticheat) |
 | checks with an established cheat gate (the drive alerts) | **29 / 36** |
 | checks driven by >=2 clients | 10 (`flyEnvelope` 4, `clickStatistics` 3, `killAura` 3, `reach` 3, `criticals` 2, `multiTarget` 2, `noFallDamage` 2, `speedEnvelope` 2, `sprintHack` 2, `autoBlock` 2) |
