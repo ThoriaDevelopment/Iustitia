@@ -116,7 +116,7 @@ class HitsWithoutSwingCheck : Check() {
      */
     private fun inferAttacker(sig: HurtSignal, victim: TrackedPlayer): TrackedPlayer? {
         if (sig.attackerEntityId >= 0) {
-            val direct = EntityTrackerManager.all().firstOrNull { it.entityId == sig.attackerEntityId }
+            val direct = EntityTrackerManager.byEntityId(sig.attackerEntityId)
             if (direct != null) return direct
         }
         var nearest: TrackedPlayer? = null

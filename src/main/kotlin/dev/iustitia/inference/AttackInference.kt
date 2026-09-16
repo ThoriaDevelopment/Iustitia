@@ -96,6 +96,21 @@ object AttackInference {
             val tp = EntityTrackerManager.get(attacker) ?: continue
             val d = tp.pos.distanceTo(victimPos)
             if (d > 8.0) continue
+            // A hurt that NAMES its attacker can only be claimed by that attacker
+            // (EntityDamageS2CPacket.sourceCauseId, which the client cannot choose). Proximity is
+            // a guess; this is not. It also stops the wider misattribution class the dig false
+            // positive belonged to: mob, arrow, potion and TNT damage name an entity that is not
+            // a tracked player, and that must fall open rather than land on whoever swung nearby.
+            if (h.attackerEntityId >= 0 && tp.entityId != h.attackerEntityId) continue
+            // A swing relayed while a dig is live is the DIG, not a swing this player chose: the
+            // server animates a digger's arm on its own clock, so a digger always holds an
+            // "unspent swing" inside any window and every unattributed hurt within range lands on
+            // them (the measured reach false positive). Exclude them from the guessing path, which
+            // is what the id-less channels get. The VELOCITY channel is deliberately NOT covered:
+            // a knockback impulse is evidence of a real hit, and silencing it for diggers would
+            // hand a damage-suppressing aura a bypass. The direct path above is never gated here,
+            // so a player who digs AND lands named hits is still attributed on every hit.
+            if (h.attackerEntityId < 0 && h.source != HurtSource.VELOCITY && tp.digging) continue
             // any swing within the window, unspent or spent at this same tick?
             var matchedSample: SwingSample? = null
             synchronized(samples) {

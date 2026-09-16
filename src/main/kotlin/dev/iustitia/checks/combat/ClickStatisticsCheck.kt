@@ -41,6 +41,13 @@ import java.util.UUID
  * Same-tick swing batches (server/lag collapse, bundle packets) are recorded for the
  * CPS window but excluded from the nano/stat windows so lag never trips the robot/stDev
  * signals. setbackVL 5, decay 0.05/tick (≈1/s).
+ *
+ * Dig carve-out (swing-source audit): while the server has a dig live for a player, its relayed
+ * swings arrive on the server's own `getHandSwingDuration()/2` cadence, exactly constant, so
+ * StDev reads a bedrock miner as a fixed-delay autoclicker (measured: 35 flags and a peak VL of
+ * 28.20 over 300 ticks of holding left click on an unbreakable block). Intervals at or above
+ * [DIG_RELAY_MIN_TICK_DELTA] are skipped for such a player; see [onSwing] for why the floor is 2
+ * and why CPS still counts them.
  */
 class ClickStatisticsCheck : Check() {
 
@@ -68,6 +75,25 @@ class ClickStatisticsCheck : Check() {
             }
 
             val tickDelta = s.tick - ctx.lastSwingTick
+
+            // A digging player's swings are the SERVER's, not theirs: `handleBlockBreaking`
+            // swings the arm every tick while a dig is in progress, and `LivingEntity.swingHand`
+            // relays the animation only on its own `getHandSwingDuration()/2` clock. The interval
+            // stream is therefore exactly constant, which is the StDev/Kurt fingerprint of a
+            // fixed-delay autoclicker (the measured `legit-mining` false positive). The relay
+            // cannot be faster than DIG_RELAY_MIN_TICK_DELTA, so an interval below that cannot
+            // have come from a dig and a fast click stream stays detectable while a dig is
+            // claimed. The clock advances first, so ending a dig does not leave one huge outlier
+            // interval in the window (it would hold the 600-sample Kurt sample platykurtic and
+            // gate KURT_STRICT off for the next 600 swings). CPS keeps counting above: a 4-tick
+            // relay is 5 CPS against a 20 cap, so counting it costs nothing, and suppressing it
+            // could shield an autoclicker that also happens to be digging.
+            if (tp.digging && tickDelta >= DIG_RELAY_MIN_TICK_DELTA) {
+                ctx.lastSwingTick = s.tick
+                ctx.lastSwingNano = s.nanoTime
+                return
+            }
+
             if (ctx.lastSwingTick > -10000 && tickDelta > 0) {
                 pushFront(ctx.tickIntervals, tickDelta, KURT_WINDOW)
             }
@@ -265,5 +291,21 @@ class ClickStatisticsCheck : Check() {
         /** Consecutive non-loop swings to re-arm the Record transition gate (debounces a one-off
          *  miss within an otherwise-loopy stream). */
         private const val RECORD_REARM = 8
+
+        // -- Dig-relay exclusion (swing-source audit) --
+        /** Lowest tick interval that can have come from the server's dig relay, which is
+         *  `floor(getHandSwingDuration() / 2) + 1` once a per-tick `swingHand` starts driving it.
+         *  From the 1.21.11 source the duration is the held item's `swing_animation` duration
+         *  (6 by default), Haste subtracting `1 + amplifier` and Mining Fatigue adding
+         *  `(1 + amplifier) * 2`. So the relay lands on 4 at rest, 3 under Haste I or II
+         *  (durations 5 and 4 both floor to 2), 5 under Mining Fatigue I (duration 8), 7 under an
+         *  elder guardian's Mining Fatigue III (duration 12), and 2 from Haste III/IV or a custom
+         *  `SWING_ANIMATION` duration of 3 or 2.
+         *
+         *  A command-granted Haste V or higher, or an item whose duration is 1 or 0, relays EVERY
+         *  tick (duration 1 and 0 both floor to 0). That is deliberately not exempt: a 1-tick relay
+         *  is indistinguishable from the 20 CPS autoclicker the CPS and StDev signals exist to
+         *  catch, so the detector wins the tie. Nothing reachable in vanilla relays faster than 3. */
+        private const val DIG_RELAY_MIN_TICK_DELTA = 2
     }
 }
