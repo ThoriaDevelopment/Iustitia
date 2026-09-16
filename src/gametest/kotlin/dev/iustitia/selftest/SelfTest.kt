@@ -678,6 +678,7 @@ object SelfTest {
                 world.getClientWorld().waitForChunksRender()
                 val builder = ScenarioBuilder(ctx)
                 val scenarioStart = System.currentTimeMillis()
+                AssertionTally.reset()
                 var error: String? = null
                 try {
                     scenario.run(builder)
@@ -689,6 +690,13 @@ object SelfTest {
                 }
 
                 val result = evaluate(builder)
+                // Did this scenario assert anything at all? Three ways it can: a declared
+                // expectation (which includes the alert-count and flag-count ceilings, since both
+                // register one), a documented bucket (a known-open finding or a drive gap is an
+                // assertion about the run, not a silent pass), or an inline `check`. A scenario with
+                // none of the three cannot fail, so it must not pass either -- see AssertionTally.
+                val asserted = builder.expectations.isNotEmpty() || result.knownOpen.isNotEmpty() ||
+                    result.driveGaps.isNotEmpty() || AssertionTally.sinceReset() > 0
                 val duration = System.currentTimeMillis() - scenarioStart
                 return ScenarioReport(
                     scenario = scenario.name,
@@ -696,8 +704,13 @@ object SelfTest {
                     source = scenario.source,
                     tags = scenario.tags,
                     expectations = builder.expectations.associate { it.second to it.third },
-                    passed = error == null && result.missed.isEmpty() && result.falsePositives.isEmpty() &&
-                        result.alertCountMisses.isEmpty(),
+                    passed = error == null && asserted && result.missed.isEmpty() &&
+                        result.falsePositives.isEmpty() && result.alertCountMisses.isEmpty(),
+                    assertions = AssertionTally.sinceReset(),
+                    // Only meaningful for a scenario that ran to completion: one that threw already
+                    // failed loudly, and calling it assertion-less too would report a second,
+                    // misleading verdict on a row whose real problem is the exception.
+                    noAssertions = error == null && !asserted,
                     vl = result.vl,
                     alertedChecks = result.alerted,
                     missedChecks = result.missed,

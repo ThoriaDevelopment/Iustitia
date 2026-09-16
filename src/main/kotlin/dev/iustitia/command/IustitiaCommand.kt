@@ -853,7 +853,7 @@ object IustitiaCommand {
         sb.append("  \"tier\": ").append(jsonStr(tierName)).append(",\n")
         sb.append("  \"alerts\": ").append(FlagHistory.sessionAlertCount(uuid)).append(",\n")
         sb.append("  \"flags\": ").append(counts.values.sum()).append(",\n")
-        sb.append("  \"maxVl\": ").append(fmt(maxVlMap.values.maxOrNull() ?: 0.0)).append(",\n")
+        sb.append("  \"maxVl\": ").append(fmtJson(maxVlMap.values.maxOrNull() ?: 0.0)).append(",\n")
         sb.append("  \"confidence\": ").append(jsonStr(FlagHistory.confidenceLine(uuid))).append(",\n")
         if (sp != null) sb.append("  \"firstTick\": ").append(sp.first).append(", \"lastTick\": ").append(sp.second).append(",\n")
         sb.append("  \"byCheck\": {")
@@ -862,7 +862,7 @@ object IustitiaCommand {
             counts.entries.forEachIndexed { i, e ->
                 val mv = maxVlMap[e.key] ?: 0.0
                 sb.append("    ").append(jsonStr(e.key)).append(": {\"count\": ").append(e.value)
-                    .append(", \"maxVl\": ").append(fmt(mv)).append("}")
+                    .append(", \"maxVl\": ").append(fmtJson(mv)).append("}")
                 sb.append(if (i == counts.size - 1) "\n  },\n" else ",\n")
             }
         }
@@ -874,7 +874,7 @@ object IustitiaCommand {
                 sb.append("    {\"tick\": ").append(f.tick)
                     .append(", \"check\": ").append(jsonStr(f.checkId))
                     .append(", \"label\": ").append(jsonStr(f.label))
-                    .append(", \"vl\": ").append(fmt(f.vl))
+                    .append(", \"vl\": ").append(fmtJson(f.vl))
                 val ev = f.evidence
                 if (ev != null) sb.append(", ").append(evidenceJson(ev))
                 sb.append("}")
@@ -899,9 +899,9 @@ object IustitiaCommand {
         val sb = StringBuilder("\"evidence\": {")
         val kvs = ArrayList<String>()
         e.subLabel?.let { kvs += "\"subLabel\": " + jsonStr(it) }
-        e.measurement?.let { kvs += "\"measurement\": " + fmt(it, 4) }
-        e.threshold?.let { kvs += "\"threshold\": " + fmt(it, 4) }
-        e.pos?.let { kvs += "\"pos\": [${it.x}, ${it.y}, ${it.z}]" }
+        e.measurement?.let { kvs += "\"measurement\": " + fmtJson(it, 4) }
+        e.threshold?.let { kvs += "\"threshold\": " + fmtJson(it, 4) }
+        e.pos?.let { kvs += "\"pos\": [" + fmtJson(it.x) + ", " + fmtJson(it.y) + ", " + fmtJson(it.z) + "]" }
         e.victim?.let { kvs += "\"victim\": " + jsonStr(it.toString()) }
         e.extra?.let { kvs += "\"extra\": " + jsonStr(it) }
         sb.append(kvs.joinToString(", ")).append("}")
@@ -918,6 +918,10 @@ object IustitiaCommand {
      *  [dev.iustitia.NumFmt], which forces [java.util.Locale.US] (see its KDoc for why the
      *  default locale breaks JSON parsing and Markdown reports on comma-decimal locales). */
     private fun fmt(v: Double, digits: Int = 2): String = NumFmt.d(v, digits)
+    /** JSON number token for the report/evidence objects. A non-finite value becomes the JSON
+     *  literal `null` ([NumFmt.json]) rather than [NumFmt.MISSING], which in an unquoted number
+     *  position would be a bare word and would make the whole report unparseable. */
+    private fun fmtJson(v: Double, digits: Int = 2): String = NumFmt.json(v, digits)
 
     // ---- shared resolver ----
     private fun resolveUuid(name: String): java.util.UUID? {

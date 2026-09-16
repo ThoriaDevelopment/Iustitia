@@ -324,19 +324,27 @@ class ReachCheck : Check() {
         isMotionless(attacker, tick) && isMotionless(victim, tick)
 
     private fun isMotionless(tp: TrackedPlayer, tick: Int): Boolean {
-        val samples = tp.ring.getPositions(3, tick)
-        if (samples.size < 3) return false
+        // Aggregation only, so walk the ring's own storage instead of materializing Vec3d samples.
+        var n = 0
         var minX = Double.MAX_VALUE; var maxX = -Double.MAX_VALUE
         var minZ = Double.MAX_VALUE; var maxZ = -Double.MAX_VALUE
         var minY = Double.MAX_VALUE; var maxY = -Double.MAX_VALUE
-        for (p in samples) {
-            if (p.x < minX) minX = p.x
-            if (p.x > maxX) maxX = p.x
-            if (p.z < minZ) minZ = p.z
-            if (p.z > maxZ) maxZ = p.z
-            if (p.y < minY) minY = p.y
-            if (p.y > maxY) maxY = p.y
+        try {
+            tp.ring.forEachRecent(3, tick) { x, y, z ->
+                n++
+                if (x < minX) minX = x
+                if (x > maxX) maxX = x
+                if (z < minZ) minZ = z
+                if (z > maxZ) maxZ = z
+                if (y < minY) minY = y
+                if (y > maxY) maxY = y
+            }
+        } catch (_: Throwable) {
+            // Same verdict as an absent/short ring below: not provably motionless, so keep the full
+            // 0.8 headroom. Fail-closed.
+            return false
         }
+        if (n < 3) return false
         return (maxX - minX) < STILL_EPS && (maxZ - minZ) < STILL_EPS && (maxY - minY) < STILL_EPS
     }
 

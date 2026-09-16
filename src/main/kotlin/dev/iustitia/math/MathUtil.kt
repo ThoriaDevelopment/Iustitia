@@ -102,6 +102,15 @@ object MathUtil {
      *  (NOT `Statistics.getGcd(double,double)`): stops when |b| < 0.001 or a == b, swaps to keep
      *  a >= b, recurses on (b, a - floor(a/b)*b). Faithful to the cbrt formula's dependency. */
     fun sensitivityGcd(a: Double, b: Double): Double {
+        // Non-finite terminal. Without it every comparison below is false for a NaN operand
+        // (`abs(NaN) < 0.001`, `a == b`, `a < b` all fail), so the `sensitivityGcd(b, …)` tail
+        // recurses forever and dies with a StackOverflowError. Reachable because the inputs are
+        // observed rotation deltas: a server that sends a NaN yaw/pitch feeds this directly. The
+        // error was swallowed by `EntityTrackerManager.poll`'s per-entity catch, so the visible
+        // symptom was not a crash but that one player's snapshot silently stopped updating every
+        // tick. Returns NaN (not 0.0) so "no answer" can never be read as a real GCD of zero —
+        // the caller skips the estimate on a non-finite result.
+        if (!a.isFinite() || !b.isFinite()) return Double.NaN
         if (abs(b) < 0.001 || a == b) return a
         if (a < b) return sensitivityGcd(b, a)
         return sensitivityGcd(b, a - floor(a / b) * b)

@@ -17,6 +17,53 @@ import dev.iustitia.selftest.SelfTest.BotHandle
  */
 class ScenarioFailed(message: String) : RuntimeException(message)
 
+/**
+ * Counts the inline harness assertions a scenario made, so "asserted and passed" can be told apart
+ * from "asserted nothing".
+ *
+ * Without it, a scenario that declares no `expect*` and throws nothing reports green: the report's
+ * `passed` formula has nothing to be false about. The verdict is not hypothetical for the REPLAY
+ * and preset scenarios, which assert inside their own body and register no expectation, so a
+ * scenario whose assertions were gutted during a refactor keeps passing while checking nothing.
+ *
+ * Global mutable state, deliberately: the harness runs one scenario at a time. A `check` inside a
+ * `ClientThread.runOnClient` block runs on the client thread rather than the gametest thread, hence
+ * the atomic.
+ */
+object AssertionTally {
+    private val hits = java.util.concurrent.atomic.AtomicInteger()
+
+    /** Record one inline assertion. */
+    fun hit() { hits.incrementAndGet() }
+
+    /** Assertions made since the last [reset]. */
+    fun sinceReset(): Int = hits.get()
+
+    /** Forget the running count (called before each scenario body). */
+    fun reset() { hits.set(0) }
+}
+
+/**
+ * The harness's own `check`, which shadows `kotlin.check` inside this package.
+ *
+ * It exists for two reasons rather than reusing the stdlib verb: it feeds [AssertionTally], and it
+ * throws [ScenarioFailed] instead of `IllegalStateException`, so the runner classifies a failed
+ * inline assertion exactly as it classifies a failed `expect*` and nothing has to guess whether an
+ * `IllegalStateException` from a scenario was a real assertion or an engine bug.
+ *
+ * Prefer the two-arg form: it carries the PR-grade message the rest of this file's assertions carry.
+ */
+fun check(value: Boolean, lazyMessage: () -> String) {
+    AssertionTally.hit()
+    if (!value) throw ScenarioFailed(lazyMessage())
+}
+
+/** [check] without a message. Kept because the replay scenarios use it for self-describing conditions. */
+fun check(value: Boolean) {
+    AssertionTally.hit()
+    if (!value) throw ScenarioFailed("assertion failed: a replay/preset condition held no longer (no message given)")
+}
+
 class Assertions(private val scenarioName: String) {
 
     /** The cheating bot must have alerted [checkId]. */

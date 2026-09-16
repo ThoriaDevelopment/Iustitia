@@ -73,6 +73,21 @@ data class ScenarioReport(
      * Recorded, never asserted on: these are the work queue for extending the drives.
      */
     val driveGaps: List<String> = emptyList(),
+    /**
+     * Inline harness assertions this scenario made (the counted `check` verb; see `AssertionTally`).
+     *
+     * Declared expectations are not counted here — `expectations` already carries those. This is the
+     * other half of the "did it assert at all" question, and it exists because [noAssertions] needs
+     * a number to print.
+     */
+    val assertions: Int = 0,
+    /**
+     * True when the scenario asserted nothing: no expectation, no documented bucket, no inline
+     * `check`. A scenario in that state cannot fail, so it must not report a green either — it
+     * would be indistinguishable from a scenario whose assertions were deleted in a refactor.
+     * A hard failure (folds into [passed]).
+     */
+    val noAssertions: Boolean = false,
     /** Wall-clock duration of the scenario in milliseconds. */
     val durationMs: Long,
     /** Non-null when the scenario threw: the exception class + message. */
@@ -93,6 +108,8 @@ data class ScenarioReport(
         "alertCountMisses" to alertCountMisses,
         "knownOpen" to knownOpen,
         "driveGaps" to driveGaps,
+        "assertions" to assertions,
+        "noAssertions" to noAssertions,
         "durationMs" to durationMs,
         "error" to error,
     )
@@ -119,6 +136,8 @@ data class ScenarioReport(
             alertCountMisses = (m["alertCountMisses"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
             knownOpen = (m["knownOpen"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
             driveGaps = (m["driveGaps"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+            assertions = (m["assertions"] as? Number)?.toInt() ?: 0,
+            noAssertions = m["noAssertions"] as? Boolean ?: false,
             durationMs = (m["durationMs"] as? Number)?.toLong() ?: 0L,
             error = m["error"] as? String,
         )

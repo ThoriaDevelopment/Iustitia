@@ -11,8 +11,9 @@ import dev.iustitia.replay.ReplayState
  * end in the same gametest world: capture a scripted scene into the rolling buffer,
  * start/pause/seek/stop a replay, and round-trip a `.iusclip` export.
  *
- * Pass membership is LEGIT (these run in the first pass group): they assert pipeline
- * mechanics, not detector verdicts, and must never flag their own bot.
+ * Pass membership is REPLAY: they assert pipeline mechanics, not detector
+ * verdicts, and must never flag their own bot. Their assertions are inline
+ * `check` calls, which is what the harness's assertion tally counts.
  */
 object ReplayScenarios {
 
@@ -27,11 +28,11 @@ object ReplayScenarios {
             }
             b.runFor(80)
             val frames = ClientThread.computeOnClient { _ -> ReplayBuffer.frameCount() }
-            if (frames < 60) {
-                throw ScenarioFailed(
-                    "REPLAY capture failure: buffer held $frames frames after 80 moving ticks " +
-                        "(expected >=60 -- replayCapture is on by default; a capture regression empties every replay)."
-                )
+            // Asserted through the counted `check` verb rather than a bare throw: a scenario whose
+            // only assertion is an uncounted throw reports a green that nothing can be false about.
+            check(frames >= 60) {
+                "REPLAY capture failure: buffer held $frames frames after 80 moving ticks " +
+                    "(expected >=60 -- replayCapture is on by default; a capture regression empties every replay)."
             }
         }
     }

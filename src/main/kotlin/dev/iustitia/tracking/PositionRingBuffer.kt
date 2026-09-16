@@ -7,8 +7,25 @@ import net.minecraft.util.math.Vec3d
  * Ported from Nemesis `TrackedPosition` / ring-buffer pattern: lag-compensated
  * reach samples positions whose timestamp falls within the attacker's ping window.
  *
- * getPositions(maxAgeTicks, currentTick) returns every stored position whose tick is
- * newer than `currentTick - maxAgeTicks`, newest-first. Fail-open: never throws.
+ * [getPositions] returns every stored position whose tick is newer than
+ * `currentTick - maxAgeTicks`, newest-first. Fail-open: never throws.
+ *
+ * ## Two read paths, on purpose
+ *
+ * This is read on the per-`AttackEvent` hot path, so there are two ways out:
+ *
+ * - [forEachRecent] hands the raw components to a callback and allocates nothing. Use it whenever
+ *   the consumer only aggregates — a spread, a min/max, a consecutive-distance test — which is
+ *   most of them.
+ * - [getPositions] materializes `Vec3d` objects for consumers that must hold or hand on individual
+ *   positions (candidate hitbox lists, stored samples).
+ *
+ * Prefer [forEachRecent]: a `Vec3d` per sample per call adds up across a fight, and the aggregating
+ * callers gained nothing from the objects.
+ *
+ * [forEachRecent] does NOT catch: the callback runs inline, so a throwing callback propagates and
+ * the *caller* owns the fail-open decision (see `ReachCheck.isMotionless`, which treats a failed
+ * walk exactly like a short ring — conservatively). [add] and [getPositions] never throw.
  */
 class PositionRingBuffer(val capacity: Int = 24) {
     private val ticks = IntArray(capacity)
@@ -49,8 +66,16 @@ class PositionRingBuffer(val capacity: Int = 24) {
         }
     }
 
-    fun clear() {
-        head = 0
-        size = 0
+    /**
+     * Visit every sample newer than `currentTick - maxAgeTicks`, newest first, as raw components.
+     * Allocation-free. The callback must not throw (see the class doc — the caller owns fail-open).
+     */
+    fun forEachRecent(maxAgeTicks: Int, currentTick: Int, action: (x: Double, y: Double, z: Double) -> Unit) {
+        if (maxAgeTicks <= 0 || size == 0) return
+        val threshold = currentTick - maxAgeTicks
+        for (i in 0 until size) {
+            val idx = (head - 1 - i + capacity) % capacity
+            if (ticks[idx] > threshold) action(xs[idx], ys[idx], zs[idx])
+        }
     }
 }

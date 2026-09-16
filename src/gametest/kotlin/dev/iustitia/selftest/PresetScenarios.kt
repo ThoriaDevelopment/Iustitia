@@ -64,13 +64,11 @@ object PresetScenarios {
             val peakDisabled = ClientThread.computeOnClient { _ ->
                 SelfTestHooks.peakVlFor(bot.uuid)[id] ?: 0.0
             }
-            if (peakDisabled > 0.0) {
-                throw ScenarioFailed(
-                    "PRESET/GATE failure: check '$id' accumulated VL to $peakDisabled while its " +
-                        "config slice was disabled (setbackVL=1, decay=0 — any flag would show). " +
-                        "The Check.flag disabled-check gate is broken: a toggled-off check is " +
-                        "flagging/alerting behind /ius toggle's back."
-                )
+            check(peakDisabled <= 0.0) {
+                "PRESET/GATE failure: check '$id' accumulated VL to $peakDisabled while its " +
+                    "config slice was disabled (setbackVL=1, decay=0, so any flag would show). " +
+                    "The Check.flag disabled-check gate is broken: a toggled-off check is " +
+                    "flagging/alerting behind /ius toggle's back."
             }
 
             // ---- phase 2: same drive, check re-enabled -> must alert ----
@@ -85,14 +83,12 @@ object PresetScenarios {
             val alertedAfter = ClientThread.computeOnClient { _ ->
                 id in SelfTestHooks.alertedChecksFor(bot.uuid)
             }
-            if (!alertedAfter) {
+            check(alertedAfter) {
                 val peak = ClientThread.computeOnClient { _ -> SelfTestHooks.peakVlFor(bot.uuid)[id] ?: 0.0 }
-                throw ScenarioFailed(
-                    "PRESET/GATE failure: check '$id' never alerted after being re-enabled " +
-                        "(peakVL=$peak over 150 ticks of a 6-block reach drive that alerts the " +
-                        "stock check well inside 180). The gate may be latching (never releasing) " +
-                        "or the re-enable did not propagate."
-                )
+                "PRESET/GATE failure: check '$id' never alerted after being re-enabled " +
+                    "(peakVL=$peak over 150 ticks of a 6-block reach drive that alerts the " +
+                    "stock check well inside 180). The gate may be latching (never releasing) " +
+                    "or the re-enable did not propagate."
             }
 
             // ---- restore the slice exactly ----
@@ -143,7 +139,7 @@ object PresetScenarios {
             }
 
             val ok = ClientThread.computeOnClient { _ -> PresetManager.apply("standard") }
-            if (!ok) throw ScenarioFailed("PRESET/APPLY failure: PresetManager.apply(\"standard\") returned false.")
+            check(ok) { "PRESET/APPLY failure: PresetManager.apply(\"standard\") returned false." }
 
             ClientThread.computeOnClient { _ ->
                 val c = ConfigManager.config

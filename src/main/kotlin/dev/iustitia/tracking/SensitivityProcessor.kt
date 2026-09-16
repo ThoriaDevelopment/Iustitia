@@ -158,8 +158,11 @@ class SensitivityProcessor {
 
         // -- Strict path: stability grid match (|deltaPitch| < 0.31). --
         // Reads the precomputed [MCP_GCD_VALUES] table (was: 200× mcpGcdValue recomputation/call).
+        // `indices`, not `0 until 200`: the table is 201 entries (MCP_SENSITIVITY runs 0..200), so
+        // the hard-coded bound made index 200 — maximum sensitivity — unreachable by the strict
+        // path, which could never strict-lock a max-sensitivity player.
         if (ad < 0.31) {
-            for (i in 0 until 200) {
+            for (i in MCP_GCD_VALUES.indices) {
                 if (abs(MCP_GCD_VALUES[i] - ad) < 1e-3) {
                     if (strictCount < STRICT_CAP) strictSamples[strictCount++] = i
                     if (strictCount >= 10) {
@@ -181,6 +184,11 @@ class SensitivityProcessor {
 
         // -- GCD path: cbrt-formula estimate, mode over 40 samples. --
         val gcd = sensitivityGcd(deltaPitch, lastDeltaPitch)
+        // A non-finite gcd means the inputs were not real rotation deltas (see the NaN terminal in
+        // MathUtil.sensitivityGcd) — skip the sample entirely. Continuing would compute a NaN
+        // sensitivity whose `.toInt()` is 0, seeding `mcpSamples` with bogus zeros that can win the
+        // 40-sample mode and lock a fabricated sensitivity.
+        if (!gcd.isFinite()) { lastDeltaPitch = deltaPitch; return }
         val sensitivityModifier = Math.cbrt(0.8333 * gcd)
         val finalSens = (1.666 * sensitivityModifier - 0.3333) * 200.0
         this.finalSensitivity = finalSens

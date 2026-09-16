@@ -122,12 +122,38 @@ object EntityTrackerManager {
     }
 
     /**
+     * Drop every tracked player not in [seen] and notify [despawnListeners] for each one. Called
+     * from both exits of [poll]: the normal end-of-tick path, and the no-world path (where [seen]
+     * is empty, so this removes everything — correct, because a null world means no players exist).
+     * Fail-open per listener: one throwing listener must not strand the rest.
+     */
+    private fun sweepDespawns(seen: Set<UUID>) {
+        if (seen.isEmpty() && byUuid.isEmpty()) return
+        if (despawnListeners.isEmpty()) {
+            byUuid.keys.removeAll { it !in seen }
+            return
+        }
+        val removed = ArrayList<UUID>()
+        byUuid.keys.removeAll { if (it !in seen) { removed.add(it); true } else false }
+        for (u in removed) for (l in despawnListeners) { try { l(u) } catch (_: Throwable) {} }
+    }
+
+    /**
      * Poll all other players for the current tick. Returns the live tracked set
      * (snapshot list). Callers (the check driver) iterate and run checks against it.
      */
     fun poll(world: ClientWorld?, tick: Int): List<TrackedPlayer> {
         currentTick = tick
-        if (world == null) return emptyList()
+        // No world means no players exist client-side, so EVERY tracked entry is stale. Purge
+        // before returning rather than after: this early return used to sit above the despawn
+        // sweep below, so on the disconnect path (and on a dimension change, which nulls the world
+        // for a tick) `byUuid` kept the old server's players and `onDespawn` never fired for them —
+        // bypassing the sweep's own fix on exactly the path it matters most. Checks holding
+        // per-player context would then never be told to drop it.
+        if (world == null) {
+            sweepDespawns(emptySet())
+            return emptyList()
+        }
         val client = MinecraftClient.getInstance()
         return try {
             val seen = HashSet<UUID>()
@@ -163,15 +189,7 @@ object EntityTrackerManager {
             // checks can drop their per-player contexts (otherwise a long single-world session
             // leaks one CheckContext per unique joiner per check). Despawns are rare, so the
             // per-despawn × listeners fan-out is cheap.
-            if (seen.isNotEmpty() || byUuid.isNotEmpty()) {
-                if (despawnListeners.isEmpty()) {
-                    byUuid.keys.removeAll { it !in seen }
-                } else {
-                    val removed = ArrayList<UUID>()
-                    byUuid.keys.removeAll { if (it !in seen) { removed.add(it); true } else false }
-                    for (u in removed) for (l in despawnListeners) { try { l(u) } catch (_: Throwable) {} }
-                }
-            }
+            sweepDespawns(seen)
             // publish the shared lag signals for this tick (single source of truth).
             // A majority frozen, OR (for small lobbies of exactly 2 other players) BOTH frozen
             // — two independent players freezing together is still a server-wide signal, not a

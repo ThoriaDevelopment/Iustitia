@@ -262,6 +262,8 @@ def write_manifest(manifest: dict, reports: list[dict], replace: bool = False) -
         row["driveGaps"] = r.get("driveGaps", [])
         row["alertCounts"] = r.get("alertCounts", {})
         row["alertCountMisses"] = r.get("alertCountMisses", [])
+        row["assertions"] = r.get("assertions", 0)
+        row["noAssertions"] = r.get("noAssertions", False)
         row["passed"] = r.get("passed")
 
     checks = manifest.get("checks") or prior.get("checks") or []
@@ -512,6 +514,17 @@ def summarise(reports: list[dict], require_multi_source: int, verbose: bool) -> 
     for r in reports:
         for line in r.get("alertCountMisses") or []:
             recurrence.append(f"[{r.get('scenario')}] {line}")
+    # Assertion-less scenarios: no expectation, no documented bucket, no inline check. A scenario in
+    # that state cannot fail, so a green from it is vacuous and indistinguishable from a scenario
+    # whose assertions were deleted in a refactor. Also a real failure (it folds into `passed`), and
+    # it gets its own bucket for the same reason `recurrence` does: every other detail column would
+    # be empty, leaving a FAIL row with no explanation anywhere.
+    assertion_less: list[str] = [
+        f"[{r.get('scenario')}] {r.get('pass')} scenario asserted nothing "
+        f"(expectations=0, knownOpen=0, driveGaps=0, inline checks=0)"
+        for r in reports
+        if r.get("noAssertions")
+    ]
 
     print()
     print("=" * 78)
@@ -528,6 +541,8 @@ def summarise(reports: list[dict], require_multi_source: int, verbose: bool) -> 
             detail = f" FALSE-POSITIVE={r['falsePositives']}"
         elif r.get("alertCountMisses"):
             detail = f" ALERT-COUNT={r.get('alertCounts')}"
+        elif r.get("noAssertions"):
+            detail = " NO-ASSERTIONS (scenario asserted nothing: no expectation, no documented bucket, no inline check)"
         elif verbose and r.get("vl"):
             peaks = ", ".join(f"{k}={v:.1f}" for k, v in sorted(r["vl"].items())[:6])
             detail = f" peakVL({peaks})"
@@ -550,6 +565,11 @@ def summarise(reports: list[dict], require_multi_source: int, verbose: bool) -> 
         print(f"  recurrence failures ({len(recurrence)}): the check alerted but never re-armed, so")
         print("  its episode latch is still held from the first episode:")
         for line in recurrence:
+            print(f"    - {line}")
+    if assertion_less:
+        print(f"  assertion-less scenarios ({len(assertion_less)}): the scenario asserted nothing, so")
+        print("  its green would be vacuous. Restore the assertion or document why there is none:")
+        for line in assertion_less:
             print(f"    - {line}")
     if documented_fp:
         print()
@@ -576,6 +596,8 @@ def write_markdown(reports: list[dict], verdict: int, findings: list[str]) -> No
             notes = f"FALSE POSITIVE: {', '.join(r['falsePositives'])}"
         elif r.get("alertCountMisses"):
             notes = "; ".join(r["alertCountMisses"])
+        elif r.get("noAssertions"):
+            notes = f"NO ASSERTIONS: scenario asserted nothing ({r.get('assertions', 0)} inline checks, no expectation)"
         elif r.get("vl"):
             notes = ", ".join(f"{k}={v:.1f}" for k, v in sorted(r["vl"].items())[:5])
         lines.append(
@@ -643,6 +665,8 @@ def main() -> int:
                     "alertCounts": {},
                     "alertCountMisses": [],
                     "knownOpen": [],
+                    "assertions": 0,
+                    "noAssertions": False,
                     "durationMs": 0,
                     "error": None,
                 }

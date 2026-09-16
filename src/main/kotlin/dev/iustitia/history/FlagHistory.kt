@@ -340,7 +340,13 @@ object FlagHistory {
             val mv = if (filterOn) maxVlMap.filterKeys { it in validCheckIds } else maxVlMap
             val flags = if (filterOn) persistedFlags.filter { it.checkId in validCheckIds } else persistedFlags
             if (name.isNotEmpty()) nameByUuid[uuid] = name
-            if (alertCount > 0) alertCountByUuid[uuid] = alertCount
+            // Merge, don't assign: every other backing map here unions/merges (the sets by union,
+            // flagCounts by sum, maxVl by max), and this method's own KDoc promises it "merges into
+            // every backing map". A plain assignment also silently discards a live count if a merge
+            // ever lands after alerts in the same session. `max` rather than a sum because
+            // mergePersisted may run more than once for one uuid (a reload), where summing would
+            // double-count persisted history — max is idempotent and monotone.
+            if (alertCount > 0) alertCountByUuid.merge(uuid, alertCount, ::maxOf)
             if (alerted.isNotEmpty()) {
                 val set = alertedChecksByUuid.computeIfAbsent(uuid) { HashSet() }
                 synchronized(set) { set.addAll(alerted) }

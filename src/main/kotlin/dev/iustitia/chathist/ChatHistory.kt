@@ -182,22 +182,31 @@ object ChatHistory {
     /** Flush (persist ON) or drop (persist OFF) the current server's history on disconnect, and
      *  evict EVERY in-memory bucket — rows for other servers are unreachable until rejoin (all
      *  read paths key off [currentKey], and onJoin reloads from disk), so keeping them is a
-     *  session-long leak for a server-hopper. With persist ON the current server's rows are
-     *  serialized HERE (client thread — [byServer] is about to be cleared) and the file write is
-     *  handed to the shared daemon IO thread ([dev.iustitia.util.AtomicFiles.io]) so a large
-     *  history (up to [MAX_ROWS] rows) never blocks the disconnect path. The redundant
-     *  debounced-writer poke the old code did after the synchronous write is gone — this write
-     *  already carries the newest rows. Fail-open. */
+     *  session-long leak for a server-hopper. With persist ON the current server's row list is
+     *  captured here (client thread — [byServer] is about to be cleared) and BOTH the serialization
+     *  and the file write are handed to the shared daemon IO thread
+     *  ([dev.iustitia.util.AtomicFiles.io]) so a large history (up to [MAX_ROWS] rows) never blocks
+     *  the disconnect path. The redundant debounced-writer poke the old code did after the
+     *  synchronous write is gone — this write already carries the newest rows. Fail-open. */
     fun onLeave() {
         try {
             if (persist) {
                 val key = currentKey
-                val text = synchronized(byServer) { byServer[key] }?.let { list ->
-                    synchronized(list) { list.joinToString("") { gson.toJson(toJson(it)) + "\n" } }
-                }
-                if (text != null) {
+                // Capture the LIST, and serialize it on the IO thread. The list is frozen for us the
+                // moment the clear() below drops its `byServer` entry: a later row for the same
+                // server goes into a *fresh* list, so nothing can append to this one. That is what
+                // makes it safe to hand over — and it is also what the KDoc above used to claim
+                // wrongly: the `joinToString` + `gson.toJson` over up to MAX_ROWS rows ran on the
+                // client thread, so a long session DID block this disconnect path on its own
+                // serialization. Only the write was offloaded before.
+                val rows = synchronized(byServer) { byServer[key] }
+                if (rows != null) {
                     val path = fileFor(key)
                     dev.iustitia.util.AtomicFiles.io {
+                        // The multi-MB part, now off the client thread.
+                        val text = synchronized(rows) {
+                            rows.joinToString("") { gson.toJson(toJson(it)) + "\n" }
+                        }
                         // Atomic (staged temp + move): a crash mid-write can't truncate history.
                         dev.iustitia.util.AtomicFiles.write(path, text)
                     }

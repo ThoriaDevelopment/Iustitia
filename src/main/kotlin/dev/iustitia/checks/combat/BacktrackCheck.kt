@@ -67,13 +67,24 @@ class BacktrackCheck : Check() {
             // the last 4 ticks — which no smoothly-retreating victim shows. The in-reach scan
             // below then confirms the stale pos was in reach while the current (post-snap) pos
             // is out; an AFK victim has old==current==out-of-reach and still never flags.
-            val recent = victim.ring.getPositions(4, ev.tick)
+            // Walked over the ring's own storage: the predicate needs only the previous two
+            // samples, so the common (not-frozen) path allocates nothing. Same test as the
+            // Vec3d-list version — three consecutive samples, each within FREEZE_MOVE of the next;
+            // newest-first, and distance is symmetric, so direction is irrelevant.
             var frozen = false
-            for (i in 0 until recent.size - 2) {
-                val a = recent[i]; val b = recent[i + 1]; val c = recent[i + 2]
-                val d1 = hypot(a.x - b.x, a.z - b.z)
-                val d2 = hypot(b.x - c.x, b.z - c.z)
-                if (d1 < FREEZE_MOVE && d2 < FREEZE_MOVE) { frozen = true; break }
+            var px = 0.0; var pz = 0.0
+            var qx = 0.0; var qz = 0.0
+            var have = 0
+            try {
+                victim.ring.forEachRecent(4, ev.tick) { x, _, z ->
+                    if (!frozen && have >= 2 &&
+                        hypot(px - qx, pz - qz) < FREEZE_MOVE && hypot(qx - x, qz - z) < FREEZE_MOVE
+                    ) frozen = true
+                    px = qx; pz = qz; qx = x; qz = z; have++
+                }
+            } catch (_: Throwable) {
+                // Fail-closed: "not provably frozen", which is the verdict an absent ring gets too.
+                frozen = false
             }
             if (!frozen) {
                 judge(contextOf(ev.attacker), attacker, ev.tick, false)
