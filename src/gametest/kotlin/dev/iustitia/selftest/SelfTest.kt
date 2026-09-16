@@ -2,6 +2,7 @@ package dev.iustitia.selftest
 
 import dev.iustitia.Iustitia
 import dev.iustitia.config.ConfigManager
+import dev.iustitia.event.DiggingSignal
 import dev.iustitia.event.EffectSignal
 import dev.iustitia.event.HurtSource
 import dev.iustitia.event.HurtSignal
@@ -160,6 +161,37 @@ object SelfTest {
         fun velocity(vx: Double, vy: Double, vz: Double) {
             publishFromClient { VelocitySignal(uuid, Iustitia.tickCounter, Vec3d(vx, vy, vz)) }
         }
+
+        /**
+         * Publish a dig-progress observation for this bot, at block [pos], defaulting to the block
+         * the bot spawned standing on. Defaults model the bedrock case: one progress-0 packet and
+         * then silence for as long as the button is held, which is what
+         * `ServerPlayerInteractionManager.continueMining` does for a block whose breaking delta is 0.
+         *
+         * This exercises the CONSUMER path, not the packet path: the gametest bots are client-side
+         * display entities that the server never tracks, so no `BlockBreakingProgressS2CPacket` is
+         * ever sent for them and the mixin inject cannot fire inside a suite run. The inject's own
+         * coverage is the manual live pass in `docs/live-verification.md`; what the suite proves is
+         * that the checks consuming the dig state behave.
+         */
+        fun dig(
+            progress: Int = 0,
+            x: Int = spawnX.toInt(),
+            y: Int = spawnY.toInt() - 1,
+            z: Int = spawnZ.toInt(),
+        ) {
+            publishFromClient {
+                DiggingSignal(
+                    entity = uuid,
+                    tick = Iustitia.tickCounter,
+                    progress = progress,
+                    pos = BlockPos(x, y, z),
+                )
+            }
+        }
+
+        /** Publish the server's -1 abort for this bot's dig (the dig is over). */
+        fun clearDig() = dig(progress = -1)
 
         /** Apply or remove a Speed effect (amplifier 0 = Speed I). */
         fun speedEffect(added: Boolean, amplifier: Int = 0) {

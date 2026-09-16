@@ -1,5 +1,6 @@
 package dev.iustitia.selftest
 
+import dev.iustitia.event.HurtSource
 import net.minecraft.item.ItemStack
 import net.minecraft.item.Items
 
@@ -1010,5 +1011,143 @@ object Scenarios {
             } else since++
         }
         b.runFor(170)
+    }
+
+    /**
+     * A player holding left-click on a block they cannot break: the shape [ClickStatisticsCheck] reads as a
+     * fixed-delay autoclicker.
+     *
+     * Vanilla swings the arm once per tick while a block is being broken, and the server rebroadcasts those
+     * animations on a fixed clock. Both halves were verified against the 1.21.11 bytecode:
+     *
+     * - `MinecraftClient.handleBlockBreaking` calls `player.swingHand(MAIN_HAND)` whenever
+     *   `interactionManager.updateBlockBreakingProgress(...)` returns true, and that method's
+     *   already-breaking branch ends in an unconditional `return true`. So a player who continues a dig
+     *   swings every tick, including on a block whose progress can never reach 1.0: bedrock's
+     *   `calcBlockBreakingDelta` is 0, so the branch is taken for as long as the button is held.
+     * - The swing itself is the client's. `handleBlockBreaking` calls `player.swingHand(MAIN_HAND)`, and
+     *   `ClientPlayerEntity.swingHand` animates locally and sends a `HandSwingC2SPacket`; the server's
+     *   `onHandSwing` re-swings its own player, and that re-swing is what the observer receives:
+     *   `LivingEntity.swingHand` relays `EntityAnimationS2CPacket` to other nearby players, never back to the
+     *   digger, and only once `handSwingTicks >= getHandSwingDuration() / 2`. The duration is the held item's
+     *   `swing_animation` duration, 6 ticks for a bare hand or a pickaxe, with Haste subtracting
+     *   `1 + amplifier` and Mining Fatigue adding `(1 + amplifier) * 2`. The relay therefore lands on a fixed
+     *   interval, `floor(duration / 2) + 1`:
+     *   4 at rest, 3 under Haste I or II (durations 5 and 4 both floor to 2), 5 under Mining Fatigue I
+     *   (duration 8), 7 under an elder guardian's Mining Fatigue III (duration 12), and 2 from Haste III/IV or
+     *   a custom `SWING_ANIMATION` duration of 3 or 2. Only a command-granted Haste V or higher, or an item
+     *   whose duration is 1 or 0, relays every tick, and the guard deliberately does not exempt that case,
+     *   because a 1-tick relay is indistinguishable from the 20 CPS autoclicker the check exists to catch.
+     *   Nothing about why the arm moved reaches that gate.
+     *
+     * Iustitia only ever sees the relayed stream, so a continuous digger arrives as [SwingSignal]s at a
+     * constant interval. [ClickStatisticsCheck] records the tick delta between consecutive swings and flags
+     * `ClickStats(StDev)` when `populationStDev < 0.45` over 40 samples. On a constant interval every delta
+     * is identical, the stdev is exactly 0.0, and ordinary digging produces the flag.
+     *
+     * This alerts rather than merely filling history. The sub-signal flags at level 1.0 per swing against a
+     * `decay` of 0.05 per tick, so a 4-tick relay is +0.25/tick gross versus 0.05/tick of decay: vl crosses
+     * the 5.0 setback about 25 ticks after the 40-sample window fills at 160 ticks. A Haste I or II relay
+     * shortens the interval to 3 and raises the climb to about +0.28/tick. The two remaining sub-signals do
+     * not own this shape and are not asserted here, because neither can fire on it: `MathUtil.excessKurtosis`
+     * returns 0.0 on zero variance, which sits above the -0.7 bar, and `detectLoop` rejects a constant prefix
+     * outright with `if (minV != maxV) return p`. The Kurt window is 600 samples on top of that, which this
+     * drive does not reach.
+     *
+     * The drive is a stationary bot swinging on the vanilla relay interval for 300 ticks, about 15 seconds of
+     * continuous digging. It is stationary on purpose: a player breaking a block stands still, so a still bot
+     * leaves every motion component, `scaffoldRotation` and the movement checks with nothing to react to, and
+     * a failure here can only be the swing cadence. The dig state is published for the same reason the swing
+     * is: harness bots are client-side display entities the server never sees, so no
+     * `BlockBreakingProgressS2CPacket` is ever sent for them. `SelfTest.dig()` publishes the signal the
+     * packet path would have published, and it is published once and never refreshed, exactly as
+     * `ServerPlayerInteractionManager.continueMining` treats a block whose breaking delta is 0.
+     */
+    fun legitMiningCadence(): Spec = Spec(
+        "legit-mining-cadence", Pass.LEGIT, "vanilla", setOf(Tags.COMBAT),
+    ) { b ->
+        val bot = b.bot("Digger", 0.0, 0.0)
+        b.expectQuiet(bot, CheckIds.COMBAT)
+        b.expectQuiet(bot, "scaffoldRotation")
+        // The discriminating assertion. Every `ClickStats` flag sits at level 1.0 or 2.0, and `expectQuiet`
+        // alone cannot separate "the false positive is gone" from "the cadence was never driven". A flag
+        // count can, and the subLabel pins the one sub-signal a constant interval owns.
+        b.expectFlagCount(bot, "clickStatistics", "ClickStats(StDev)", atMost = 0, subLabel = "stdev")
+
+        // The dig state that makes these swings the server's rather than the player's. Published
+        // once, never refreshed: that is the bedrock shape (breaking delta 0, so
+        // `continueMining` broadcasts progress 0 exactly once and then nothing).
+        bot.dig()
+
+        // 4 ticks is `getHandSwingDuration()/2 + 1` at the default item swing duration of 6.
+        b.everyTick(4) { bot.swing() }
+        b.runFor(300)
+    }
+
+    /**
+     * A player digging continuously 6 blocks from a teammate who is taking damage that carries no attacker
+     * id: the shape `reach` reads as a 6-block hit.
+     *
+     * A swing is only evidence of an attack because [AttackInference] says so, and its correlation is
+     * proximity and timing alone. `correlate` filters candidates on exactly four things: the candidate is not
+     * the victim, the candidate is tracked, the candidate is within 8.0 blocks of the victim, and the
+     * candidate has an unspent swing in the window `[hurtTick - 2, hurtTick + 1]` (1.8 widens that to
+     * `[-3, +2]`). It never reads [HurtSource]. There is no facing test, no line-of-sight test and no reach
+     * test, and the window includes a swing made *after* the hurt (`+fwd`).
+     *
+     * A player digging on the server's 4-tick relay therefore satisfies that filter permanently. A stride-4
+     * swing stream places exactly one swing in any 4-tick window, so every hurt on a victim within 8 blocks
+     * correlates, whoever caused it. Damage with no attacker id is the worst case, because no real attacker
+     * can outrank the digger: `best` is chosen by nearest distance, and an environmental hurt has no
+     * candidate at 0 blocks to win.
+     *
+     * `ReachCheck` then measures the digger to the victim for real, 6.0 blocks here, and its motionless path
+     * fires without ever asking whether the attacker was aiming at anything. `maxReach` is 3.0 for a player
+     * with no range modifier and `STATIC_HEADROOM` is 0.2, so `closest` lands about 2.5 blocks over the
+     * 3.2 bar. Two violations in a six-event window sustain it (`STILL_WINDOW` / `STILL_MIN`), and
+     * `flagEpisode` flags at `setbackVL + 1.0`, which is 11.0 against a setback of 10.0. One flag alerts.
+     * Both bodies are motionless, which is the one thing this path requires and the one thing a miner and a
+     * burnt teammate actually are.
+     *
+     * The digger faces **away** from the victim on purpose. Facing is not an input to the correlation, so
+     * turning away cannot protect the digger, and pinning the look at 180 degrees keeps `rotationTracking`
+     * from firing on a genuine aim match and keeps this scenario discriminating on the misattribution alone.
+     * The 6 blocks are chosen to sit inside the correlator's 8.0 reach while landing well outside `reach`'s
+     * 3.2 bar, so the two thresholds cannot be confused for each other.
+     *
+     * The victim's hurts are spaced 10 ticks apart for a reason: `sustained` needs the ring full before it
+     * can report (6 events), so the flag becomes reachable at about tick 60 and the drive runs 120.
+     *
+     * Two guards in `correlate` close this, and both are live on this drive. A hurt that carries an attacker
+     * id can only be claimed by that attacker, and a hurt with no attacker id on a non-VELOCITY channel can
+     * no longer be claimed by a candidate the server currently has digging. The VELOCITY carve-out is
+     * deliberate: a knockback impulse is real evidence of a hit, so silencing it for diggers would hand a
+     * damage-suppressing aura a bypass. The dig state is published here for the same reason the swing is:
+     * the harness bots are client-side display entities the server never sees, so no
+     * `BlockBreakingProgressS2CPacket` is ever sent for them.
+     */
+    fun legitMiningNearHurt(): Spec = Spec(
+        "legit-mining-near-hurt", Pass.LEGIT, "vanilla", setOf(Tags.COMBAT),
+    ) { b ->
+        val digger = b.bot("Digger", 0.0, 0.0)
+        val victim = b.bot("Tunnelmate", 0.0, 6.0)
+        b.expectQuiet(digger, CheckIds.COMBAT)
+        // The discriminator: `reach` shares its "Reach" label across four sub-signals, and only the
+        // distance-only motionless one can be reached from here.
+        b.expectFlagCount(digger, "reach", "Reach", atMost = 0, subLabel = "motionless")
+
+        // The dig state the second guard reads. Published once and never refreshed: a miner grinding an
+        // unbreakable block sends exactly one progress-0 packet and then silence.
+        digger.dig()
+
+        b.everyTick {
+            digger.look(180f, 0f)
+            digger.setOnGround(true)
+            victim.setOnGround(true)
+        }
+        b.everyTick(4) { digger.swing() }
+        // Environmental damage, exactly as an observer sees it: a hurt on the victim with no attacker id.
+        b.everyTick(10) { victim.hurt(attackerEntityId = -1, source = HurtSource.DAMAGE_TILT) }
+        b.runFor(120)
     }
 }

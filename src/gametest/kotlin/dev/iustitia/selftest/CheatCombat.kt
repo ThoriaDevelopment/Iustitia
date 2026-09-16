@@ -63,6 +63,31 @@ object CheatCombat {
 
     fun reachGhost() = reach("cheat-reach-ghost", "Koid", 3.6)
 
+    /**
+     * The bypass test for the dig exemption: a reach module that also fakes a dig, which is the one
+     * way a cheat could try to hide inside the new guard. It lands the same 6.0-block named hits as
+     * [reachVape] and re-arms the dig state every tick, standing in for a client that re-sends
+     * `START_DESTROY_BLOCK` to hold a dig open (`ServerPlayerInteractionManager` re-broadcasts a
+     * progressing dig with no `-1`, and the interaction-manager range check is a distance test, not
+     * a facing test). So the dig is live for essentially every hit while the reach module runs.
+     *
+     * `reach` must still alert. The dig exemption is scoped to hurts with NO attacker id, and a real
+     * hit carries one (`EntityDamageS2CPacket.sourceCauseId`), so the named path is never gated and
+     * this scenario would go red the moment that scoping were lost. The re-published dig also keeps
+     * re-testing the proven-attack clear: a named hurt clears the dig state for that attacker, and
+     * the next tick's re-arm is what puts it back. Without this row nothing else in the cheat pass
+     * drives dig state at all, so the interaction between the exemption and a cheating attacker
+     * would be entirely untested.
+     */
+    fun reachDigging(): Spec = Spec("cheat-reach-digging-koid", Pass.CHEAT, "Koid", setOf(Tags.COMBAT)) { b ->
+        val bot = b.bot("Reach", 0.0, 0.0)
+        val victim = b.bot("Target", 0.0, 6.0)
+        b.expect(bot, "reach", mustAlert = true)
+        b.everyTick { bot.dig() }
+        b.strike(bot, victim, every = 5, aimYaw = 0f)
+        b.runFor(180)
+    }
+
     // ------------------------------------------------------------------
     // multiTarget -- multi-client
     // ------------------------------------------------------------------

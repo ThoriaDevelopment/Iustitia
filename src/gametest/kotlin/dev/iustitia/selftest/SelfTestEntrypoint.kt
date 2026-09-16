@@ -93,6 +93,13 @@ class SelfTestEntrypoint : FabricClientGameTest {
         Scenarios.legitTriggerbotStrafe(),
         Scenarios.legitNoKbAirborne(),
         Scenarios.legitMultiTargetSweep(),
+        // FP-direction coverage for the swing-source audit. A player who digs continuously emits arm
+        // swings on the server's fixed relay clock, which is the same input an autoclicker produces;
+        // this is the legitimate shape `clickStatistics` reads as a fixed-delay clicker.
+        Scenarios.legitMiningCadence(),
+        // The second half of the swing-source audit: a digging player is a permanently eligible
+        // attacker for attack inference, so a teammate's unattributed damage nearby lands on them.
+        Scenarios.legitMiningNearHurt(),
     )
 
     /**
@@ -104,6 +111,9 @@ class SelfTestEntrypoint : FabricClientGameTest {
         CheatCombat.reachLiquidBounce(),
         CheatCombat.reachVape(),
         CheatCombat.reachGhost(),
+        // The dig exemption's bypass proof: a reach module that also holds a fake dig open must
+        // still be attributed and still alert.
+        CheatCombat.reachDigging(),
         CheatCombat.multiAura(),
         CheatCombat.multiAuraPair(),
         CheatCombat.autoClickerUniform(),
