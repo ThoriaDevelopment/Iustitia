@@ -34,6 +34,34 @@ import dev.iustitia.checks.LagWindows
  * (ceiling collisions jitter Δy). Levitation/SlowFalling are unobservable; the recentDescend
  * gate on the physics breach absorbs most of those FPs. setbackVL 5, decay 1/tick.
  *
+ * **A grounded tick breaks every sustained streak** (audit FP — the slab/stairs ramp). The three
+ * streak counters ([FlyContext.breachTicks]/[FlyContext.flyBTicks]/[FlyContext.ascendTicks]) plus
+ * `hoverTicks` are reset in the `groundedProxy` branch, so "consecutive" means consecutive
+ * *evaluated* ticks. Without that reset the ramp walked by a tracked player fires `Fly` from its
+ * second step: [TrackedPlayer.deltaY] is a **raw** position delta (the tracker's snapshot is
+ * `Vec3d(e.getX(), e.getY(), e.getZ())` — entity fields, *not* render interpolation), so a 0.5
+ * step-up arrives as a **single-tick** Δy spike followed by three flat grounded ticks. That spike
+ * clears `expectedY + 0.1` by a wide margin (`prevDeltaY ≈ 0` ⇒ `expectedY = (0 − 0.08)·0.98 ≈
+ * −0.078`, and `recentDescend` is 0 because Δy is never negative), while the flat ticks return
+ * early at the grounded branch — so with only `hoverTicks` cleared, `breachTicks` stood across the
+ * level ground and every step after the first was the *second* consecutive breach. Two steps, two
+ * breaches, `Fly`: **17** flags over a 20-step ramp (measured; the pre-fix estimate was closer to
+ * 19 -- one per step after the first), and no `expectQuiet` assertion can see them (1.0
+ * per flag against a 0.5/tick decay, at most one flag per step, so the VL never approaches
+ * setbackVL 5 — the scenario's flag count is the only observable). The streak reset is what makes
+ * each of these sub-signals a statement about a *continuous* rise, which a ramp is not — every step
+ * is followed by level ground.
+ *
+ * `Fly(Ascend)` is **not** reachable by that shape, and the reason is worth recording because the
+ * audit pointed at the ascend block rather than the breach: on a fixed step cadence
+ * `ascendTicks` can never exceed **1**. The jump recognizer (`prevDeltaY < 0.15 && 0.3 < dy < 1.0`)
+ * fires on a spike but re-arms only after 6 quiet ticks, so at a 4-tick cadence it re-arms on every
+ * *other* step — and on a re-arm tick `lastJumpTick` is set to that very tick, so the ascend gate's
+ * own `tick - lastJumpTick > 2` fails (`0 > 2`) and zeroes the counter; on the steps where it does
+ * increment, the intervening level ticks zero it again (their `dy` is 0). Six consecutive ascending
+ * ticks are unreachable, so the ascend streak length is not what separated a ramp from a fly —
+ * the grounded reset is.
+ *
  * **§8 step 8 sub-signals (plan §3 — Meteor Flight anti-kick + Strafe-hop/blink + Nemesis
  * FlyB 0.005 vertical-friction kernel).** Four more signals, all sharing `flyEnvelope`'s VL
  * pool (distinct labels, no new check id):
@@ -90,7 +118,22 @@ class FlyEnvelopeCheck : Check() {
             if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
                 tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
             ) return
+            // Grounded: every sub-signal here is a claim about a *consecutive* tick run, so a
+            // grounded tick ends the run. Clearing only hoverTicks (as this once did) left the
+            // three sustained counters standing across the flat gaps of a slab/stairs ramp — the
+            // audit's false positive. See the class doc: `deltaY` is a raw position delta, so a
+            // step-up is ONE spike tick and the counters used to span the level ground between two
+            // steps, making a "consecutive" gate that two *blocks of hill* satisfied.
+            //
+            // Fail-open by construction: a flyer that is genuinely groundedProxy for a tick is not
+            // rising that tick, so nothing is lost that the next tick cannot re-establish. Like
+            // every exemption here this is a *concession* on a cheater who can hold Δy≈0 within
+            // 0.05 of a solid block (which reads as grounded) — the same posture [Fly(Blink)]
+            // documents for a pure midair freeze.
             if (tp.groundedProxy) {
+                ctx.breachTicks = 0
+                ctx.flyBTicks = 0
+                ctx.ascendTicks = 0
                 ctx.hoverTicks = 0
                 return
             }
@@ -134,6 +177,12 @@ class FlyEnvelopeCheck : Check() {
             //    didn't move last tick → prevDeltaY~0 → this tick a collapsed 2-tick jump
             //    Δy) trips the prediction once; requiring 2 consecutive breaches filters
             //    that inversion noise. A real hover/fly sustains.
+            //
+            //    The 2-consecutive requirement is only meaningful because a grounded tick resets
+            //    the counter (see the `groundedProxy` branch). A step-up spike has prevDeltaY≈0, so
+            //    expectedY≈-0.078 and the spike clears expectedY+threshold easily; with the counter
+            //    surviving the level ground between steps, two consecutive *steps* — two blocks of
+            //    hill, two slabs, two stairs — satisfied a gate that says "consecutive ticks".
             val expectedY = (tp.prevDeltaY - 0.08) * 0.98
             // dy > -0.01: Slow Falling (unobservable, dy<0) can exceed expectedY+threshold while
             // recentDescend<0.5 (a slow-faller barely descends) and trip a false Fly. A real
@@ -249,10 +298,16 @@ class FlyEnvelopeCheck : Check() {
                 ctx.antiKickActive = false
             }
 
-            // 3) ascend without a jump impulse — sustained ≥6 ticks (same lag-catch-up filter
-            //    as the physics breach, but longer: a KitPvP stairs/slab ramp is ≤4–5 ticks of
-            //    dy≈0.5 that the jump recognizer never arms — sustain 6 + decay 0.5 keeps those
-            //    brief legit climbs below setbackVL while a real fly sustains past it).
+            // 3) ascend without a jump impulse — sustained ≥6 ticks (same lag-catch-up filter as
+            //    the physics breach, but longer: a single step-up is 1–2 ticks of rising Δy that
+            //    the jump recognizer never arms, so 1–2 accumulating ticks stay far below the 6-tick
+            //    streak while a real fly sustains past it).
+            //
+            //    A *ramp* of steps used to reach 6 anyway, and the streak length is not what fixes
+            //    that — no length separates a long ramp from a fly, because at a fixed cadence the
+            //    ramp's rise is numerically the same signal. What separates them is that a ramp is
+            //    made of steps: each rise is followed by level ground, and the grounded reset at the
+            //    top of `process` ends the streak there. A fly has no grounded ticks to end it.
             if (dy > 0.2) {
                 // record a legitimate jump impulse for a grace window. The old
                 // `abs(prevDeltaY - 0.42) < 0.08` only matched a vanilla jump (0.42); Jump Boost

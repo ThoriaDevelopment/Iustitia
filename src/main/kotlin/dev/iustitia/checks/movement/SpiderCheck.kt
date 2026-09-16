@@ -76,6 +76,14 @@ class SpiderCheck : Check() {
             if (offGround && dy > SPIDER_MIN_DY && nearWall) {
                 ctx.spiderTicks++
                 val need = cfg.threshold.toInt().coerceAtLeast(1)
+                // STRICT `>` — deliberate, and NOT the sibling form. [WallSprintCheck] and
+                // [SprintHackCheck] both flag at `streak >= sustain`; this one requires one tick
+                // MORE than `threshold` (so the shipped default of 10 flags on the 11th
+                // consecutive ascending tick, not the 10th). The class doc above states the same
+                // thing ("only a spider cheat produces `> [SPIDER_TICKS]` consecutive
+                // ascending-ticks"), so code and doc agree. Do not "fix" this to `>=` for
+                // consistency: the extra tick is the intended margin over `threshold`, and
+                // tightening it widens the FP class the threshold was chosen to absorb.
                 if (ctx.spiderTicks > need) {
                     flag(tp, ctx, 1.0, "Spider", tick, Evidence(
                         subLabel = "wall-climb", measurement = dy, threshold = SPIDER_MIN_DY,
