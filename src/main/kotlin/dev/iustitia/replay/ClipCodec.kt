@@ -59,7 +59,8 @@ import java.util.UUID
  * v13 is the merged superset (SnapClip's sections + alerts). Everything defaults fail-soft when a
  * field is absent. [readHeader] reads only through the counts — cheap for the clip-manager list.
  *
- * Fail-open: a corrupt/short file returns null from [read]/[readHeader] instead of throwing.
+ * Fail-open: a corrupt/short file returns null from [read]/[readHeader] instead of throwing, and
+ * [read] records why in [lastReadReason] so the caller can say more than "couldn't read it".
  */
 object ClipCodec {
 
@@ -142,13 +143,58 @@ object ClipCodec {
         }
     }
 
-    fun read(input: InputStream): Clip? = try {
-        val d = DataInputStream(input)
-        if (!checkMagic(d)) return null
+    /** A parse that failed for a *known* reason — carries the one-liner that reaches the user. */
+    private class ClipFormatException(message: String) : Exception(message)
+
+    /**
+     * Why the last [read] returned null (`null` = it succeeded). [ClipStore.load] feeds this to
+     * [ClipPlayback] so `/ius playclip` can say what was wrong. Diagnostics only — never branch on it.
+     */
+    @Volatile
+    var lastReadReason: String? = null
+        private set
+
+    /**
+     * Decode a clip. [expectedBytes] is the length of the underlying clip file, or `-1` when the
+     * caller can't know it (a stream, a test buffer); see the consumption check below.
+     */
+    fun read(input: InputStream, expectedBytes: Long = -1L): Clip? {
+        // A structural mis-parse throws ClipFormatException (a reason we can print); anything else is
+        // an IO surprise. Both land in lastReadReason, so a refusal is never a bare "no".
+        return try {
+            val counting = CountingInputStream(input)
+            val clip = decode(DataInputStream(counting))
+            // Whole-stream consumption. Every section is length-prefixed, so a parse that stops early
+            // or runs long has almost certainly read a length from the wrong offset — the byte-shift
+            // failure mode the per-field bounds checks can't see, because a shifted count is usually
+            // still *plausible*. Before this check such a clip came back as a silent null and looked
+            // exactly like a file that isn't there.
+            if (expectedBytes >= 0 && counting.count != expectedBytes) {
+                throw ClipFormatException(
+                    "read ${counting.count} of $expectedBytes bytes — truncated, or written by a " +
+                        "layout this build doesn't know"
+                )
+            }
+            lastReadReason = null
+            clip
+        } catch (e: ClipFormatException) {
+            lastReadReason = e.message
+            null
+        } catch (e: Throwable) {
+            lastReadReason = "malformed clip: " + (e.message ?: e.javaClass.simpleName)
+            null
+        }
+    }
+
+    /** The parse itself, without the length guard or the reason bookkeeping (see [read]). */
+    private fun decode(d: DataInputStream): Clip {
+        if (!checkMagic(d)) throw ClipFormatException("not an .iusclip file (bad magic)")
         val version = d.readInt()
-        if (version < MIN_VERSION || version > VERSION) return null
+        if (version < MIN_VERSION || version > VERSION) {
+            throw ClipFormatException("clip version $version — this build reads $MIN_VERSION–$VERSION")
+        }
         val focus = readFocus(d)
-        val frames = readFrames(d, version) ?: return null
+        val frames = readFrames(d, version) ?: throw ClipFormatException("malformed frame table")
         // Alerts are present for the Iustitia lineage (v2–v8) and for the merged v13+; SnapClip's
         // v9–v12 dropped them entirely, so those clips read back with no alerts.
         val alerts = if (version <= LAST_LEGACY_VERSION || version >= 13) readAlerts(d) else emptyList()
@@ -158,12 +204,12 @@ object ClipCodec {
         var legacyBlockDeltas: List<BlockDeltaBuffer.BlockDelta>? = null
         var legacySnapshotIsStart = false
         if (version >= 9) {
-            val (bd, sis) = readDeltas(d) ?: return null
+            val (bd, sis) = readDeltas(d) ?: throw ClipFormatException("malformed block-delta table")
             legacyBlockDeltas = bd
             legacySnapshotIsStart = sis
         }
         var segments: List<ReplayBuffer.Segment> = emptyList()
-        if (version >= 11) segments = readSegments(d) ?: return null
+        if (version >= 11) segments = readSegments(d) ?: throw ClipFormatException("malformed segment table")
         // Synthesize a segment from a legacy top-level chunk snapshot so the segment-based render path
         // has something to draw for a v6–v10 clip.
         val finalSegments = if (segments.isNotEmpty()) segments
@@ -177,12 +223,41 @@ object ClipCodec {
                 )
             )
             else emptyList()
-        Clip(
+        return Clip(
             ReplayBuffer.Window(frames, alerts = alerts, terrain = terrain, chunks = legacyChunks, totems = totems, segments = finalSegments),
             focus, terrain, legacyChunks,
         )
-    } catch (_: Throwable) {
-        null
+    }
+
+    /**
+     * Tallying pass-through, so [read] can compare bytes consumed against the file length. Counts the
+     * bytes a `DataInputStream` actually pulls ([read] plus the `readFully`/`skipBytes` it delegates
+     * to); `available()`/`close()` are the inner stream's, unchanged.
+     */
+    private class CountingInputStream(private val inner: InputStream) : InputStream() {
+        var count: Long = 0L
+            private set
+
+        override fun read(): Int {
+            val b = inner.read()
+            if (b >= 0) count++
+            return b
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            val n = inner.read(b, off, len)
+            if (n > 0) count += n
+            return n
+        }
+
+        override fun skip(n: Long): Long {
+            val s = inner.skip(n)
+            if (s > 0) count += s
+            return s
+        }
+
+        override fun available(): Int = inner.available()
+        override fun close() = inner.close()
     }
 
     fun readHeader(input: InputStream): ClipMeta? = try {

@@ -119,7 +119,11 @@ class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
                     mc.setScreen(null)
                     mc.player?.sendMessage(Text.literal("§8[§diustitia§8] §7playing clip §f$name§7 at §f${NumFmt.d(digits = 2, v = ReplayState.SPEED_FULL)}×§7 — §f${r.frames}§7 frames. Auto-stops at the end (or §f/ius playclip off§7)."), false)
                 }
-                ClipPlayback.Result.LoadFailed -> { status = "§c couldn't read §f$name" }
+                is ClipPlayback.Result.LoadFailed -> {
+                    // The reason rides along (truncated — the status line is one row wide).
+                    val why = r.reason?.take(60)?.let { " §8($it)" } ?: ""
+                    status = "§c couldn't read §f$name$why"
+                }
                 ClipPlayback.Result.StartFailed -> { status = "§c couldn't start §f$name" }
             }
         } catch (_: Throwable) { status = "§c play failed" }

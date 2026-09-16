@@ -1514,8 +1514,9 @@ object IustitiaCommand {
                 send(ctx, "$tag §7playing clip §f$nameArg§7 at §f${NumFmt.d(digits = 2, v = speed)}×§7 — §f${r.frames}§7 frames$focusTxt. Holds at the end (or §f/ius playclip off§7).")
                 return 1
             }
-            ClipPlayback.Result.LoadFailed -> {
-                send(ctx, "$tag §cno clip §f$nameArg§7 (save one with /ius clip; check the name with /ius playclip).")
+            is ClipPlayback.Result.LoadFailed -> {
+                val why = r.reason?.let { " §8— $it" } ?: ""
+                send(ctx, "$tag §cno clip §f$nameArg§7$why §7(save one with /ius clip; check the name with /ius playclip).")
             }
             ClipPlayback.Result.StartFailed -> {
                 send(ctx, "$tag §ccouldn't start the clip (playback failed).")

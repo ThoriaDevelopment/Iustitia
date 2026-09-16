@@ -16,8 +16,9 @@ object ClipPlayback {
     sealed class Result {
         /** Replay started: [frames] played back, [focus] player highlighted (null = none). */
         class Started(val frames: Int, val focus: java.util.UUID?) : Result()
-        /** Clip missing, corrupt, or decoded to an empty window (no frames). */
-        object LoadFailed : Result()
+        /** Clip missing, corrupt, or decoded to an empty window (no frames). [reason] says which:
+         *  [ClipCodec.lastReadReason] for a decode refusal, or a plain note for an empty window. */
+        class LoadFailed(val reason: String?) : Result()
         /** Window was loaded but [ReplayState.start] refused it. */
         object StartFailed : Result()
     }
@@ -30,7 +31,10 @@ object ClipPlayback {
     fun start(name: String, speed: Float): Result = try {
         val clip = ClipStore.load(name)
         if (clip == null || clip.window.frames.isEmpty()) {
-            Result.LoadFailed
+            Result.LoadFailed(
+                if (clip == null) ClipCodec.lastReadReason ?: "no such clip"
+                else "the clip has no frames"
+            )
         } else {
             // Legacy = the v1.1.0 playclip: no relocation (ghosts at recorded coords), no auto-freecam
             // (camera stays at the player's own view), and ReplayState.start nulls any embedded

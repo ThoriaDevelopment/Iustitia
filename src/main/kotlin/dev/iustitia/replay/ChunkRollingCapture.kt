@@ -16,8 +16,10 @@ import net.minecraft.client.MinecraftClient
  * ## Bounds
  *
  * [rollingChunkCap] is a total non-empty-section budget across ALL live segments; when it is
- * exceeded the oldest segment (never the current one) is evicted. [PER_TICK] bounds the per-tick work
- * so a large radius streams in over a few seconds rather than stalling one frame. Fail-open
+ * exceeded the oldest segment (never the current one) is evicted. The check runs at a segment
+ * boundary and again on every [tickCapture], so a single long segment can keep making progress
+ * once the budget fills instead of stalling until the next split. [PER_TICK] bounds the per-tick
+ * work so a large radius streams in over a few seconds rather than stalling one frame. Fail-open
  * throughout — a capture error just leaves that chunk out.
  *
  * ## Relationship to SnapClip
@@ -44,15 +46,28 @@ object ChunkRollingCapture {
     private fun chunkKey(chunkX: Int, chunkZ: Int): Long =
         (chunkX.toLong() shl 32) or (chunkZ.toLong() and 0xFFFFFFFFL)
 
+    /**
+     * Evict the oldest segment(s) other than [keepSegment] until the section count is below [cap].
+     *
+     * Returns true when there is budget room afterwards. False means only [keepSegment] is left, so
+     * the budget is full of the segment being captured and nothing can be freed without dropping
+     * it -- the cap is a hard ceiling, and the current segment simply stops growing.
+     *
+     * Called from both entry points: the segment boundary, and [tickCapture] (see the note there).
+     */
+    private fun evictToFit(cap: Int, keepSegment: Int): Boolean {
+        while (totalSections >= cap) {
+            val oldest = store.keys.filter { it != keepSegment }.minOrNull() ?: return false
+            val ev = store.remove(oldest) ?: return false
+            totalSections -= ev.values.sumOf { it.sections.size }
+        }
+        return true
+    }
+
     /** Begin (or reset) [segmentId]'s capture, evicting the oldest segment(s) if the budget is full. */
     fun onSegmentStart(segmentId: Int, pcx: Int, pcz: Int, radius: Int) {
         try {
-            val cap = rollingChunkCap()
-            while (totalSections >= cap) {
-                val oldest = store.keys.filter { it != segmentId }.minOrNull() ?: break
-                val ev = store.remove(oldest) ?: break
-                totalSections -= ev.values.sumOf { it.sections.size }
-            }
+            evictToFit(rollingChunkCap(), segmentId)
             store.getOrPut(segmentId) { HashMap() }
         } catch (_: Throwable) {
         }
@@ -64,6 +79,16 @@ object ChunkRollingCapture {
             val world = MinecraftClient.getInstance().world ?: return
             val st = store.getOrPut(segmentId) { HashMap() }
             val cap = rollingChunkCap()  // once per tick, not per chunk attempt
+            // Evict here, not only at a segment boundary. The budget was checked per capture attempt
+            // but freed only by onSegmentStart, so once a long segment filled the cap every
+            // tryCapture returned false and the "retried on a later tick once segment eviction frees
+            // budget" promise in tryCapture's comment could not come true until the next auto-split,
+            // ten minutes later. A fast-exploring recording captured nothing new in that window.
+            //
+            // A false return means the budget is full of the CURRENT segment and there is nothing
+            // older to drop, so skip the scan: every attempt this tick would fail anyway, and the
+            // scan is O(radius^2) hash lookups.
+            if (!evictToFit(cap, segmentId)) return
             val r = radius.coerceIn(1, 32)
             var n = 0
             for (d in 0..r) {

@@ -61,11 +61,17 @@ object ClipStore {
         path.fileName.toString().removeSuffix(EXT)
     } catch (_: Throwable) { null }
 
-    /** Load + decode `<name>.iusclip`, or null if missing/corrupt. Called on the client thread. */
+    /**
+     * Load + decode `<name>.iusclip`, or null if missing/corrupt. Called on the client thread.
+     * Passes the file length so [ClipCodec.read] can verify the parse consumed the whole stream —
+     * the only place a byte-shifted parse can be caught, and the only caller that knows the length.
+     * On a refusal, [ClipCodec.lastReadReason] holds the cause.
+     */
     fun load(name: String): ClipCodec.Clip? = try {
         val path = pathFor(name)
         if (!Files.exists(path)) return null
-        Files.newInputStream(path).use { inp -> ClipCodec.read(inp) }
+        val size = Files.size(path)
+        Files.newInputStream(path).use { inp -> ClipCodec.read(inp, size) }
     } catch (_: Throwable) { null }
 
     /** Read only the header (version + focus + frame/alert counts) for `<name>.iusclip` — cheap, no
