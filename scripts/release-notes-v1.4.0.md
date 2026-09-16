@@ -45,17 +45,37 @@ The other two are a second, wider root cause: a hurt the server did not blame on
 
 Each fix ships with the legitimate shape as a permanent harness regression, and the cheat scenarios that reach the narrowed detector are re-run in the same pass (the whole cheat pass, for the attribution change), so a fix narrows the false positive without opening a bypass.
 
+## Presets: five profiles, one detector
+
+The mod used to ship a single built-in profile. There are five now, and the only detection number that differs between them is `setbackVL`, the VL level at which an alert fires. `decay` and `threshold` keep their stock values in all five, so a scaled profile is the same detector with a different trip point rather than a different detector. Nothing here recalibrates a default, so the config schema version is not bumped and your settings carry over.
+
+- `standard` is the everyday profile and the recommended one: stock sensitivity, alerts from the orange band up, the `⚠ lag` indicator as its only visual.
+- `lenient` doubles the trip point and reports the red band only, so a chat line needs roughly six times the stock deviation. It catches blatant combat modules and lets ghost cheats pass.
+- `strict` turns every check on and halves the trip point, with compact one-line alerts.
+- `moderation` scales the trip point by 0.75, reports every severity band as its own line, plays audio cues, opens the transcript panel, and shortens the join grace to 100 ticks and the alert throttle to 20.
+- `debug` sets every boolean in the config true, turns every check on, halves the trip point and zeroes both suppression timers. It is a diagnostic profile, and the setup wizard does not offer it; apply it with `/ius preset debug`.
+
+`standard` also changed what it detects, in the one place an everyday player would notice. It now ships seven checks off: `hitsWithoutSwing`, `speedEnvelope`, `flyEnvelope`, `noFallDamage`, `phaseClip`, `longJump` and `teleport`. Every one of them reads a behaviour a minigame server is free to implement itself, so on a server with dash pads, lobby flight, damage-free arenas or warps they fire on honest players, and the moderator reading the alert has no evidence to weigh it against. The checks stay implemented, they stay switchable in `/ius config`, and `strict` and `debug` turn them all on. `lenient` and `moderation` ship them off, as `standard` does.
+
+An apply writes every check's `enabled` flag, which is what makes a preset a profile rather than a patch: applying `strict` turns a check back on even if you had switched it off by hand. Your mute list, your moderator notes and your persistence setting are not preset content and survive an apply untouched.
+
+`/ius presets` describes each built-in now, so you can read what a profile costs before applying it, and the setup wizard's four buttons apply the presets themselves: Standard, Lenient, Strict and Moderation. The old buttons were General, Moderation and Ranked Player. General already applied `standard`, so it is just Standard. Ranked Player only ever changed display fields, so it is gone, and `lenient` is the closest thing to its quiet while `strict` is the closest to its compact one-liners. The wizard is also the one place persistence is set from a preset, because no preset is allowed to write it: only Moderation turns it on.
+
+The live suite could not see any of this before. The harness turns every check on and overwrites the alert and display fields before each scenario, so a profile that shipped the wrong detection scope, or the wrong display settings, ran green in every pass. The new `preset-builtin-coverage` scenario applies all five and asserts the config each one lands, scaling included, and a JVM test holds the full profile table.
+
 ## For contributors
 
-Iustitia is now an open-collaboration project. `CONTRIBUTING.md`, `SECURITY.md`, `SUPPORT.md` and a code of conduct are in the repo, along with issue and PR templates and CI workflows. The centerpiece for anyone hacking on detection: a three-pass live-test harness (`python scripts/live_selftest.py`) that runs 91 automated scenarios in a real game client. The legit pass plays like a vanilla player and asserts silence (false-positive guards); the cheat pass reproduces modules from 9 reference cheat clients and 4 reference anticheats and asserts alerts (bypass guards); the replay pass covers the observer tooling. Every scenario names the client or anticheat it mirrors.
+Iustitia is now an open-collaboration project. `CONTRIBUTING.md`, `SECURITY.md`, `SUPPORT.md` and a code of conduct are in the repo, along with issue and PR templates and CI workflows. The centerpiece for anyone hacking on detection: a three-pass live-test harness (`python scripts/live_selftest.py`) that runs 92 automated scenarios in a real game client. The legit pass plays like a vanilla player and asserts silence (false-positive guards); the cheat pass reproduces modules from 9 reference cheat clients and 4 reference anticheats and asserts alerts (bypass guards); the replay pass covers the observer tooling. Every scenario names the client or anticheat it mirrors.
 
 ## Verification
 
-Every number below was produced at `2c07601`, the tree the live suite last passed on. Commits after it touch documentation and check prose only, which the suite does not observe.
+Every number below was produced at `2c07601`, the tree the live suite last passed on in full. The commits after it change preset content and check prose, and the detection passes observe neither: the harness turns every check on and overwrites the alert and display fields before each scenario, so a profile's scope and display settings never reach a flag. The suite is 92 scenarios now, one more than the pass below, and the addition is the last bullet of this list.
 
 - `python scripts/verify_contribution.py --static`: pass. Six detector defaults in `scripts/checks.json` had drifted from the code they describe, so the verifier now compares them value by value against `IustitiaConfig.kt`; perturbing one makes it exit 1 instead of passing quietly.
 - `./gradlew test --no-daemon`: 21 tests, 0 failures.
 - `python scripts/live_selftest.py`: the full three-pass suite in a real game client. 91 scenarios, all green, 0 false positives, 0 bypasses. The 4 recorded detector gaps and 5 harness-gap entries are unchanged and still listed, and the whole cheat pass was re-run against the narrowed attribution, so no bypass opened behind the fix.
+- `python scripts/live_selftest.py --check preset`: a scoped boot of the three preset scenarios plus the smoke test, run at `b51bf22`. 4 of 4 green, so all five built-in profiles land their enable contract, their `setbackVL` scaling and their display settings on the live config object, and a name that is not a preset still changes nothing.
+- `./gradlew test --no-daemon` at `b51bf22`: 33 tests, 0 failures. `./gradlew build --no-daemon` and `python scripts/verify_contribution.py --static` both pass on the same tree.
 
 The two re-arm regressions were observed in both directions: one alert each against the pre-fix checks, where two were required, and two each against the fixed ones.
 

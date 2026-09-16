@@ -53,11 +53,17 @@ You can also still delete clips from the clip manager screen (`/ius clips`, righ
 
 ### Presets — `/ius preset`
 
-A **preset** is a named, ready-to-load config. Apply one with `/ius preset <name>`; it overwrites the live config in place (every check's `enabled`/`setbackVL`/`threshold`/`decay` plus the display fields — verbose, alertLevel, visuals, replay, nametags). The **built-in** preset:
+A **preset** is a named, ready-to-load config. Apply one with `/ius preset <name>`, and it overwrites the live config in place: every check's `enabled`, `setbackVL`, `threshold` and `decay`, plus the display, alert, replay/clip and chathist fields. Five presets ship built in. They trade what gets caught against how much noise and how many false positives you have to read:
 
-| preset | what it gives you |
-|---|---|
-| `standard` | The default tuned 36-check config (every check on). No visuals except the `⚠ lag` HUD indicator. Silent audio. Replay on. Nametags on. (The first-launch wizard's **General** choice applies this same profile, plus the wizard's own display defaults.) |
+| preset | what it gives you | what it costs |
+|---|---|---|
+| `standard` | Everyday play. Stock sensitivity, alerts from the orange band up, nametags on with green ticks, the `⚠ lag` indicator as the only visual. | The seven server-normalized checks are off, so minigame movement and right-click abilities are not reported. |
+| `lenient` | Blatant combat cheats only. Needs about **six times** the stock deviation before a line appears: double the trip point, and only red-band alerts reach chat. | Ghost cheats pass. On a server where the stock checks rarely fire, this looks quiet. That is what it is for. |
+| `strict` | Every check on, twice as sensitive, compact one-line alerts. For competitive players who read their own alerts. | More false positives, including flags `standard` would not have shown. |
+| `moderation` | Staff review. Every severity band, one line per flag instead of a batched summary, audio cues, the live transcript panel, and the mouse-sensitivity substrate on (the two GCD sub-flags in KillAura and RotationTracking) so a live read matches a written report. | Denser chat, and the sensitivity substrate costs FPS in dense fights, which is why it is off by default. |
+| `debug` | Everything on: every feature, every check, twice as sensitive, no join grace and no alert throttle. | Diagnostic. It is not offered by the setup wizard; apply it with `/ius preset debug`. |
+
+The five differ in **only one detection number**: `setbackVL`, the alert trip point. `standard` keeps it stock, `lenient` doubles it, `strict` and `debug` halve it, and `moderation` scales it by 0.75. `decay` and `threshold` keep their stock values in every profile, so a scaled profile is the same detector with a different trip point rather than a different detector. Applying a preset also writes every check's `enabled` flag, which is how `standard`, `lenient` and `moderation` ship the seven server-normalized checks off while `strict` and `debug` turn everything on, including a check you switched off by hand. So if you switch between presets, keep per-server tweaks in a custom preset rather than in `/ius toggle`; an apply overwrites the toggles, and it does not touch your mute list or your notes.
 
 **Custom presets** — save your current config as a preset you can re-apply any time:
 
@@ -99,13 +105,14 @@ The freecam cam mode (chunk-bearing `/ius playclip` only — it needs the clip's
 
 ### Your first launch: the setup wizard
 
-The very first time you launch with Iustitia installed, a small **setup wizard** appears once. It asks how you intend to use the mod and picks sensible starting settings for you:
+The very first time you launch with Iustitia installed, a small **setup wizard** appears once. It offers one button per preset (the `debug` profile is command-only) plus a skip option:
 
-- **General**: balanced alerts, audio off, nametag on, `⚠ lag` indicator on. Good default for most people.
-- **Moderation**: verbose alerts (every flag), audio on, full individual alert lines, persistence on (your notes + history survive restarts), live transcript panel.
-- **Ranked Player**. Quiet alerts (only the high-confidence reds), compact one-line alerts, audio on. Minimal noise while you're trying to play.
+- **Standard** (recommended): the everyday profile. Stock sensitivity, alerts from the orange band up, nametags on, `⚠ lag` indicator on.
+- **Lenient**: blatant combat cheats only. About six times the stock deviation is needed before a line appears.
+- **Strict**: every check on and twice as sensitive, compact one-line alerts. Expect more false positives.
+- **Moderation**: staff review. Every flag as its own line, audio cues, transcript panel, and persistence on so your notes and history survive restarts.
 
-You can change any of these later in `/ius config`, and re-run the wizard any time with `/ius wizard`. It only pops up on its own once.
+Each button applies that whole preset, so it sets detection scope and calibration, not just display settings. The one thing the buttons add on top is persistence: only **Moderation** turns it on, because no preset is allowed to change it. You can change any of this later in `/ius config`, and re-run the wizard any time with `/ius wizard`. It only pops up on its own once.
 
 ## What you'll see
 

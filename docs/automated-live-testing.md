@@ -278,6 +278,8 @@ The runner **merges** each boot's per-scenario results into that report rather t
 
 That pass is the first to cover the three scenarios added by the attribution follow-up (`legit-hurt-idless-bystander`, `legit-hurt-mob-knockback`, `legit-hitswithoutswing-bystander`). The previously recorded pass was 88 at `4f9545a`, which was itself the first to cover `replay-show-self` and the three scenarios added by the swing-source audit (`legit-mining-cadence`, `legit-mining-near-hurt`, `cheat-reach-digging-koid`); before that, 84 at `ca12ec8`. `--list` prints the live inventory, which is the authoritative count.
 
+That pass predates one scenario, `preset-builtin-coverage`, the third preset row in §4. It applies all five built-ins in turn and asserts the config each one lands. No earlier scenario could see that: the harness turns every check on and overwrites the alert and display fields before each scenario, so a profile that shipped the wrong detection scope, or the wrong display settings, ran green in every pass, and the seven-check scope decision `standard` ships with was invisible to the suite from the day it landed. The next full pass is 92 scenarios, 10 of them replay and three of those the preset gates.
+
 | | count |
 |---|---|
 | cheat scenarios | 60 |
@@ -400,6 +402,7 @@ are in §6.3.
 | Show-self: your own snap in the buffer, its survival through the clip round trip, and the live-body hide | `replay-show-self` |
 | Disabled-check gate (toggled-off check = zero VL; re-enabled = alerts) | `preset-disabled-check-gate` |
 | Preset apply (schema-derived coverage + documented exclusions + standard semantics) | `preset-apply-coverage` |
+| Built-in profiles (all five applied: enable contract, scaled `setbackVL` with `decay`/`threshold` untouched, display canaries, in-place apply, unknown name refused) | `preset-builtin-coverage` |
 
 ### Scenarios that cannot live here
 

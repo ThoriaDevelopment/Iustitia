@@ -21,7 +21,8 @@ Detects **both 1.8-era and 1.21.11-era cheats** by passively observing *other* p
 - **Your own body is in the replay.** The capture buffer recorded everyone but you, so a freecam replay showed every other player and an empty spot where you had been standing. You are now captured like any other player and drawn as a ghost at your buffered position, and the live body is hidden while the replay runs in every camera mode (freecam, pov, follow and free), so you appear exactly once instead of twice. This costs no clip-format change: your snap is an ordinary player snap, so it rides through `.iusclip` save and load untouched and works under both **Modern** and **Legacy** playclip. A clip recorded by an older build carries no snap of you, and there the live body stays visible exactly as before.
 - **Clip format v13.** Per-segment worlds, block-edit deltas, entity capture, body/head yaw. Clips from v2 through v12, including SnapClip's v9-v12, are still read, though the older layouts are coded from the format's shape rather than from a reference clip, since none exist in this repo to test against, so treat that path as best-effort. A file that does not match is refused instead of half-loaded: the reader checks that it consumed exactly the bytes on disk and reports a truncated or unrecognized clip. An older Iustitia build cannot read a v13 clip, so re-export one if you need to open it there.
 - **Detection pass.** Combat detection-rate work: a shared sustained-episode gate across the per-hit combat checks, a ghost-reach tier for `reach` (motionless-pair branch with a 3.2-block ceiling), an occlusion fix so `throughWalls` actually sees hits behind walls, and a `noFallDamage` burst re-base that keeps wind-charge jumps legal while burst-spoof falls still flag. The last two known false positives (ladder climbs under `flyEnvelope`, water walking) are gone.
-- **Open collaboration.** Contributor infrastructure: `CONTRIBUTING.md` / `SECURITY.md` / `SUPPORT.md` / `CODE_OF_CONDUCT.md`, issue + PR templates, CI workflows, an automated three-pass live-test harness (`scripts/live_selftest.py`, 91 scenarios: legit / cheat / replay), and an agent-facing contributor skill (`.claude/skills/iustitia-contributor/`).
+- **Five built-in profiles.** `standard` stays the everyday profile, and four more join it: `lenient` (blatant combat cheats only), `strict` (every check, twice as sensitive), `moderation` (staff review, with every flag on its own line, audio cues and the transcript panel) and `debug` (diagnostic, everything on). They differ in one detection number, `setbackVL`, so a profile is the same detector with a different trip point. `standard` also stopped reporting the seven checks a minigame server implements itself. The setup wizard offers the first four, and `/ius presets` describes each one; `debug` is `/ius preset debug`.
+- **Open collaboration.** Contributor infrastructure: `CONTRIBUTING.md` / `SECURITY.md` / `SUPPORT.md` / `CODE_OF_CONDUCT.md`, issue + PR templates, CI workflows, an automated three-pass live-test harness (`scripts/live_selftest.py`, 92 scenarios: legit / cheat / replay), and an agent-facing contributor skill (`.claude/skills/iustitia-contributor/`).
 
 Your existing settings carry straight over: every option added since v1.1.0 is an additive config field with a `has(...)` back-compat guard, and `IustitiaConfig.CONFIG_VERSION` is unchanged in this release (it is **5**, last bumped in v1.3.0). Older `.iusclip` files are read on the terms noted above.
 
@@ -58,7 +59,7 @@ All three library mods (Fabric API, fabric-language-kotlin, YACL) are standard a
 2. Drop **Fabric API**, **fabric-language-kotlin**, and **YACL** into your `mods/` folder.
 3. Drop the latest `iustitia-<version>.jar` into your `mods/` folder.
 4. (To detect cheats on 1.8-era servers) Install **ViaFabricPlus** so your 1.21.11 client can join them.
-5. Launch. A one-time **first-launch wizard** asks how you use Iustitia (General / Moderation / Ranked Player) and pre-sets sensible defaults. Join any server with other players.
+5. Launch. A one-time **first-launch wizard** asks how you use Iustitia (Standard / Lenient / Strict / Moderation) and pre-sets sensible defaults. Join any server with other players.
 
 That's it. Alerts appear in chat; other players get a colored tier prefix on their nametag where the server allows it (see [Nametag prefixes](#nametag-prefixes)).
 
@@ -84,7 +85,7 @@ That's it. Alerts appear in chat; other players get a colored tier prefix on the
 /ius playclip [name] [1|0.5|0.25]  # play a saved clip back in-world as a solid textured world + ghosts, relocated to you (/ius playclip off to stop; bare = list clips)
 /ius deleteclip <name>  # delete a saved .iusclip by name (alias /ius delclip <name>)
 /ius clips           # open the clip manager screen (list / play / delete saved .iusclip files)
-/ius preset <name>   # apply a named config preset (built-in: standard; or a custom preset)
+/ius preset <name>   # apply a named config preset (built-ins: standard, lenient, strict, moderation, debug; or a custom preset)
 /ius createpreset <name>  # save the current config as a custom preset (persists to .iustitia/presets/<name>.json)
 /ius deletepreset <name>  # delete a custom preset (built-ins can't be deleted)
 /ius presets         # list all presets (built-in + custom)
