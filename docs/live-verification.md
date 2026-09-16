@@ -60,11 +60,13 @@ For a changed check:
 2. Confirm its config slice is present and editable.
 3. Confirm a normal movement/combat trace does not immediately produce an alert.
 4. If the detector was narrowed, play the legitimate shape it was narrowed around and
-   confirm the check stays silent. The six shapes worth replaying by hand are a slab or
+   confirm the check stays silent. The seven shapes worth replaying by hand are a slab or
    stairs ramp for `flyEnvelope`, a strafe across a held crosshair for `triggerbot`, a
    vanilla sword sweep for `multiTarget`, an already-airborne victim for `noKnockback`,
-   and holding left click on bedrock for `clickStatistics` and `reach` (see the dig pass
-   in the packet section, since that one needs a real server).
+   holding left click on bedrock for `clickStatistics` and `reach`, and standing next to a
+   teammate who takes damage from a mob, an arrow or a fall for `reach`, `hitsWithoutSwing`
+   and the other attack-driven checks (see the dig pass in the packet section, since that
+   one needs a real server).
 5. Exercise the intended suspicious-like trace in a controlled test.
 6. Confirm flags appear in `/ius hist` when expected.
 7. Confirm alert throttling, join grace, decay, and tier behavior.
@@ -111,6 +113,31 @@ account, or on any server where another player will take damage near you:
    hit. `cheat-reach-digging-koid` is the automated twin of this step.
 5. Release the button and confirm the next swings are evaluated normally, with no alert left over
    from the dig.
+
+### The legacy attribution pass (attribution follow-up, NOT RUN)
+
+The harness cannot reach this one either, and the attribution fix turns it into the only path where
+guessing an attacker is still allowed. On a 1.8 to 1.19.3 server there is no
+`EntityDamageS2CPacket`, so the protocol latch never turns true and the checks keep crediting a hurt
+to the nearest player who swung recently, exactly as they did before the fix. Every automated
+scenario runs a 1.21.11 client against a 1.21.11 server, where the server always names its damage
+causes, so nothing in the suite exercises that fallback. Reach it through ViaFabricPlus with two
+accounts:
+
+1. Join a 1.8 server through ViaFabricPlus and confirm the client reaches the world without a mixin
+   or translation error.
+2. Trade normal melee hits between the two accounts at close range. Confirm the hits are attributed:
+   `/ius hist` on the observer shows correlated attacks, and the attack-driven checks get their
+   input at all. Attribution dying here would mean detection is silently dead on every legacy server.
+3. Play the shape that has to keep working without a named cause: attack with a suppressed or
+   mistimed swing. Confirm `hitsWithoutSwing` still builds its no-swing episode, which is the proof
+   the proximity fallback is still alive rather than merely quiet.
+4. Stand within a few blocks of the other account, without swinging, while it takes damage from a
+   mob, an arrow or a fall. Confirm neither `reach` nor `hitsWithoutSwing` flags you. That is what
+   the fallback's own gates buy on this protocol (a recent swing and melee range), since the
+   named-cause rule cannot apply where nothing is named. A player who *is* swinging near that damage
+   can still be credited on a legacy server, and that is the accepted cost of detection working
+   there at all.
 
 ## Mixin changes
 

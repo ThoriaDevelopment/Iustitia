@@ -15,7 +15,7 @@
       "1.8 protocol widens hitbox margin by +0.1",
       "No-intercept only flagged when the nearest face genuinely exceeds reach (close-range misses dropped as inconclusive)",
       "Motionless-pair branch requires both attacker and victim stationary; a moving pair is judged by the ray path only",
-      "AttackEvent misattribution guard: a hurt that names its attacker is only claimable by that attacker, and an unattributed non-knockback hurt near a player the server has digging is not attributed to them (see AttackInference)"
+      "AttackEvent misattribution guard: a hurt is attributed only to the player the server named, and on a protocol that names damage causes an unnamed hurt is attributed to nobody at all; the knockback impulse is credited only when the damage behind it was never observed (see AttackInference)"
     ],
     "defaults": { "enabled": true, "setbackVL": 10.0, "decay": 0.25, "threshold": 3.0 },
     "constants": [
@@ -144,10 +144,12 @@
     "group": "Combat",
     "definitive": false,
     "what": "No-swing attack detector — Slinky Hit Select / Grim PacketOrderB. The cheat deals damage with no swing animation in the window (a disabler suppresses the swing packet, or hit-select attacks without the arm animation). Every vanilla melee attack carries a swing, so a no-swing hurt is a cheat OR an unseen attacker — a weak, noisy signal, so this is CORROBORATOR-tier (never initiates a tier alone).",
-    "signature": "Subscribes SwingSignal (per-attacker lastSwingTick) + HurtSignal. On a melee hurt (STATUS/ENTITY_DAMAGE/DAMAGE_TILT; VELOCITY excluded) it infers the attacker — the tracked player matching attackerEntityId when the channel provides one, else the nearest tracked player within 4 blocks — and fails open if none is that close (unseen attacker / environment). If no attacker swing within ±2 ticks, increments a per-attacker noSwingCount; flags (level 1.0) at >= threshold (3) no-swing hurts in 60 ticks, transition-gated one flag per episode.",
+    "signature": "Subscribes SwingSignal (per-attacker lastSwingTick) + HurtSignal. On a melee hurt (STATUS/ENTITY_DAMAGE/DAMAGE_TILT; VELOCITY excluded) it attributes the hit to the tracked player the hurt names and to nobody else: a name resolving to no tracked player (mob, arrow, TNT) and a hurt naming nobody at all (fall, fire, drowning) both fail open. Only where the protocol cannot name causes (legacy 1.8-1.19.3) does it fall back to the nearest tracked player within 4 blocks that has a recent swing, and it fails open when nobody qualifies. If no attacker swing within ±2 ticks, increments a per-attacker noSwingCount; flags (level 1.0) at >= threshold (3) no-swing hurts in 60 ticks, transition-gated one flag per episode.",
     "fpGuards": [
       "VELOCITY hurts excluded (knockback follow-up, not a melee)",
-      "Proximity-attacker fallback fails open when no tracked player is within melee range (unseen attacker / fall / fire)",
+      "Named-cause guard: when the hurt names a cause, only the player it names can be the inferred attacker, so a mob / arrow / TNT hit on the victim fails open instead of landing on whoever swung nearby",
+      "Unnamed-hurt guard: on a protocol that names damage causes an unnamed hurt is attributed to no player, so environmental damage next to a bystander cannot charge their no-swing episode",
+      "Proximity-attacker fallback survives only for the legacy channels that name nobody, and fails open when no tracked player is within melee range (unseen attacker / fall / fire)",
       "Per-attacker episode transition gate: >= threshold no-swing hurts from the SAME inferred attacker in 60 ticks (one-off unseen-attacker or packet-ordering noise doesn't accumulate)",
       "Swing window ±2 ticks absorbs packet-ordering edges"
     ],

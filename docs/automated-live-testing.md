@@ -272,9 +272,11 @@ two blocks of flag lines names the scenario they belong to.
 catch state) and `--list`. Read them before claiming a check is covered; they are generated from
 the run, this table is maintained by hand.
 
-Last full run: **88 scenarios** at `4f9545a` (2026-09-16) -- 19 legit incl. the smoke test, 60 cheat, 9 replay incl. the two preset gates. All 88 green in a single unsharded pass, **0 false positives, 0 bypasses**, with the 4 detector gaps and 6 drive gaps below still open. The raw report is `build/selftest-report.json`.
+Last full run: **91 scenarios** at `2c07601` (2026-09-16) -- 22 legit incl. the smoke test, 60 cheat, 9 replay incl. the two preset gates. All 91 green in a single unsharded pass, **0 false positives, 0 bypasses**, with the 4 detector gaps and 6 harness-gap entries below still open. The raw report is `build/selftest-report.json`.
 
-That pass is the first to cover `replay-show-self` and the three scenarios added by the swing-source audit (`legit-mining-cadence`, `legit-mining-near-hurt`, `cheat-reach-digging-koid`); the previously recorded pass was 84 at `ca12ec8`. `--list` prints the live inventory, which is the authoritative count.
+The runner **merges** each boot's per-scenario results into that report rather than overwriting it, so a scoped boot (a `--check a,b` filter) leaves the scenarios it did not run at their previous values. The file is not by itself evidence of a single pass; the console table of each boot is, and only a full boot rewrites every row.
+
+That pass is the first to cover the three scenarios added by the attribution follow-up (`legit-hurt-idless-bystander`, `legit-hurt-mob-knockback`, `legit-hitswithoutswing-bystander`). The previously recorded pass was 88 at `4f9545a`, which was itself the first to cover `replay-show-self` and the three scenarios added by the swing-source audit (`legit-mining-cadence`, `legit-mining-near-hurt`, `cheat-reach-digging-koid`); before that, 84 at `ca12ec8`. `--list` prints the live inventory, which is the authoritative count.
 
 | | count |
 |---|---|
@@ -283,9 +285,9 @@ That pass is the first to cover `replay-show-self` and the three scenarios added
 | checks with an established cheat gate (the drive alerts) | **29 / 36** |
 | checks driven by >=2 clients | 10 (`flyEnvelope` 4, `clickStatistics` 3, `killAura` 3, `reach` 3, `criticals` 2, `multiTarget` 2, `noFallDamage` 2, `speedEnvelope` 2, `sprintHack` 2, `autoBlock` 2) |
 | detector gaps (drive reaches it, detector cannot alert) | **4** checks carry a `knownOpen` entry (`speedEnvelope`, `packetGap`, `stepHeight`, `longJump`) |
-| harness gaps (a drive does not reach it) | **5** checks across 6 scenarios; 4 of the 5 are ungated (`sprintHack` alerts on two other drives, so its water variant is a drive gap, not a detector gap) |
+| harness gaps (a drive does not reach it) | **5** checks across 6 scenarios (the `backwardSprint` entry is declared once in `omniSprint(...)` and instantiated by both `cheat-omnisprint-*` rows); 3 of the 5 are ungated (`sprintHack` alerts on two other drives, so its water variant is a drive gap, not a detector gap, and `noSlow` is a stale entry rather than a gap -- the reporter measures `reacted (peakVL=39.00)`, so the drive does reach it) |
 | verified detector false positives | **0** (four resolved this cycle -- §6.3) |
-| FP-direction regressions (a legit drive guarding a detector that was narrowed) | **6** -- `legit-fly-ramp`, `legit-triggerbot-strafe`, `legit-nokb-airborne`, `legit-multitarget-sweep`, `legit-mining-cadence`, `legit-mining-near-hurt` |
+| FP-direction regressions (a legit drive guarding a detector that was narrowed) | **9** -- `legit-fly-ramp`, `legit-triggerbot-strafe`, `legit-nokb-airborne`, `legit-multitarget-sweep`, `legit-mining-cadence`, `legit-mining-near-hurt`, `legit-hurt-idless-bystander`, `legit-hurt-mob-knockback`, `legit-hitswithoutswing-bystander` |
 | checks carrying any documented finding | 12 |
 
 Every check below has a drive; what differs is whether that drive **establishes a gate**. The four
@@ -307,7 +309,7 @@ outcomes are deliberately distinct and the runner reports them in separate secti
 | `speedEnvelope` | Koid, LiquidBounce |
 | `elytraSpeed` | LiquidBounce |
 | `killAura` | LiquidBounce, Raven, Vape (snap, rate-capped drift, and on-target track; the drift path also carries a **re-arm regression**, `cheat-killaura-drift-rearm-raven`) |
-| `reach` | Koid (3.6 ghost), LiquidBounce (4.2), Vape (6.0); also Koid holding a fake dig open (`cheat-reach-digging-koid`, the bypass proof for the dig exemption) and guarded by the `legit-mining-near-hurt` FP regression |
+| `reach` | Koid (3.6 ghost), LiquidBounce (4.2), Vape (6.0); also Koid holding a fake dig open (`cheat-reach-digging-koid`, the bypass proof for the dig exemption) and guarded by the `legit-mining-near-hurt`, `legit-hurt-idless-bystander` and `legit-hurt-mob-knockback` FP regressions |
 | `criticals` | Meteor, Slinky |
 | `maceSmash` | LiquidBounce |
 | `multiTarget` | Meteor (3 same-tick victims), LiquidBounce (2-victim pair path; also guarded by the `legit-multitarget-sweep` FP regression) |
@@ -325,7 +327,7 @@ outcomes are deliberately distinct and the runner reports them in separate secti
 | `wTap` | Vape |
 | `hitFlick` | Vape |
 | `triggerbot` | Vape (also guarded by the `legit-triggerbot-strafe` FP regression) |
-| `hitsWithoutSwing` | Slinky (plus a **re-arm regression**, `cheat-hitsswing-rearm-slinky`) |
+| `hitsWithoutSwing` | Slinky (plus a **re-arm regression**, `cheat-hitsswing-rearm-slinky`, and the `legit-hitswithoutswing-bystander` FP regression) |
 | `jumpOnHurt` | Rain-Anticheat |
 | `autoBlock` | Grim, Rain-Anticheat |
 | `aimWrap` | LiquidBounce |
@@ -334,14 +336,17 @@ outcomes are deliberately distinct and the runner reports them in separate secti
 
 ### Harness gaps (5 checks -- the work queue)
 
-These five have a drive but the check logs **zero flags**, so no alert assertion can be made yet.
-Writing them as ordinary expectations would leave the suite permanently red for a reason that is
-about the test, not about Iustitia -- which is how a suite trains people to ignore it.
+These entries are declared where a drive does not reach its check, so no alert assertion can be
+made yet. Writing one as an ordinary expectation before the drive reaches it would leave the suite
+permanently red for a reason that is about the test, not about Iustitia -- which is how a suite
+trains people to ignore it. The reporter prints the observed peak VL so the two states are told
+apart at a glance: `never logged a flag` means the check was never asked, and `reacted (peakVL=N)`
+means it was asked and the entry has gone stale.
 
 | Check | What the drive is missing |
 |---|---|
 | `backwardSprint` | sprint metadata on a genuinely backward-moving bot (`speedEnvelope` reacts, sub-threshold) |
-| `noSlow` | the using-item + movement metadata pair |
+| `noSlow` | **stale entry, promote me:** the run measures `reacted (peakVL=39.00)` against its 5.0 setback, so the drive does reach the check and the entry is a leftover from an earlier drive body |
 | `pitchBound` | an out-of-range pitch actually presented to the tracker |
 | `scaffoldRotation` | repetition: the snap-and-return fires exactly once (peakVL 1.0 vs setback 5.0) |
 | `sprintHack` (water variant) | sprint while the feet are in liquid (the sneak and blind variants alert) |
@@ -354,13 +359,13 @@ all** (see the signal-threading bug in the harness lessons, which cost the suite
 false bypasses) or the **state change is written a tick later than it is observed** (see the
 tracker-lag lesson). Check those two before rewriting a drive.
 
-### FP-direction regressions (6 -- the guards on this cycle's narrowed detectors)
+### FP-direction regressions (9 -- the guards on the narrowed detectors)
 
 A detector narrowed to stop a false positive is only half-verified by that: the fix could equally
-have been a bypass. Each of the six detectors hardened this cycle therefore keeps the *legitimate*
+have been a bypass. Each of the nine guards hardened in these cycles therefore keeps the *legitimate*
 shape it used to misread as a cheat, as a permanent legit-pass scenario. Each asserts with
 `expectQuiet` **and** a bounded `expectFlagCount` on the specific flag site, because the FP was
-invisible to an alert-level assertion in every one of these cases -- the flag rate never reached
+invisible to an alert-level assertion in every one of these cases: the flag rate never reached
 `setbackVL`, which is exactly why the audit and the suite both missed them.
 
 | Scenario | Legitimate shape presented | What a naive narrowing would break | Observed pre-fix |
@@ -371,12 +376,16 @@ invisible to an alert-level assertion in every one of these cases -- the flag ra
 | `legit-multitarget-sweep` | two opponents jittering in and out of a vanilla sword sweep's arc, one swept per crossing | `cheat-multi-aura-meteor`, `cheat-multi-aura-pair-liquidbounce` | `MultiTarget` `pair-sustained` alert, peakVL 4.00 |
 | `legit-mining-cadence` | holding left click on a block that cannot break (bedrock): the server relays the arm animation on its own clock, a constant 4-tick interval | the `ClickStats(StDev)` bar, which a constant interval sits at exactly 0.0 | `ClickStats(StDev)` 35 flags, peakVL 28.20 |
 | `legit-mining-near-hurt` | a stationary miner 6 blocks from a teammate taking damage that carries no attacker id | attack attribution for the id-less hurt channels | `Reach` `motionless` 1 flag, peakVL 11.00 |
+| `legit-hurt-idless-bystander` | a swinger who is **not** digging, 6 blocks from a teammate taking unnamed `ENTITY_DAMAGE` every 10 ticks, swinging every 5 so every hurt lands inside the correlation window | `cheat-reach-liquidbounce`, `cheat-reach-digging-koid` | `Reach` `motionless` 1 flag, peakVL 11.00 |
+| `legit-hurt-mob-knockback` | the same pair, but the damage names a cause that resolves to no tracked player and carries the knockback impulse that follows it | `cheat-no-kb-rain`, `cheat-reach-digging-koid` | `Reach` `motionless` 1 flag, peakVL 11.00 |
+| `legit-hitswithoutswing-bystander` | a bystander 3 blocks away (inside the 4-block melee fallback), swinging on a beat that never coincides with the victim's non-player damage | `cheat-hitsswing-slinky`, `cheat-hitsswing-rearm-slinky` | `HitsWithoutSwing` 1 flag, peakVL 6.00 |
 
-The six cheat-direction rows above were re-run against the narrowed detectors in the same pass and
-all still alert: the fixes removed only the legitimate shapes. The last two rows are the swing-source
-audit's, and their bypass proof is the extra cheat row `cheat-reach-digging-koid` (a reach module that
-also holds a fake dig open, driven in the same pass). Mechanisms and the arithmetic behind each are in
-§6.3.
+Every cheat-direction row listed for these detectors was re-run against the narrowed code and still
+alerts: the fixes removed only the legitimate shapes. The last three rows are the attribution
+follow-up's. Their bypass proof is not one cheat row but the whole cheat pass, and the reason is
+structural: a cheat's hits always arrive with the server's named damage packet, so nothing is caught
+through the id-less path and there is no catch to narrow. Mechanisms and the arithmetic behind each row
+are in §6.3.
 
 ### Observer tooling
 
@@ -659,10 +668,13 @@ custom `SWING_ANIMATION` duration of 3 or 2. Nothing about *why* the arm moved r
   never read `HurtSource`, never read `HurtSignal.attackerEntityId`, and tested no facing, line of
   sight or reach. A stride-4 swing stream places exactly one swing in any 4-tick window, so a digger
   is a *permanently* eligible attacker, and a hurt with no attacker id has no real candidate to
-  outrank them. `ClientPlayNetworkHandlerMixin` turns `EntityStatusS2CPacket` byte 2 into an id-less
-  hurt for every tracked player who takes damage, and that packet is broadcast to every client
-  tracking them -- so mining beside a teammate who takes fall, fire, drown or mob damage was enough
-  to earn a Reach flag in the wild, not just in the harness. Fixed with two guards in `correlate`: an
+  outrank them. `EntityDamageS2CPacket` is the packet that carried it: it is broadcast to nearby
+  players and its `sourceCauseId` is `-1` exactly when the damage had no attacker, so mining beside a
+  teammate who takes fall, fire, drown or mob damage delivered an id-less hurt to every observing
+  client. (The earlier claim here named `EntityStatusS2CPacket` byte 2 instead. On 1.21.11 that byte
+  is `KINETIC_ATTACK`, the mace smash, and `DamageTiltS2CPacket` goes only to the damaged player's
+  own client, which is why neither is the channel an observer sees.) Fixed with two guards in
+  `correlate`: an
   id-carrying hurt can only be claimed by the attacker it names, and an id-less non-`VELOCITY` hurt
   cannot be claimed by a candidate the server currently has digging. The `VELOCITY` carve-out is
   deliberate -- a knockback impulse is evidence of a real hit, and silencing it for diggers would hand
@@ -672,11 +684,42 @@ custom `SWING_ANIMATION` duration of 3 or 2. Nothing about *why* the arm moved r
   `cheat-reach-digging-koid` is the bypass proof (a reach module that re-arms a dig every tick is
   still attributed and still alerts, peakVL clears the bar).
 
-Both fixes share a residual, stated rather than buried: a client that fakes a dig by re-sending
-`START_DESTROY_BLOCK` and clicks at 2-tick intervals or slower evades the cadence windows, and one
-that also lands silent id-less hits evades the id-less proximity attribution. The named-attribution
-path is never gated, and a named hurt clears the dig state for that attacker, so a faking client
-loses the exemption the moment it lands a hit the observer can see.
+Two of those guards left a residual, stated rather than buried at the time: a hurt that names nobody is
+still the id-less channel, so mob, arrow and TNT damage near an innocent swinger still misattributed,
+and the same shape reached a *second* consumer. That residual is closed now.
+
+- **damage that names no player, in `reach` and in `hitsWithoutSwing`** (3 flags, one per new
+  regression: `legit-hurt-idless-bystander` and `legit-hurt-mob-knockback` each 1 `Reach`/`motionless`
+  flag at peakVL 11.00, and `legit-hitswithoutswing-bystander` 1 `HitsWithoutSwing` flag at peakVL
+  6.00). The rule is now that a hurt belongs to the player the server named, and on a protocol that
+  names damage causes an unnamed hurt is attributed to nobody at all. Both consumers apply it:
+  `AttackInference.correlate` drops an id-less non-`VELOCITY` hurt outright, and
+  `HitsWithoutSwingCheck.inferAttacker` stops falling through to its proximity loop when a named cause
+  resolves to no tracked player. The three branches have one scenario each: an unnamed `ENTITY_DAMAGE`
+  on a teammate of a swinger who is not digging, a named cause that is not a tracked player plus the
+  knockback it applies, and the `HitsWithoutSwing` proximity path with the bystander 3 blocks away.
+  The digger guard above is the *legacy* guard from here, because on a naming protocol the id-less rule
+  covers its case whether or not a dig is live; a 1.8 digger's relayed animation stream has the same
+  shape and is still guarded.
+
+  The capability is a per-join latch, `ProtocolDetector.namesDamageCauses`, set by the first
+  `ENTITY_DAMAGE` hurt observed and cleared by `redetect()`. It is deliberately not a version constant:
+  a constant that read a 1.9-1.19.3 server as modern would switch the named-cause policy on for a
+  protocol that cannot name anyone, which kills attribution there for the whole session, whereas a
+  latch can only be false before the first damage event and self-heals on the next one.
+
+  `VELOCITY` is the one channel that has to keep working unnamed, because on a legacy protocol the
+  impulse is the only damage evidence there is. It is credited only when the victim's damage was never
+  observed, through a per-victim stamp purged after `EXPLAINED_TICKS` (2) ticks: `LivingEntity.damage`
+  sends the damage packet before it applies the knockback, and the tracker rebroadcasts the resulting
+  velocity, so the impulse lands on the same tick or the next. An impulse with no damage event behind it
+  stays attributable exactly as before, which is what keeps the legacy path alive and what leaves the
+  unexplained-impulse variant (a wind charge or a piston, with no damage packet) unfixed.
+
+One residual from the cadence fix does survive, and the reason is worth stating: a client that fakes a
+dig by re-sending `START_DESTROY_BLOCK` and clicks at 2-tick intervals or slower still evades the
+cadence windows. The named-attribution path is never gated, and a named hurt clears the dig state for
+that attacker, so a faking client loses the exemption the moment it lands a hit the observer can see.
 
 ### 6.4 Harness lessons (encoded in the helpers)
 
