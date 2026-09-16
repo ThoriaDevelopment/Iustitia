@@ -441,13 +441,13 @@ object CheatMovement {
      */
     fun noSlow(): Spec = Spec("cheat-noslow-koid", Pass.CHEAT, "Koid", setOf(Tags.MOVEMENT)) { b ->
         val bot = b.bot("Eater", 0.0, 0.0)
-        // HARNESS GAP: the drive does not yet reach this check (see docs/automated-live-testing.md).
-        // The alert assertion is deliberately NOT declared -- a red row for a reason that is
-        // about the scripted bot would train contributors to ignore the suite.
-        b.expectDriveGap(
-            bot, "noSlow",
-            note = "no noSlow flag; only speedEnvelope reacted, and only sub-threshold (71 flags, peakVL 1.0), so the using-item + movement metadata pair the check needs is not yet produced",
-        )
+        // PROMOTED (was a drive gap). This scenario declared a harness gap whose note said the
+        // check never flagged, but the reporter measured `reacted (peakVL=39.00)` against
+        // noSlow's 5.0 setback: 80 ticks of flag-every-tick at level 1.0 against decay 0.5 nets
+        // ~39, so the drive does reach the check and always did. The declaration and its note
+        // were leftovers from an earlier drive body. The note is kept only as the reason the
+        // entry existed; the assertion below is what the suite now holds the drive to.
+        b.expect(bot, "noSlow", mustAlert = true)
         bot.hold(ItemStack(Items.GOLDEN_APPLE))
         var t = 0
         b.everyTick {

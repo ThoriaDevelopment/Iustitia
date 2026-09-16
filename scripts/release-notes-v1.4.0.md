@@ -55,7 +55,7 @@ Every number below was produced at `2c07601`, the tree the live suite last passe
 
 - `python scripts/verify_contribution.py --static`: pass. Six detector defaults in `scripts/checks.json` had drifted from the code they describe, so the verifier now compares them value by value against `IustitiaConfig.kt`; perturbing one makes it exit 1 instead of passing quietly.
 - `./gradlew test --no-daemon`: 21 tests, 0 failures.
-- `python scripts/live_selftest.py`: the full three-pass suite in a real game client. 91 scenarios, all green, 0 false positives, 0 bypasses. The 4 recorded detector gaps and 6 harness-gap entries are unchanged and still listed, and the whole cheat pass was re-run against the narrowed attribution, so no bypass opened behind the fix.
+- `python scripts/live_selftest.py`: the full three-pass suite in a real game client. 91 scenarios, all green, 0 false positives, 0 bypasses. The 4 recorded detector gaps and 5 harness-gap entries are unchanged and still listed, and the whole cheat pass was re-run against the narrowed attribution, so no bypass opened behind the fix.
 
 The two re-arm regressions were observed in both directions: one alert each against the pre-fix checks, where two were required, and two each against the fixed ones.
 

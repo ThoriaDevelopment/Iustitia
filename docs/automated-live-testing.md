@@ -272,7 +272,7 @@ two blocks of flag lines names the scenario they belong to.
 catch state) and `--list`. Read them before claiming a check is covered; they are generated from
 the run, this table is maintained by hand.
 
-Last full run: **91 scenarios** at `2c07601` (2026-09-16) -- 22 legit incl. the smoke test, 60 cheat, 9 replay incl. the two preset gates. All 91 green in a single unsharded pass, **0 false positives, 0 bypasses**, with the 4 detector gaps and 6 harness-gap entries below still open. The raw report is `build/selftest-report.json`.
+Last full run: **91 scenarios** at `2c07601` (2026-09-16) -- 22 legit incl. the smoke test, 60 cheat, 9 replay incl. the two preset gates. All 91 green in a single unsharded pass, **0 false positives, 0 bypasses**. That pass listed 4 detector gaps and 6 harness-gap entries; one of the six, `noSlow`, turned out to be a stale entry rather than a gap and has since been promoted to a real alert assertion, so the work queue below is 4 checks and the remaining gap count is 5 entries. The raw report is `build/selftest-report.json`.
 
 The runner **merges** each boot's per-scenario results into that report rather than overwriting it, so a scoped boot (a `--check a,b` filter) leaves the scenarios it did not run at their previous values. The file is not by itself evidence of a single pass; the console table of each boot is, and only a full boot rewrites every row.
 
@@ -282,10 +282,10 @@ That pass is the first to cover the three scenarios added by the attribution fol
 |---|---|
 | cheat scenarios | 60 |
 | distinct reference sources driven | **13** — 9 cheat clients (Fusion, Itami, Koid, LionClient, LiquidBounce, Meteor, Raven, Slinky, Vape) + 4 anticheats (AvA, Grim, NCM, Rain-Anticheat) |
-| checks with an established cheat gate (the drive alerts) | **29 / 36** |
+| checks with an established cheat gate (the drive alerts) | **30 / 36** |
 | checks driven by >=2 clients | 10 (`flyEnvelope` 4, `clickStatistics` 3, `killAura` 3, `reach` 3, `criticals` 2, `multiTarget` 2, `noFallDamage` 2, `speedEnvelope` 2, `sprintHack` 2, `autoBlock` 2) |
 | detector gaps (drive reaches it, detector cannot alert) | **4** checks carry a `knownOpen` entry (`speedEnvelope`, `packetGap`, `stepHeight`, `longJump`) |
-| harness gaps (a drive does not reach it) | **5** checks across 6 scenarios (the `backwardSprint` entry is declared once in `omniSprint(...)` and instantiated by both `cheat-omnisprint-*` rows); 3 of the 5 are ungated (`sprintHack` alerts on two other drives, so its water variant is a drive gap, not a detector gap, and `noSlow` is a stale entry rather than a gap -- the reporter measures `reacted (peakVL=39.00)`, so the drive does reach it) |
+| harness gaps (a drive does not reach it) | **4** checks across 5 scenarios (the `backwardSprint` entry is declared once in `omniSprint(...)` and instantiated by both `cheat-omnisprint-*` rows); 3 of the 4 are ungated (`sprintHack` alerts on two other drives, so its water variant is a drive gap, not a detector gap) |
 | verified detector false positives | **0** (four resolved this cycle -- §6.3) |
 | FP-direction regressions (a legit drive guarding a detector that was narrowed) | **9** -- `legit-fly-ramp`, `legit-triggerbot-strafe`, `legit-nokb-airborne`, `legit-multitarget-sweep`, `legit-mining-cadence`, `legit-mining-near-hurt`, `legit-hurt-idless-bystander`, `legit-hurt-mob-knockback`, `legit-hitswithoutswing-bystander` |
 | checks carrying any documented finding | 12 |
@@ -334,19 +334,19 @@ outcomes are deliberately distinct and the runner reports them in separate secti
 | `rotationSnapBack` | LiquidBounce |
 | `rotationTracking` | Vape |
 
-### Harness gaps (5 checks -- the work queue)
+### Harness gaps (4 checks -- the work queue)
 
 These entries are declared where a drive does not reach its check, so no alert assertion can be
 made yet. Writing one as an ordinary expectation before the drive reaches it would leave the suite
 permanently red for a reason that is about the test, not about Iustitia -- which is how a suite
 trains people to ignore it. The reporter prints the observed peak VL so the two states are told
 apart at a glance: `never logged a flag` means the check was never asked, and `reacted (peakVL=N)`
-means it was asked and the entry has gone stale.
+means it was asked and the entry has gone stale. `noSlow` was the second kind and left this queue
+when `cheat-noslow-koid` was promoted to a real assertion.
 
 | Check | What the drive is missing |
 |---|---|
 | `backwardSprint` | sprint metadata on a genuinely backward-moving bot (`speedEnvelope` reacts, sub-threshold) |
-| `noSlow` | **stale entry, promote me:** the run measures `reacted (peakVL=39.00)` against its 5.0 setback, so the drive does reach the check and the entry is a leftover from an earlier drive body |
 | `pitchBound` | an out-of-range pitch actually presented to the tracker |
 | `scaffoldRotation` | repetition: the snap-and-return fires exactly once (peakVL 1.0 vs setback 5.0) |
 | `sprintHack` (water variant) | sprint while the feet are in liquid (the sneak and blind variants alert) |
