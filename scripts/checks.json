@@ -32,15 +32,18 @@
     "group": "Combat",
     "definitive": true,
     "what": "Multi-aura / multi-target — a cheater hitting two or more distinct player victims in one tick, or three across a 2-tick lag-absorb window. Grim MultiInteractA proxy.",
-    "signature": "Tracks per-tick victim UUID sets. Flags at sameTick >= 2 (level = sameTick - 1); a second independent branch flags a 2-tick union of >= 3 distinct victims when sameTick < 2.",
+    "signature": "Tracks per-tick victim UUID sets. Three paths: the level path flags at sameTick >= threshold (default 2) at level max(1.0, sameTick - 1); the pair path covers the documented two-target minimum with a TICK-keyed sustained gate, alerting once per episode at setbackVL + 1.0 when a same-tick pair repeats on >= 2 of the last 4 ticks; and an independent lag-absorb path flags a 2-tick union of >= threshold + 1 distinct victims, evaluated only when sameTick < threshold so it can never double-count the same-tick evidence.",
     "fpGuards": [
       "Self-hurt and non-player victims filtered upstream by AttackInference",
-      "Per-tick purge of tick-victim maps older than tick - 2"
+      "Per-tick purge of tick-victim maps older than tick - 2",
+      "Pair path is tick-keyed, not event-keyed: a vanilla sword sweep damages the whole arc on one tick, so its packets count as one sample and a sweep no longer fills a gate whose whole point is repetition",
+      "Lag-absorb path is skipped when sameTick >= threshold, so it is strictly additional evidence and never reduces the same-tick VL"
     ],
     "defaults": { "enabled": true, "setbackVL": 2.0, "decay": 1.0, "threshold": 2.0 },
     "constants": [
-      { "k": "same-tick flag", "v": ">= 2 victims" },
-      { "k": "2-tick union flag", "v": ">= 3 victims" }
+      { "k": "same-tick flag", "v": ">= threshold (2) victims, level max(1.0, n - 1)" },
+      { "k": "pair path", "v": "a same-tick pair on >= 2 of the last 4 ticks, one alert per episode at setbackVL + 1.0" },
+      { "k": "2-tick union flag", "v": ">= threshold + 1 (3) victims, only when sameTick < threshold" }
     ],
     "source": "src/main/kotlin/dev/iustitia/checks/combat/MultiTargetCheck.kt"
   },
@@ -50,8 +53,8 @@
     "name": "Autoclicker",
     "group": "Combat",
     "definitive": false,
-    "what": "Autoclicker via four independent signals on a swing: CPS, Robot (sub-10ms nano-delta), StDev (too-uniform intervals), and Kurtosis (near-uniform fixed-delay). Ported from Nemesis AutoClickerA-D.",
-    "signature": "CPS: swings in last 20 ticks > threshold (20) -> level 1. Robot: first nanoInterval < 10ms AND second < 50ms -> level 2. StDev: populationStDev of last 40 intervals < 0.45 -> level 1. Kurtosis: excess kurtosis over a 600-sample window < -0.7, fired once per episode at level setbackVL + 1.0. A swing relayed while the server has a dig live for that player is skipped for the cadence windows when its interval is >= 2 ticks (as fast as a relay runs in vanilla), so a bedrock miner's exactly-constant 4-tick stream no longer reads as a fixed-delay clicker. CPS still counts those swings.",
+    "what": "Autoclicker via five independent signals on a swing: CPS, Robot (sub-10ms nano-delta), StDev (too-uniform intervals), Kurtosis (near-uniform fixed-delay), and Record (a non-constant periodic click loop). Ported from Nemesis AutoClickerA-D.",
+    "signature": "CPS: swings in last 20 ticks > threshold (20) -> level 1. Robot: first nanoInterval < 10ms AND second < 50ms -> level 2. StDev: populationStDev of last 40 intervals < 0.45 -> level 1. Kurtosis: excess kurtosis over a 600-sample window < -0.7, fired once per episode at level setbackVL + 1.0. Record: detects a non-constant periodic loop in the last 60 tick intervals (the period must hold for >= 5 cycles), fired once per episode at level setbackVL + 1.0 and re-arming after 20 consecutive non-loop intervals. A swing relayed while the server has a dig live for that player is skipped for the cadence windows when its interval is >= 2 ticks (as fast as a relay runs in vanilla), so a bedrock miner's exactly-constant 4-tick stream no longer reads as a fixed-delay clicker. CPS still counts those swings.",
     "fpGuards": [
       "Same-tick swing batches (server/lag collapse) excluded from nano/stat windows",
       "Strict kurtosis bar (-0.7) excludes legit jitter/drag clicking",
@@ -63,7 +66,8 @@
       { "k": "CPS bar", "v": "20 swings / 20 ticks" },
       { "k": "Robot", "v": "<10ms then <50ms" },
       { "k": "StDev bar", "v": "< 0.45 (40 samples)" },
-      { "k": "Kurtosis window", "v": "600, bar -0.7" }
+      { "k": "Kurtosis window", "v": "600, bar -0.7" },
+      { "k": "Record", "v": "periodic loop over 60 intervals, >= 5 cycles" }
     ],
     "source": "src/main/kotlin/dev/iustitia/checks/combat/ClickStatisticsCheck.kt"
   },
@@ -74,17 +78,20 @@
     "group": "Combat",
     "definitive": true,
     "what": "Through-walls / no-LOS KillAura — landing a hit through a solid block (the aura has no line-of-sight filter).",
-    "signature": "On each AttackEvent, raycasts attacker-eye to victim-eye through the client world via WorldQueries.hasLineOfSight. A solid opaque block on the eye-level segment flags at level 1.0. Eye-to-eye (~1.62 both) so legit melee over fences/slabs (<=1.5) is not flagged; only a >=2-tall wall occludes.",
+    "signature": "On each AttackEvent, raycasts the attacker's eye to three victim body points (eye / mid-torso / feet) through the client world via WorldQueries.hasLineOfSight, and records the hit as occluded only when all three are blocked. Keeps a rolling 12-hit window per attacker and flags once at least 3 verdicts are in and the occluded fraction reaches threshold (default 0.5). One alert per episode at setbackVL + 1.0; re-arms when the rate falls back under the ratio.",
     "fpGuards": [
       "Attacker-in-vehicle exempt",
       "Victim-in-vehicle exempt (passenger eye sits inside the vehicle frame)",
-      "Chunk-gated — a 'blocked' verdict trusted only when both endpoint chunks are loaded",
-      "Non-opaque blocks (glass/leaves/ice/fences/panes/iron-bars) treated as line-of-sight"
+      "Chunk-gated — a 'blocked' verdict trusted only when both endpoint chunks are loaded, and an unloaded-chunk hit is skipped rather than counted, so it cannot deflate the rate",
+      "Whole-body occlusion — all three body points must be blocked, so cover that leaves the feet or torso visible (fences, slabs, low walls) is not flagged",
+      "Match-rate gate (threshold 0.5 over a 12-hit window) instead of per-hit flagging, so one fragile verdict does not flag a legit player",
+      "Non-opaque blocks (glass/leaves/ice/fences/panes/iron-bars) treated as line-of-sight via isOpaqueFullCube"
     ],
     "defaults": { "enabled": true, "setbackVL": 8.0, "decay": 0.5, "threshold": 0.5 },
     "constants": [
-      { "k": "ray", "v": "attacker eye -> victim eye" },
-      { "k": "level", "v": "1.0" }
+      { "k": "ray", "v": "attacker eye -> victim eye / mid-torso / feet (all three must be blocked)" },
+      { "k": "window", "v": "12 hits, 3 minimum before the rate is trusted" },
+      { "k": "level", "v": "setbackVL + 1.0, one alert per episode" }
     ],
     "source": "src/main/kotlin/dev/iustitia/checks/combat/ThroughWallsCheck.kt"
   },
@@ -144,7 +151,7 @@
     "group": "Combat",
     "definitive": false,
     "what": "No-swing attack detector — Slinky Hit Select / Grim PacketOrderB. The cheat deals damage with no swing animation in the window (a disabler suppresses the swing packet, or hit-select attacks without the arm animation). Every vanilla melee attack carries a swing, so a no-swing hurt is a cheat OR an unseen attacker — a weak, noisy signal, so this is CORROBORATOR-tier (never initiates a tier alone).",
-    "signature": "Subscribes SwingSignal (per-attacker lastSwingTick) + HurtSignal. On a melee hurt (STATUS/ENTITY_DAMAGE/DAMAGE_TILT; VELOCITY excluded) it attributes the hit to the tracked player the hurt names and to nobody else: a name resolving to no tracked player (mob, arrow, TNT) and a hurt naming nobody at all (fall, fire, drowning) both fail open. Only where the protocol cannot name causes (legacy 1.8-1.19.3) does it fall back to the nearest tracked player within 4 blocks that has a recent swing, and it fails open when nobody qualifies. If no attacker swing within ±2 ticks, increments a per-attacker noSwingCount; flags (level 1.0) at >= threshold (3) no-swing hurts in 60 ticks, transition-gated one flag per episode.",
+    "signature": "Subscribes SwingSignal (per-attacker lastSwingTick) + HurtSignal. On a melee hurt (STATUS/ENTITY_DAMAGE/DAMAGE_TILT; VELOCITY excluded) it attributes the hit to the tracked player the hurt names and to nobody else: a name resolving to no tracked player (mob, arrow, TNT) and a hurt naming nobody at all (fall, fire, drowning) both fail open. Only where the protocol cannot name causes (legacy 1.8-1.19.3) does it fall back to the nearest tracked player within 4 blocks that has a recent swing, and it fails open when nobody qualifies. If no attacker swing within ±2 ticks, increments a per-attacker noSwingCount; flags at >= threshold (3) no-swing hurts in 60 ticks, one alert per episode at setbackVL + 1.0 and re-arming when the no-swing hurts stop.",
     "fpGuards": [
       "VELOCITY hurts excluded (knockback follow-up, not a melee)",
       "Named-cause guard: when the hurt names a cause, only the player it names can be the inferred attacker, so a mob / arrow / TNT hit on the victim fails open instead of landing on whoever swung nearby",
@@ -158,7 +165,7 @@
       { "k": "swing window", "v": "±2 ticks" },
       { "k": "melee range", "v": "4 blocks (16 sq)" },
       { "k": "episode", "v": "60 ticks" },
-      { "k": "flag level", "v": "1.0 (corroborator)" }
+      { "k": "flag level", "v": "setbackVL + 1.0, one alert per episode (corroborator tier)" }
     ],
     "source": "src/main/kotlin/dev/iustitia/checks/combat/HitsWithoutSwingCheck.kt"
   },
@@ -168,20 +175,27 @@
     "name": "NoKnockback",
     "group": "Combat",
     "definitive": false,
-    "what": "Anti-knockback / Velocity — cancels or scales the ~0.4 horizontal KB a sprint-hit applies so the victim barely moves. Nemesis VelocityA/B proxy.",
-    "signature": "On AttackEvent records the hit tick + attacker yaw + attacker-sprinting into the victim's context. process accumulates the victim's horizontal displacement over a 3-tick post-hit window, then flags at level 1.0 if summed displacement <= 0.1 despite a sprint-hit.",
+    "what": "Anti-knockback / Velocity — cancels, scales or redirects the KB a sprint-hit applies so the victim barely moves. One VL pool across four sub-signals: the VelocityC magnitude ratio, the absorbed-KB sustained gate, NoKB(VelocityB) vertical ratio, and NoKB(Vector) direction mismatch. Nemesis VelocityA/B/C proxy.",
+    "signature": "On AttackEvent records the hit tick, attacker yaw and attacker-sprinting into the victim's context. process accumulates the victim's horizontal displacement over a 3-tick post-hit window and flags at 1.0 when it falls under cfg.threshold (0.61) of the EXPECTED KB displacement (impulse x friction-integral, from VelocitySignal on broadcast-velocity servers or vanilla sprint-KB where it is not broadcast). The expected denominator is scaled by the observed fraction of the window, and by ATTACK_SLOWDOWN (0.6) for a hit inside the 2-tick i-frame window. A gate of 3 absorbed verdicts in the last 5 marks the ratio anti-KB sustained rather than a one-off. Two further branches share the pool: NoKB(VelocityB) flags a first-airborne dy / kbVy < 0.995 (the victim never leaves the ground), and NoKB(Vector) flags a post-hit displacement direction off the attacker facing by more than 35 degrees.",
     "fpGuards": [
       "Gated on attacker-sprinting (only sprint-KB is strong enough)",
       "Victim-in-vehicle/gliding/riptide exempt",
       "Recent-teleport exempt (tick - lastTeleportTick < 5)",
       "Server-lag exempt (tick - lastServerLagTick <= 4 or lastLagBurstTick <= 2)",
       "KB-dampening surface at feet exempt (liquid/cobweb/soul sand/honey)",
-      "Wall in KB direction exempt (multi-band sweep)"
+      "Wall in KB direction exempt (multi-band sweep)",
+      "Shield exempt: a player holding up a shield takes no sprint-KB in vanilla, so a legit blocker's ~zero displacement never trips the ratio",
+      "VelocityB is gated on the victim being grounded at the hit: the launches-them-off-the-ground premise is undefined for an already-airborne victim, who contributes their own motion",
+      "VelocityB fails open where velocity is not broadcast (kbVy stays 0), and a first-airborne dy in the 0.38-0.46 band is exempt as an ambiguous vanilla jump"
     ],
     "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 1.0, "threshold": 0.61 },
     "constants": [
       { "k": "window", "v": "3 ticks" },
-      { "k": "min move", "v": "0.1 blocks" }
+      { "k": "ratio bar", "v": "< 0.61 of the expected KB displacement" },
+      { "k": "sustained gate", "v": "3 of the last 5 hits" },
+      { "k": "i-frame scaling", "v": "x0.6 for a hit within 2 ticks of the previous one" },
+      { "k": "VelocityB", "v": "dy/kbVy < 0.995, jump band 0.38-0.46 exempt" },
+      { "k": "Vector", "v": "off attacker facing by > 35 deg, pre-hit speed < 0.05, min move 0.1" }
     ],
     "source": "src/main/kotlin/dev/iustitia/checks/combat/NoKnockbackCheck.kt"
   },
@@ -299,7 +313,8 @@
       { "k": "gcd threshold", "v": "<131072 (1/128deg), fullFloatLook+validSens" },
       { "k": "drift window/ratio", "v": "50 ticks / 0.70 (>=15 samples)" },
       { "k": "VL silent(snap)", "v": "2.5 (clears VL5 in ~2 hits)" },
-      { "k": "VL gcd / drift", "v": "1.5 each (corroborating)" }
+      { "k": "VL gcd", "v": "1.5 (corroborating)" },
+      { "k": "VL drift", "v": "setbackVL + 1.0, one alert per episode (the old flat 1.5 is retired)" }
     ],
     "source": "src/main/kotlin/dev/iustitia/checks/combat/KillAuraCheck.kt"
   },
@@ -356,19 +371,21 @@
     "group": "Combat",
     "definitive": false,
     "what": "Triggerbot — deliberately LAX, only flags really blatant sub-reaction auto-attackers. The cheat auto-attacks the instant the crosshair reaches a victim's hitbox. Unlike KillAura/HitFlick, a triggerbot DOES face the target, so the only inhuman signal is timing.",
-    "signature": "Every tick raycasts eye-to-look against each nearby victim's pose-aware hitbox (within 3.0 reach), recording the tick the crosshair FIRST reaches each victim's hitbox (rising edge). onAttack classes a hit as 'fast' when ev.tick - engagementStart is in 0..3. A 24-hit rolling window flags at level 1.0 only when fastCount >= 4 AND total >= 5 AND fastCount/total >= 0.75.",
+    "signature": "Every tick raycasts eye-to-look against each nearby victim's pose-aware hitbox (within 3.0 reach), recording the tick the crosshair FIRST reaches each victim's hitbox (rising edge). onAttack classes a hit as 'fast' when ev.tick - engagementStart is in 0..3. The clock starts only when the attacker's own aim moved within the last 3 ticks, so an edge created by the victim strafing into a held crosshair is not a reaction and gets no clock. A 24-hit rolling window alerts once per episode at setbackVL + 1.0 when fastCount >= threshold (4) AND total >= 5 AND fastCount/total >= 0.75, re-arming on a non-qualifying hit.",
     "fpGuards": [
       "Attacker-in-vehicle exempt",
       "Victim must be tracked; victim-dead exempt",
       "Cheap distance pre-check (range^2 25.0)",
       "Pose-aware hitbox (avoid early rising edge on crouched victims)",
       "Chunk-unloaded-safe (no world query; near-origin pos never in reach -> skipped)",
+      "Held-aim discriminator: an edge created by the victim moving into a stationary crosshair gets no engagement clock, so a legit player clicking a strafing target is not read as a sub-reaction (deliberately fail-open; a perfectly still user is left to KillAura/HitFlick)",
       "MAX_REACTION_TICKS=3 absorbs 0-2-tick reaction on both protocols; consistency gate absorbs the 3-4 tick ambiguous zone"
     ],
     "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.05, "threshold": 4.0 },
     "constants": [
       { "k": "look reach", "v": "3.0" },
       { "k": "max reaction", "v": "3 ticks" },
+      { "k": "aim-turn window", "v": "3 ticks" },
       { "k": "min samples", "v": "5" },
       { "k": "window", "v": "24 hits" },
       { "k": "ratio", "v": "0.75" }
@@ -407,13 +424,15 @@
     "name": "Fly",
     "group": "Movement",
     "definitive": true,
-    "what": "Flight envelope — three airborne signals while groundedProxy is false: physics breach, hover/AirWalk, and ascend-without-jump. Ported from AvA checkFlight + Nemesis FlyB.",
-    "signature": "Physics breach: dy exceeds gravity-predicted (prevDeltaY-0.08)*0.98 by > threshold (0.1) with recentDescend < 0.5, sustained >=2 ticks. Hover: |dy| < 0.01 with horizontal > 0.1 for >=3 ticks. Ascend: dy > 0.2 with no observed jump impulse within 2 ticks (jump impulse = prevDeltaY < 0.15 && dy > 0.3 && dy < 1.0, debounced >6 ticks).",
+    "what": "Flight envelope — seven airborne sub-signals while groundedProxy is false: physics breach, hover/AirWalk, ascend-without-jump, and the four step-8 sub-signals (FlyB air-friction band, Blink midair freeze, AntiKick dip cadence, StrafeHop impulse), all sharing this VL pool. Ported from AvA checkFlight + Nemesis FlyB.",
+    "signature": "Physics breach: dy exceeds gravity-predicted (prevDeltaY-0.08)*0.98 by > threshold (0.1) with recentDescend < 0.5, sustained >=2 ticks. Hover: |dy| < 0.01 with horizontal > 0.1 for >=3 ticks. Ascend: dy > 0.2 with no observed jump impulse within 2 ticks (jump impulse = prevDeltaY < 0.15 && dy > 0.3 && dy < 1.0, debounced >6 ticks). Four more share the pool: Fly(FlyB) applies the Nemesis vertical air-friction kernel (prevDeltaY-0.08)*0.98 at a 0.05 tolerance, owning the 0.05-0.1 band the 0.1 breach misses, sustained >= 4 ticks; Fly(Blink) is a pure midair full freeze (|delta|^2 < 0.0001) held for blinkFreezeTicks (default 30, clamped 5..200); Fly(AntiKick) holds dy within +-0.05 of a hover point for >= 40 ticks with periodic ~20-tick downward dips <= 0.04; Fly(StrafeHop) counts repeated first-tick-jump dy inside a tight band around 0.40123128, >= 5 times.",
     "fpGuards": [
       "Vehicle/gliding/riptide/swimming exempt",
       "Velocity window (tick - velocityTick < 30)",
-      "Teleport exempt (clears descend window + hoverTicks)",
-      "Hurt exempt (tick - hurtTick < 3)",
+      "Teleport exempt (tick - lastTeleportTick < 10, clears the descend window + hoverTicks)",
+      "Hurt exempt (tick - hurtTick < 6): the ~6-tick KB peak plus the residual upward drift after it is exactly what the 30-tick velocity window misses on servers that do not broadcast other-player velocity",
+      "Climbable at the feet clears all four streak counters: a climb up or down is not flight, and no partial streak survives the tick the player steps off",
+      "Server-lag exempt (shared lag + burst windows), and the sample is skipped rather than pushed, so a hitch cannot poison the >=2-of-5 breach gate",
       "Solid block within 2 above head suppresses ascend (chunk unloaded -> treated as blocked)",
       "Sustained-levitation guard infers Levitation (LEV_GUARD_TICKS=20) and stops accumulating"
     ],
@@ -422,7 +441,11 @@
       { "k": "breach sustain", "v": ">=2 ticks" },
       { "k": "hover", "v": "|dy|<0.01, horiz>0.1, 3 ticks" },
       { "k": "LEV_RISE", "v": "0.2" },
-      { "k": "LEV_GUARD_TICKS", "v": "20" }
+      { "k": "LEV_GUARD_TICKS", "v": "20" },
+      { "k": "Fly(FlyB) band", "v": "0.05-0.1, >= 4 ticks" },
+      { "k": "Fly(Blink)", "v": "|d|^2 < 0.0001 for blinkFreezeTicks (30, clamped 5..200)" },
+      { "k": "Fly(AntiKick)", "v": "+-0.05 of a hover point for >= 40 ticks, ~20-tick dips <= 0.04" },
+      { "k": "Fly(StrafeHop)", "v": "0.40123128 band, >= 5 times" }
     ],
     "source": "src/main/kotlin/dev/iustitia/checks/movement/FlyEnvelopeCheck.kt"
   },
@@ -651,13 +674,16 @@
     "fpGuards": [
       "Vehicle/swimming/gliding exempt",
       "Teleport exempt (tick - lastTeleportTick < 5)",
+      "Server-lag exempt (shared lag + burst windows): a hitch injects a horizontal delta and dy jitter that would otherwise read as surface walking",
       "Waterlogged solid exempt by the !isSolidAt gate (frosted ice is solid)",
-      "Lily pad at footY or footY+1, climbable at foot, or boat below -> legit-support exemption"
+      "Lily pad at footY or footY+1, climbable at foot, or boat below -> legit-support exemption",
+      "Body-in-liquid exempt: the block above the feet is also liquid, or the feet sit more than SURFACE_EPS (0.05) below the liquid top face, so a surface swimmer (whose tp.swimming stays false) is not read as standing on the water"
     ],
     "defaults": { "enabled": true, "setbackVL": 5.0, "decay": 0.5, "threshold": 1.0 },
     "constants": [
       { "k": "streak", "v": "3 ticks" },
-      { "k": "|dy| gate", "v": "0.1" }
+      { "k": "|dy| gate", "v": "0.1" },
+      { "k": "SURFACE_EPS", "v": "0.05" }
     ],
     "source": "src/main/kotlin/dev/iustitia/checks/movement/WaterWalkCheck.kt"
   },
