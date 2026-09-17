@@ -5,11 +5,10 @@ import net.minecraft.item.Items
 
 /**
  * The **combat half of the unfair-advantage pass**. Every scenario names the reference client
- * whose module it reproduces (`References/Cheats/<client>`), and the checks a detector's
- * usefulness actually depends on -- `reach`, `killAura`, `clickStatistics`, `multiTarget`,
- * `noKnockback` -- carry **several clients each**, because a check that catches LiquidBounce's
- * 4.2-block module but misses a ghost-tier 3.6-block module is a bypass that a single drive
- * would have reported as green.
+ * whose module it reproduces, and the checks a detector's usefulness actually depends on --
+ * `reach`, `killAura`, `clickStatistics`, `multiTarget`, `noKnockback` -- carry **several
+ * clients each**, because a check that catches LiquidBounce's 4.2-block module but misses a
+ * ghost-tier 3.6-block module is a bypass that a single drive would have reported as green.
  *
  * ## Staying honest about drives the detector structurally cannot satisfy
  *

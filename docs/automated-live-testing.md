@@ -199,8 +199,8 @@ or clips. It is part of the definition of done for those areas.
 
 1. **Name it after the check**: `legit-<check>` and `cheat-<check>`, pass `"LEGIT"` /
    `"CHEAT"`. Observer tooling uses `"REPLAY"`.
-2. **State what you are faking**, in the class KDoc: the reference behavior
-   (`References/Cheats/…` or a real-world client), and the exact knob you set.
+2. **State what you are faking**, in the class KDoc: the real-world client the
+   module comes from, and the exact knob you set.
 3. **Drive the minimal blatant pattern.** For the cheat pass, pick the *smallest*
    deviation a real cheat implies (e.g. reach 4.2, not 12) — a scenario that only
    passes at absurd values documents nothing.
@@ -219,8 +219,8 @@ or clips. It is part of the definition of done for those areas.
    pattern in between: a scenario whose two "episodes" are closer together than the
    check's own episode gate will chain them into one and false-green.
 6. **Name the reference client.** Cheat scenarios pass a `source` (`"Meteor"`,
-   `"LiquidBounce"`, …) that must match a real client under `References/Cheats`. An
-   unattributed drive is an invented pattern, and `--matrix` labels its row with it.
+   `"LiquidBounce"`, …) that must name a real client. An unattributed drive is an
+   invented pattern, and `--matrix` labels its row with it.
    Where a check is important (combat/movement), add a second client's drive: a detector is
    only as good as the worst drive it misses, which is how `reach`'s 3.8-block floor surfaced.
 7. **Register it** in `SelfTestEntrypoint` (`legitPass()` / `cheatPass()` /
