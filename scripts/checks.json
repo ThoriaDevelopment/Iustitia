@@ -6,7 +6,7 @@
     "group": "Combat",
     "definitive": true,
     "what": "Lag-compensated reach — catches attackers hitting victims from beyond vanilla melee reach. Ported from Nemesis RangeA + Grim Reach. Since v1.4.0 a motionless-pair branch also catches ghost reach: when neither attacker nor victim has moved, interpolation error is zero, so the check drops the ray and compares the vanilla metric (eye to closest point of the unexpanded hitbox) at a 3.2 ceiling — Koid-style 3.6 and LiquidBounce-style 4.2 ghost modules alert instead of passing as jitter.",
-    "signature": "On each AttackEvent, measures the minimum attacker-eye to victim-hitbox ray intercept over 3 candidate looks (current yaw/pitch, lastYaw+pitch, lastYaw+lastPitch) x candidate victim positions (current + last ~3 ticks from the ring buffer). Flags when the minimum intercept distance exceeds threshold + 0.5. VL level = ceil((dist - maxReach) * 2.0).",
+    "signature": "On each AttackEvent, measures the minimum attacker-eye to victim-hitbox ray intercept over 3 candidate looks (current yaw/pitch, lastYaw+pitch, lastYaw+lastPitch) x candidate victim positions (current + last ~3 ticks from the ring buffer). Flags when the minimum intercept distance exceeds maxReach + 0.8. The motionless-pair branch drops the ray and flags past maxReach + 0.2. VL level = ceil((dist - maxReach) * 2.0).",
     "fpGuards": [
       "Attacker-in-vehicle exempt",
       "Victim-dead exempt",
@@ -19,9 +19,9 @@
     ],
     "defaults": { "enabled": true, "setbackVL": 10.0, "decay": 0.25, "threshold": 3.0 },
     "constants": [
-      { "k": "flag margin", "v": "+0.5 beyond maxReach" },
+      { "k": "flag margin", "v": "+0.8 beyond maxReach (+0.2 on the motionless-pair branch)" },
       { "k": "ring window", "v": "3 ticks" },
-      { "k": "hitbox margin", "v": "0.0005 (+0.1 on 1.8)" }
+      { "k": "hitbox margin", "v": "0.1 (+0.1 on 1.8)" }
     ],
     "source": "src/main/kotlin/dev/iustitia/checks/combat/ReachCheck.kt"
   },
