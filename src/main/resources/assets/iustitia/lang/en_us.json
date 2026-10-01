@@ -1,0 +1,15 @@
+{
+  "key.iustitia.snapshot": "Snapshot",
+  "key.iustitia.transcript": "Transcript panel",
+  "key.iustitia.session": "Session screen",
+  "key.iustitia.keybinds": "Keybind hub",
+  "key.iustitia.config": "Config",
+  "key.iustitia.note": "Note target",
+  "key.iustitia.compact": "Compact mode",
+  "key.iustitia.watch": "Watch (follow-cam)",
+  "key.iustitia.replayPause": "Replay pause/resume",
+  "key.iustitia.replaySeekFwd": "Replay seek +5s",
+  "key.iustitia.replaySeekBack": "Replay seek −5s",
+  "key.iustitia.replayExit": "Replay exit",
+  "key.iustitia.replayToggle": "Replay toggle"
+}
