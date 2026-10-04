@@ -51,7 +51,7 @@ class KeybindHubScreen(private val parent: Screen?) : Screen(TITLE) {
             super.render(context, mouseX, mouseY, delta)
             val tr = this.textRenderer
             context.drawTextWithShadow(tr, Text.literal("§8[§diustitia§8] §f§lKeybind hub"), 10, 10, WHITE)
-            context.drawTextWithShadow(tr, Text.literal("§7Rebind any of these in §fOptions → Controls → Miscellaneous§7. Red = key conflict."), 10, 24, WHITE)
+            context.drawTextWithShadow(tr, Text.literal("§7Rebind any of these in §fOptions → Controls → Iustitia§7. Red = key conflict."), 10, 24, WHITE)
             var y = 44
             for (r in rows) {
                 try {
