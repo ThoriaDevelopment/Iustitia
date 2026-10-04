@@ -41,8 +41,9 @@ class TeleportCheck : Check() {
             if (tp.lastTeleportTick == tick) return // already-classified >8b server teleport
             if (tick - tp.hurtTick < 3) return // knockback can launch >1.5 vertically
             if (tick - tp.velocityTick < 20) return
-            // Server lag burst: ≥3 players snapped >2b in the same tick (batched catch-up
-            // after a hitch). A single-player clip never sets this. Exempt so a server
+            // Server lag burst: the server's 20-tick clock just resumed after running late, so
+            // every entity that froze snapped forward at once (batched catch-up after a hitch).
+            // A single-player clip never sets this. Exempt so a server
             // hitch doesn't VClip/SlyPort-flag every player's catch-up movement. Same
             // LagWindows.BURST_WINDOW (3) the other movement checks use — the old `<= 1` left 2 ticks
             // of post-burst catch-up snaps unexempted.

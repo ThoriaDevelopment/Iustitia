@@ -40,22 +40,28 @@ object EntityTrackerManager {
     private var currentTick: Int = 0
 
     /**
-     * Tick of the last detected *server-wide* lag spike — a tick where a majority of
-     * tracked players had a near-zero position delta (everyone frozen simultaneously).
-     * A single player freezing alone (Blink/FakeLag) does NOT set this. Checks that flag
-     * freeze-then-snap or large-jump patterns exempt themselves within a short window of
-     * this tick so a server hitch doesn't false-flag every player's catch-up movement.
+     * Tick of the last detected *server-wide* lag spike. Set every tick the server's own
+     * 20-tick clock sync is late ([ServerTickRate.timeSinceLastTick] past
+     * [ServerTickRate.LAG_SECONDS]) — i.e. the server missed a tick batch and every tracked
+     * player's snapshot is stale. A single player freezing alone (Blink/FakeLag) does NOT set
+     * this. Checks that flag freeze-then-snap or large-jump patterns exempt themselves within a
+     * short window of this tick so a server hitch doesn't false-flag every player's catch-up
+     * movement.
      */
     @Volatile
     var lastServerLagTick: Int = -10000
 
     /**
-     * Tick of the last *lag burst* — a tick where ≥3 tracked players jumped >2 blocks at
-     * once (a batched catch-up after a hitch). A single-player clip does NOT set this.
-     * Used by TeleportCheck to exempt the simultaneous-snap pattern of server lag.
+     * Tick the server's clock *resumed* after a lag spike — the catch-up tick, when every
+     * entity that froze snaps forward at once. Used by TeleportCheck to exempt the
+     * simultaneous-snap pattern of server lag. A single-player clip does NOT set this.
      */
     @Volatile
     var lastLagBurstTick: Int = -10000
+
+    /** True while the previous tick was inside a lag spike; the falling edge is the burst. */
+    @Volatile
+    private var lagging: Boolean = false
 
     fun tickCount(): Int = currentTick
 
@@ -205,11 +211,6 @@ object EntityTrackerManager {
         val client = MinecraftClient.getInstance()
         return try {
             val seen = HashSet<UUID>()
-            // per-tick lag tally: how many players were frozen (|Δ|≈0) vs jumped (>2b).
-            // A majority frozen => server-wide lag; ≥3 simultaneous jumps => lag burst.
-            var frozen = 0
-            var burst = 0
-            var total = 0
             for (e in world.players) {
                 if (e === client.player) continue
                 if (e !is OtherClientPlayerEntity) continue
@@ -219,16 +220,6 @@ object EntityTrackerManager {
                     if (tp.entityId != e.id) tp.entityId = e.id
                     seen.add(e.uuid)
                     updateSnapshot(tp, world, tick)
-                    total++
-                    val d = tp.delta
-                    val mag = (d.x * d.x + d.y * d.y + d.z * d.z)
-                    // Only count a player toward `frozen` if they actually moved recently, so a
-                    // perpetually idle/AFK player never inflates the mass-freeze (server-lag)
-                    // signal. Without this, an AFK player frozen next to a Blinker makes
-                    // frozen==2 && total==2 fire every Blink-freeze tick, exempting the Blinker's
-                    // snap from Speed/PacketGap. (Also defuses the ≥3-AFK majority branch.)
-                    if (mag < 0.0001 && tick - tp.lastMoveTick <= 20) frozen++
-                    else if (mag > 4.0) burst++
                 } catch (_: Throwable) {
                     // skip this entity, keep going
                 }
@@ -238,16 +229,22 @@ object EntityTrackerManager {
             // leaks one CheckContext per unique joiner per check). Despawns are rare, so the
             // per-despawn × listeners fan-out is cheap.
             sweepDespawns(seen)
-            // publish the shared lag signals for this tick (single source of truth).
-            // A majority frozen, OR (for small lobbies of exactly 2 other players) BOTH frozen
-            // — two independent players freezing together is still a server-wide signal, not a
-            // lone Blink. (A strict 1v1, total == 1, is fundamentally unobservable client-side:
-            // one player freezing then snapping is either server lag OR that player's Blink.)
-            if (total > 0 && (frozen >= 3 && frozen * 2 >= total || total == 2 && frozen == 2)) {
+            // publish the shared lag signals for this tick (single source of truth), read off the
+            // server's own 20-tick clock ([ServerTickRate], ported from MeteorClient). While the
+            // sync is late the server missed a tick batch, so every snapshot is stale — stamp the
+            // freeze every tick it lasts to keep the window fresh. The tick the clock resumes is
+            // the catch-up tick, which is exactly when the frozen entities all snap at once, so it
+            // stamps the burst. `synced` gates out servers that never send the packet, which would
+            // otherwise read as permanently lagging and exempt every check forever.
+            if (ServerTickRate.synced &&
+                ServerTickRate.timeSinceLastTick() > ServerTickRate.LAG_SECONDS
+            ) {
                 lastServerLagTick = tick
+                lagging = true
+            } else if (lagging) {
+                lastLagBurstTick = tick
+                lagging = false
             }
-            // batched catch-up: ≥3 jumped at once, OR (small lobby) both jumped together.
-            if (burst >= 3 || (total == 2 && burst == 2)) lastLagBurstTick = tick
             byUuid.values.toList()
         } catch (_: Throwable) {
             byUuid.values.toList()
@@ -423,6 +420,8 @@ object EntityTrackerManager {
     fun reset() {
         try {
             byUuid.clear()
+            lagging = false
+            ServerTickRate.reset()
         } catch (_: Throwable) {
             // ignore
         }

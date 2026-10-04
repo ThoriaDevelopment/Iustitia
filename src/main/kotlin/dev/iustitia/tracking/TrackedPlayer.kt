@@ -143,9 +143,8 @@ class TrackedPlayer(val uuid: UUID, var entityId: Int, val joinTick: Int) {
         get() = digActive && pos.squaredDistanceTo(digPos) <= DIG_ORPHAN_SQ
 
     /** Tick of the last tick this player actually moved (|delta|² >= 0.0001). Idle-since-join
-     *  players keep the default -10000 so they never inflate the EntityTrackerManager mass-
-     *  freeze (server-lag) signal — an AFK player frozen next to a Blinker must not exempt
-     *  the Blinker's snap. */
+     *  players keep the default -10000, so [dev.iustitia.tracking.LagCombatCorrelator] never
+     *  reads a standing AFK player as a self-induced (cheat) freeze. */
     var lastMoveTick: Int = -10000
 
     // --- observed status effects ---
