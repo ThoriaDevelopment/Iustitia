@@ -10,6 +10,7 @@ import dev.iustitia.event.SwingSignal
 import dev.iustitia.event.VelocitySignal
 import dev.iustitia.protocol.ProtocolDetector
 import dev.iustitia.tracking.EntityTrackerManager
+import dev.iustitia.tracking.ServerTickRate
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.network.ClientPlayNetworkHandler
 import net.minecraft.entity.Entity
@@ -27,6 +28,7 @@ import net.minecraft.network.packet.s2c.play.GameMessageS2CPacket
 import net.minecraft.network.packet.s2c.play.PlayerRespawnS2CPacket
 import net.minecraft.network.packet.s2c.play.ProfilelessChatMessageS2CPacket
 import net.minecraft.network.packet.s2c.play.RemoveEntityStatusEffectS2CPacket
+import net.minecraft.network.packet.s2c.play.WorldTimeUpdateS2CPacket
 import org.spongepowered.asm.mixin.Mixin
 import org.spongepowered.asm.mixin.injection.At
 import org.spongepowered.asm.mixin.injection.Inject
@@ -104,6 +106,23 @@ class ClientPlayNetworkHandlerMixin {
                 SpawnState.seed = newSeed
             }
             // same world (death-respawn): intentionally preserve all VL — see PacketSignals.
+        } catch (_: Throwable) {}
+    }
+
+    /**
+     * The server's 20-tick clock sync (`MinecraftServer.tickWorlds`: `ticks % 20 == 0`). The
+     * gap between two of these is the server's own measure of "is it still ticking", which is
+     * what [ServerTickRate] turns into the shared lag signals — see that file for why this
+     * replaced the per-player position-delta heuristic.
+     *
+     * Deliberately NOT routed through [Iustitia.defer] like the entity signals: the whole point
+     * is timestamp accuracy, and a tick-queue hop would add up to 50 ms of error to every
+     * measurement. The write is a single volatile long store. Fail-open.
+     */
+    @Inject(method = ["onWorldTimeUpdate"], at = [At("HEAD")])
+    private fun iustitia_onWorldTimeUpdate(packet: WorldTimeUpdateS2CPacket, ci: CallbackInfo) {
+        try {
+            ServerTickRate.onWorldTimeUpdate()
         } catch (_: Throwable) {}
     }
 

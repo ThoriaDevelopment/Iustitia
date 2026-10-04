@@ -222,9 +222,9 @@ class KillAuraCheck : Check() {
      *  on-target lock-on case is `silent(track)`'s signal, not drift's. Drift measures
      *  the *closing* phase where the target is still off-bore (behind/beside the cheater). */
     private val DRIFT_ON_TARGET_TOL = QUANTUM
-    /** Lag gate (§1.8 posture): a catch-up snap produces a spurious large Δyaw that
-     *  coincidentally matches the bearing direction (rubberband toward target) — skip
-     *  sampling so the legit window stays intact. */
+    /** Lag gate (§1.8 posture): the server's own clock stalled and resumed, so its catch-up
+     *  snap produces a spurious large Δyaw that coincidentally matches the bearing direction
+     *  (rubberband toward target) — skip sampling so the legit window stays intact. */
     private val DRIFT_LAG_WINDOW = 8
     private val DRIFT_BURST_WINDOW = 3
 
@@ -382,7 +382,8 @@ class KillAuraCheck : Check() {
             ctx.lastDeltaPitch = 0f
             return
         }
-        // lag gate: catch-up snaps distort deltas → don't pair a stale predecessor.
+        // lag gate: the server's clock stalled, so its catch-up snaps distort deltas →
+        // don't pair a stale predecessor.
         if (tick - EntityTrackerManager.lastServerLagTick <= GCD_LAG_WINDOW ||
             tick - EntityTrackerManager.lastLagBurstTick <= GCD_BURST_WINDOW
         ) {
@@ -680,8 +681,9 @@ class KillAuraCheck : Check() {
      */
     private fun driftComponent(tp: TrackedPlayer, ctx: KillAuraContext, tick: Int,
                                yawChange: Float, yaw: Float, targets: List<TrackedPlayer>) {
-        // lag gate: a catch-up snap produces a spurious large Δyaw matching the bearing
-        // direction (rubberband toward target) — skip sampling, keep the legit window intact.
+        // lag gate: the server's clock stalled, so its catch-up snap produces a spurious large
+        // Δyaw matching the bearing direction (rubberband toward target) — skip sampling, keep
+        // the legit window intact.
         if (tick - EntityTrackerManager.lastServerLagTick <= DRIFT_LAG_WINDOW ||
             tick - EntityTrackerManager.lastLagBurstTick <= DRIFT_BURST_WINDOW) return
 

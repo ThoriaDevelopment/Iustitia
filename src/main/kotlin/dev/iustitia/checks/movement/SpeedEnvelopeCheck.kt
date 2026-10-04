@@ -71,10 +71,10 @@ import dev.iustitia.checks.LagWindows
  * sand is NOT included — it does not make a player faster. Chunk not loaded → no cap
  * raise (strict — may slightly over-flag at borders, never under-flags).
  *
- * Server-lag exemption: a server-wide hitch (everyone frozen) or a batched catch-up burst
- * (everyone snapping >2b at once) injects huge bps samples into every player
- * simultaneously — the spawn-in burst after a world transition ("sent to KitPVP") is
- * exactly this, and would otherwise mass-flag Speed across the whole lobby.
+ * Server-lag exemption: a server-wide hitch (the server's 20-tick clock runs late) or the
+ * catch-up burst when it resumes (everyone snapping at once) injects huge bps samples into
+ * every player simultaneously — the spawn-in burst after a world transition ("sent to KitPVP")
+ * is exactly this, and would otherwise mass-flag Speed across the whole lobby.
  * [EntityTrackerManager.lastServerLagTick] / [EntityTrackerManager.lastLagBurstTick] are
  * the single source of truth for those signals; we skip the flag (and skip pushing the
  * bps sample, so lag never poisons the ≥3-of-6 window) when within a short window of

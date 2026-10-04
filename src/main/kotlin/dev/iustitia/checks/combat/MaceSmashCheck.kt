@@ -94,8 +94,9 @@ class MaceSmashCheck : Check() {
     private fun evaluate(tp: TrackedPlayer, ctx: MaceContext, tick: Int, at: Int) {
         // not a mace smash (no mace in hand at the attack) → no flag
         if (!ctx.attackMaceHeld) return
-        // Lag gate (standard §8 step-0 posture): a batched catch-up snap is a large Δy
-        // with no fall lead-in — precisely the false signature. This is NOT the >8b
+        // Lag gate (standard §8 step-0 posture): the server's own clock stalled and then
+        // resumed, so the catch-up snap lands as a large Δy with no fall lead-in — precisely
+        // the false signature. This is NOT the >8b
         // teleport exemption (we deliberately never read lastTeleportTick — see class doc).
         if (tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
             tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW

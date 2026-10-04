@@ -25,8 +25,9 @@ import dev.iustitia.checks.LagWindows
  *
  * **Server-lag exemption:** a genuine server hitch freezes *every* player at once, then
  * releases them in a batched catch-up that looks identical to one player's Blink. We now
- * distinguish them via [EntityTrackerManager.lastServerLagTick] (a majority froze) and
- * [EntityTrackerManager.lastLagBurstTick] (a batched catch-up snapped) — a single Blinker
+ * distinguish them via [EntityTrackerManager.lastServerLagTick] (the server's own 20-tick
+ * clock is late) and [EntityTrackerManager.lastLagBurstTick] (the clock just resumed, so the
+ * catch-up snap landed) — a single Blinker
  * freezing alone never sets either. During a lag window we *reset* the freeze counter so a
  * pre-lag idle run (freeze already ≥5) can't carry into the first post-lag movement tick and
  * fire a false "Blink", and snaps inside the window aren't flagged. This is the per-entity
@@ -56,11 +57,11 @@ class PacketGapCheck : Check() {
             val dy = tp.delta.y
             val dz = tp.delta.z
             val mag = sqrt(dx * dx + dy * dy + dz * dz)
-            // server-wide lag window: majority froze (lastServerLagTick) OR a batched catch-up
-            // snapped (lastLagBurstTick) recently -> this player's freeze/snap is the server's
-            // catch-up, not a Blink. Reset the freeze so a pre-lag idle run can't fire on the
-            // first post-lag move; skip the snap. (Consulting lastLagBurstTick matches the
-            // sibling SpeedEnvelope/PhaseClip checks, which a lag manifested as a burst only
+            // server-wide lag window: the server's clock is late (lastServerLagTick) OR it just
+            // resumed and the catch-up snapped (lastLagBurstTick) -> this player's freeze/snap is
+            // the server's catch-up, not a Blink. Reset the freeze so a pre-lag idle run can't
+            // fire on the first post-lag move; skip the snap. (Consulting lastLagBurstTick matches
+            // the sibling SpeedEnvelope/PhaseClip checks, which a lag manifested as a burst only
             // would otherwise evade.)
             val serverLag = tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
                 tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
