@@ -1,6 +1,7 @@
 package dev.iustitia.ui
 
 import dev.iustitia.history.FlagHistory
+import dev.iustitia.i18n.L10n
 import dev.iustitia.tracking.EntityTrackerManager
 import net.minecraft.client.gui.DrawContext
 import net.minecraft.client.gui.Click
@@ -37,7 +38,7 @@ class PlayerSearchScreen(private val parent: Screen?) : Screen(TITLE) {
     override fun init() {
         try {
             val w = this.width
-            searchField = TextFieldWidget(this.textRenderer, 10, 36, w - 20, 16, Text.literal("Search players"))
+            searchField = TextFieldWidget(this.textRenderer, 10, 36, w - 20, 16, L10n.t("iustitia.screen.playerSearch.fieldLabel"))
                 .also { it.setMaxLength(32); it.text = filter; it.setChangedListener { f -> filter = f; rebuild(); scroll = 0 } }
             addDrawableChild(searchField)
             setInitialFocus(searchField)
@@ -76,10 +77,10 @@ class PlayerSearchScreen(private val parent: Screen?) : Screen(TITLE) {
             context.fill(0, 0, this.width, this.height, BG)
             super.render(context, mouseX, mouseY, delta)
             val tr = this.textRenderer
-            context.drawTextWithShadow(tr, Text.literal("§8[§diustitia§8] §f§lPlayer history"), 10, 10, WHITE)
-            context.drawTextWithShadow(tr, Text.literal("§7Search players by name — click a row for its flag history"), 10, 24, WHITE)
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.playerSearch.header"), 10, 10, WHITE)
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.playerSearch.hint"), 10, 24, WHITE)
             if (rows.isEmpty()) {
-                context.drawTextWithShadow(tr, Text.literal("§7No players match. (tracked+flagged this session)"), 10, listTop + 2, WHITE)
+                context.drawTextWithShadow(tr, L10n.t("iustitia.screen.playerSearch.empty"), 10, listTop + 2, WHITE)
                 return
             }
             val maxScroll = maxScroll()
@@ -95,15 +96,15 @@ class PlayerSearchScreen(private val parent: Screen?) : Screen(TITLE) {
                 val glyph = glyphFor(r.tier)
                 context.drawTextWithShadow(tr, Text.literal(glyph + " §f" + r.name), listLeft + 2, y + 2, WHITE)
                 val right = listLeft + rowWidth() - 4
-                val alertsTxt = Text.literal("§7alerts §f${r.alerts}" + (r.top?.let { " §7top §b$it" } ?: ""))
+                val alertsTxt = Text.literal(L10n.s("iustitia.screen.playerSearch.alerts", r.alerts) + (r.top?.let { L10n.s("iustitia.screen.playerHistory.topCheck", it) } ?: ""))
                 context.drawTextWithShadow(tr, alertsTxt, right - tr.getWidth(alertsTxt), y + 2, WHITE)
             }
             // scrollbar
             if (maxScroll > 0) drawScrollbar(context, visible, maxScroll)
             if (rows.size > visible) {
-                context.drawTextWithShadow(tr, Text.literal("§7${rows.size} players · scroll to see more · click a row"), 10, this.height - 14, WHITE)
+                context.drawTextWithShadow(tr, L10n.t("iustitia.screen.playerSearch.footerMore", rows.size), 10, this.height - 14, WHITE)
             } else {
-                context.drawTextWithShadow(tr, Text.literal("§7${rows.size} players · click a row"), 10, this.height - 14, WHITE)
+                context.drawTextWithShadow(tr, L10n.t("iustitia.screen.playerSearch.footer", rows.size), 10, this.height - 14, WHITE)
             }
         } catch (_: Throwable) {}
     }
@@ -157,7 +158,7 @@ class PlayerSearchScreen(private val parent: Screen?) : Screen(TITLE) {
     }
 
     companion object {
-        private val TITLE = Text.literal("Iustitia — player history")
+        private val TITLE get() = L10n.t("iustitia.screen.playerSearch.title")
         private const val ROW_H = 12
         private fun glyphFor(tier: FlagHistory.Tier): String = when (tier) {
             FlagHistory.Tier.GREEN -> "§a[+]§r"

@@ -3,6 +3,7 @@ package dev.iustitia.ui
 import dev.iustitia.Iustitia
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
+import dev.iustitia.i18n.L10n
 import dev.iustitia.persistence.NoteStore
 import dev.iustitia.session.SessionStats
 import net.minecraft.client.gui.DrawContext
@@ -45,21 +46,21 @@ class TranscriptPanelScreen(
             context.drawTextWithShadow(tr, Text.literal("§8[§diustitia§8]"), x0 + 4, y, WHITE); y += 11
             context.drawTextWithShadow(tr, Text.literal("$glyph §f$name"), x0 + 4, y, WHITE); y += 11
             val score = FlagHistory.confidenceScore(uuid)
-            context.drawTextWithShadow(tr, Text.literal("§7tier §f${tier.name} §7[$score]"), x0 + 4, y, WHITE); y += 13
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.transcript.tier", tier.name, score), x0 + 4, y, WHITE); y += 13
             // session taps
             val st = SessionStats.stats(uuid)
-            context.drawTextWithShadow(tr, Text.literal("§7swing §f${st.swings.get()} §7hit §f${st.hits.get()} §7vel §f${st.velocity.get()}"), x0 + 4, y, WHITE); y += 11
-            context.drawTextWithShadow(tr, Text.literal("§7alerts §f${FlagHistory.sessionAlertCount(uuid)} §7flags §f${FlagHistory.flagCounts(uuid).values.sum()}"), x0 + 4, y, WHITE); y += 13
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.transcript.stats", st.swings.get(), st.hits.get(), st.velocity.get()), x0 + 4, y, WHITE); y += 11
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.transcript.alertsFlags", FlagHistory.sessionAlertCount(uuid), FlagHistory.flagCounts(uuid).values.sum()), x0 + 4, y, WHITE); y += 13
             // note if any
             val note = NoteStore.get(uuid)
             if (note != null) {
-                context.drawTextWithShadow(tr, Text.literal("§7note: ${NoteStore.categoryLabel(note.category)}"), x0 + 4, y, WHITE); y += 11
+                context.drawTextWithShadow(tr, L10n.t("iustitia.screen.transcript.note", NoteStore.categoryLabel(note.category)), x0 + 4, y, WHITE); y += 11
             }
-            context.drawTextWithShadow(tr, Text.literal("§8last events:"), x0 + 4, y, WHITE); y += 11
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.transcript.lastEvents"), x0 + 4, y, WHITE); y += 11
             // Merge a small recent-events timeline: flags (with evidence) newest-first.
             val flags = FlagHistory.flags(uuid).take(15)
             if (flags.isEmpty()) {
-                context.drawTextWithShadow(tr, Text.literal("§7(no flags)"), x0 + 4, y, WHITE)
+                context.drawTextWithShadow(tr, L10n.t("iustitia.screen.transcript.noFlags"), x0 + 4, y, WHITE)
             } else {
                 val now = Iustitia.tickCounter
                 for (f in flags) {
@@ -82,14 +83,14 @@ class TranscriptPanelScreen(
                     if (y > this.height - 12) break
                 }
             }
-            context.drawTextWithShadow(tr, Text.literal("§8${if (ConfigManager.config.compactMode) "compact" else ""}"), x0 + 4, this.height - 12, WHITE)
+            context.drawTextWithShadow(tr, Text.literal("§8" + if (ConfigManager.config.compactMode) L10n.s("iustitia.screen.transcript.compact") else ""), x0 + 4, this.height - 12, WHITE)
         } catch (_: Throwable) {}
     }
 
     override fun close() { client?.setScreen(parent) }
 
     companion object {
-        private val TITLE = Text.literal("Iustitia — transcript")
+        private val TITLE get() = L10n.t("iustitia.screen.transcript.title")
         private const val WHITE = -1
         private val BG = 0xCC101010.toInt()
         private fun fmt2(v: Double?): String =

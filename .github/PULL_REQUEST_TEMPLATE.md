@@ -15,6 +15,7 @@
 - [ ] Rendering or HUD
 - [ ] Replay, clips, camera, or input
 - [ ] Persistence or local data
+- [ ] Localization/translation strings
 - [ ] Documentation/tests/tooling
 
 ## Verification

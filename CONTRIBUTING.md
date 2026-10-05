@@ -116,6 +116,19 @@ Document:
 
 Never log full server credentials, tokens, private messages, or unnecessary personal data.
 
+### User-facing text and translations
+
+All player-visible prose goes through `dev.iustitia.i18n.L10n` and is stored in
+`src/main/resources/assets/iustitia/lang/en_us.json`; do not hardcode display English in Kotlin.
+That rule is a review convention, not a verifier check — `verify_contribution.py --static` does
+not scan for leftover English literals. What it does enforce is that every key the source asks
+for exists in `en_us.json`, that every shipped language carries exactly the same key set, and
+that placeholders, `%` specs and `§` colour-code counts match English.
+Check ids, flag labels, `/ius` command names and config keys are
+identifiers and stay raw — localizing them breaks the live-test assertions and every documented
+command. To add a language, copy `en_us.json` to `<code>.json` and translate the values only,
+keeping `%s` placeholders, `%%` escapes, `\n` and the `§` color codes intact.
+
 ## Required verification
 
 Run the repository verifier before opening a PR:

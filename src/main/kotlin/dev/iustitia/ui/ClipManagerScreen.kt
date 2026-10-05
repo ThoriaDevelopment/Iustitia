@@ -1,6 +1,7 @@
 package dev.iustitia.ui
 
 import dev.iustitia.NumFmt
+import dev.iustitia.i18n.L10n
 import dev.iustitia.replay.ClipCodec
 import dev.iustitia.replay.ClipPlayback
 import dev.iustitia.replay.ClipStore
@@ -47,11 +48,11 @@ class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
         try {
             context.fill(0, 0, this.width, this.height, BG)
             val tr = this.textRenderer
-            context.drawTextWithShadow(tr, Text.literal("§8[§diustitia§8] §f§lClips"), 10, 10, WHITE)
-            context.drawTextWithShadow(tr, Text.literal("§7Saved .iusclip files — §fleft-click §7to play · §fright-click §7to delete"), 10, 24, WHITE)
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.clips.header"), 10, 10, WHITE)
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.clips.hint"), 10, 24, WHITE)
             context.drawTextWithShadow(tr, Text.literal("§7" + ClipStore.dirDisplay()), 10, 38, WHITE)
             if (rows.isEmpty()) {
-                context.drawTextWithShadow(tr, Text.literal("§7No saved clips. Save one with §f/ius clip <seconds> [name]§7."), 10, listTop + 2, WHITE)
+                context.drawTextWithShadow(tr, L10n.t("iustitia.screen.clips.emptyHint"), 10, listTop + 2, WHITE)
                 status?.let { context.drawTextWithShadow(tr, Text.literal(it), 10, this.height - 14, WHITE) }
                 return
             }
@@ -66,15 +67,15 @@ class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
                 val hovered = mouseX in listLeft..(listLeft + rowWidth()) && mouseY in y..(y + ROW_H)
                 if (hovered) context.fill(listLeft, y, listLeft + rowWidth(), y + ROW_H, 0x40FFFFFF)
                 val counts = r.meta?.let {
-                    val base = "§7frames §f${it.frameCount} §7alerts §f${it.alertCount}"
-                    val terrain = if (it.terrainBlocks > 0) " §7terrain §f${it.terrainBlocks}§7 blocks" else ""
-                    val chunks = if (it.chunkSections > 0) " §7world §f${it.chunkSections}§7 sections" else ""
+                    val base = L10n.s("iustitia.screen.clips.counts", it.frameCount, it.alertCount)
+                    val terrain = if (it.terrainBlocks > 0) L10n.s("iustitia.screen.clips.countsTerrain", it.terrainBlocks) else ""
+                    val chunks = if (it.chunkSections > 0) L10n.s("iustitia.screen.clips.countsWorld", it.chunkSections) else ""
                     "$base$terrain$chunks"
-                } ?: "§8(unreadable)"
-                context.drawTextWithShadow(tr, Text.literal("§f${r.name} §7— $counts §8[▶ play] §c[✕ del]"), listLeft + 2, y + 3, WHITE)
+                } ?: L10n.s("iustitia.screen.clips.unreadable")
+                context.drawTextWithShadow(tr, L10n.t("iustitia.screen.clips.row", r.name, counts), listLeft + 2, y + 3, WHITE)
             }
             if (maxScroll > 0) drawScrollbar(context, visible, maxScroll)
-            val foot = if (rows.size > visible) "§7${rows.size} clips · scroll to see more" else "§7${rows.size} clips"
+            val foot = if (rows.size > visible) L10n.s("iustitia.screen.clips.footerMore", rows.size) else L10n.s("iustitia.screen.clips.footer", rows.size)
             context.drawTextWithShadow(tr, Text.literal(foot), 10, this.height - 14, WHITE)
             status?.let { context.drawTextWithShadow(tr, Text.literal(it), 10, this.height - 26, WHITE) }
         } catch (_: Throwable) {}
@@ -117,25 +118,25 @@ class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
             when (val r = ClipPlayback.start(name, ReplayState.SPEED_FULL)) {
                 is ClipPlayback.Result.Started -> {
                     mc.setScreen(null)
-                    mc.player?.sendMessage(Text.literal("§8[§diustitia§8] §7playing clip §f$name§7 at §f${NumFmt.d(digits = 2, v = ReplayState.SPEED_FULL)}×§7 — §f${r.frames}§7 frames. Auto-stops at the end (or §f/ius playclip off§7)."), false)
+                    mc.player?.sendMessage(L10n.t("iustitia.screen.clips.playedMsg", name, NumFmt.d(digits = 2, v = ReplayState.SPEED_FULL), r.frames), false)
                 }
                 is ClipPlayback.Result.LoadFailed -> {
                     // The reason rides along (truncated — the status line is one row wide).
                     val why = r.reason?.take(60)?.let { " §8($it)" } ?: ""
-                    status = "§c couldn't read §f$name$why"
+                    status = L10n.s("iustitia.screen.clips.statusCouldntRead", name, why)
                 }
-                ClipPlayback.Result.StartFailed -> { status = "§c couldn't start §f$name" }
+                ClipPlayback.Result.StartFailed -> { status = L10n.s("iustitia.screen.clips.statusCouldntStart", name) }
             }
-        } catch (_: Throwable) { status = "§c play failed" }
+        } catch (_: Throwable) { status = L10n.s("iustitia.screen.clips.statusPlayFailed") }
     }
 
     /** Delete a clip + refresh the list. */
     private fun delete(name: String) {
         try {
             val ok = ClipStore.delete(name)
-            status = if (ok) "§7deleted §f$name" else "§c couldn't delete §f$name"
+            status = if (ok) L10n.s("iustitia.screen.clips.statusDeleted", name) else L10n.s("iustitia.screen.clips.statusCouldntDelete", name)
             rebuild()
-        } catch (_: Throwable) { status = "§c delete failed" }
+        } catch (_: Throwable) { status = L10n.s("iustitia.screen.clips.statusDeleteFailed") }
     }
 
     override fun close() { client?.setScreen(parent) }
@@ -157,7 +158,7 @@ class ClipManagerScreen(private val parent: Screen?) : Screen(TITLE) {
     }
 
     companion object {
-        private val TITLE = Text.literal("Iustitia — clips")
+        private val TITLE get() = L10n.t("iustitia.screen.clips.title")
         private const val ROW_H = 14
         // Opaque white (ARGB 0xFFFFFFFF) — see PlayerSearchScreen for the 0xFFFFFF alpha-0 gotcha.
         private const val WHITE = -1

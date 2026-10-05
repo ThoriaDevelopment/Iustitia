@@ -1,6 +1,7 @@
 package dev.iustitia.replay
 
 import dev.iustitia.config.ConfigManager
+import dev.iustitia.i18n.L10n
 
 /**
  * Shared "load a saved `.iusclip` and start playing it back" helper — the single place that turns a
@@ -32,8 +33,8 @@ object ClipPlayback {
         val clip = ClipStore.load(name)
         if (clip == null || clip.window.frames.isEmpty()) {
             Result.LoadFailed(
-                if (clip == null) ClipCodec.lastReadReason ?: "no such clip"
-                else "the clip has no frames"
+                if (clip == null) ClipCodec.lastReadReason ?: L10n.s("iustitia.replay.clipNoSuchClip")
+                else L10n.s("iustitia.replay.clipNoFrames")
             )
         } else {
             // Legacy = the v1.1.0 playclip: no relocation (ghosts at recorded coords), no auto-freecam

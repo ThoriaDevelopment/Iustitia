@@ -1,5 +1,6 @@
 package dev.iustitia.keybind
 
+import dev.iustitia.i18n.L10n
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper
 import net.minecraft.client.option.KeyBinding
 import net.minecraft.client.util.InputUtil
@@ -33,49 +34,41 @@ import org.lwjgl.glfw.GLFW
  */
 object Keybinds {
 
-    /** A registered bind: metadata always present; [keyBinding] is null until [register] succeeds. */
+    /** A registered bind: metadata always present; [keyBinding] is null until [register] succeeds.
+     *  [label] and [description] are live lookups (not frozen constructor strings) so a runtime
+     *  language switch applies to the hub immediately. The texts live in the language files
+     *  (`key.iustitia.<id>` / `iustitia.misc.keybind.<id>`); the static verifier fails if en_us is
+     *  missing either key, and [net.minecraft.util.Language] falls back to en_us for any translation
+     *  that lacks them. */
     data class Bind(
         val id: String,
         val defaultKey: Int,
         var keyBinding: KeyBinding?,
-        val label: String,
-        val description: String,
-    )
+    ) {
+        /** Display label — the vanilla `key.iustitia.<id>` key (same text the Controls screen shows). */
+        val label: String
+            get() = L10n.s("key.iustitia.$id")
+
+        /** One-line description shown by the keybind hub. */
+        val description: String
+            get() = L10n.s("iustitia.misc.keybind.$id")
+    }
 
     private val binds: List<Bind> = listOf(
-        bind("snapshot", GLFW.GLFW_KEY_K, "Snapshot",
-            "Post + copy a one-line evidence summary of your crosshair target."),
-        bind("transcript", GLFW.GLFW_KEY_J, "Transcript panel",
-            "Toggle the live side-panel transcript for your crosshair target."),
-        bind("session", GLFW.GLFW_KEY_HOME, "Session screen",
-            "Open the dense session summary screen (tier counts, peak, totals)."),
-        bind("keybinds", GLFW.GLFW_KEY_END, "Keybind hub",
-            "Open this screen — lists every bind, its key, and conflicts."),
-        bind("config", GLFW.GLFW_KEY_F8, "Config",
-            "Open the YACL config screen."),
-        bind("note", GLFW.GLFW_KEY_N, "Note target",
-            "Read the moderator note on your crosshair target (if any)."),
-        bind("compact", GLFW.GLFW_KEY_F7, "Compact mode",
-            "Toggle compact one-line alerts + condensed screens."),
-        bind("watch", GLFW.GLFW_KEY_F9, "Watch (follow-cam)",
-            "Follow-cam orbit on your crosshair target — same as /ius spectate. Forces F1 and a " +
-                "third-party view with all entities visible; move the mouse to orbit, walk or get " +
-                "hit to stop, press the bind again to exit. Handled by FollowCam when that mod is " +
-                "installed."),
-        bind("replayPause", GLFW.GLFW_KEY_KP_5, "Replay pause/resume",
-            "Pause or resume an active instant-replay (/ius replay). Default: numpad 5."),
-        bind("replaySeekFwd", GLFW.GLFW_KEY_KP_ADD, "Replay seek +5s",
-            "Jump an active replay 5 seconds forward (works while playing). Default: numpad +."),
-        bind("replaySeekBack", GLFW.GLFW_KEY_KP_SUBTRACT, "Replay seek −5s",
-            "Jump an active replay 5 seconds back (works while playing). Default: numpad −."),
-        bind("replayExit", GLFW.GLFW_KEY_KP_0, "Replay exit",
-            "Stop the active replay/clip-playback and restore the live view. Default: numpad 0."),
-        bind("replayToggle", GLFW.GLFW_KEY_KP_MULTIPLY, "Replay toggle",
-            "Start a replay of the configured seconds (default numpad *); press again to stop."),
+        Bind("snapshot", GLFW.GLFW_KEY_K, null),
+        Bind("transcript", GLFW.GLFW_KEY_J, null),
+        Bind("session", GLFW.GLFW_KEY_HOME, null),
+        Bind("keybinds", GLFW.GLFW_KEY_END, null),
+        Bind("config", GLFW.GLFW_KEY_F8, null),
+        Bind("note", GLFW.GLFW_KEY_N, null),
+        Bind("compact", GLFW.GLFW_KEY_F7, null),
+        Bind("watch", GLFW.GLFW_KEY_F9, null),
+        Bind("replayPause", GLFW.GLFW_KEY_KP_5, null),
+        Bind("replaySeekFwd", GLFW.GLFW_KEY_KP_ADD, null),
+        Bind("replaySeekBack", GLFW.GLFW_KEY_KP_SUBTRACT, null),
+        Bind("replayExit", GLFW.GLFW_KEY_KP_0, null),
+        Bind("replayToggle", GLFW.GLFW_KEY_KP_MULTIPLY, null),
     )
-
-    private fun bind(id: String, defaultKey: Int, label: String, description: String): Bind =
-        Bind(id, defaultKey, null, label, description)
 
     /** All registered binds (read by [dev.iustitia.ui.KeybindHubScreen]). Order = display order. */
     val all: List<Bind> get() = binds

@@ -290,6 +290,10 @@ Each overlay has its own toggle in `/ius config` and is off-able independently.
 
 Each check's `threshold` is check-specific (Reach→max reach, MultiTarget→min victims, ClickStatistics→CPS cap, SpeedEnvelope→bps cap, Triggerbot→min fast-hits, etc.). `/ius help <check>` prints the live config + description for any check.
 
+## Language
+
+Iustitia is shown in whatever language your Minecraft client uses — there is nothing to set. Text lives in `src/main/resources/assets/iustitia/lang/en_us.json` (the source of truth) with a set of translations beside it, and anything untranslated falls back to English. Check ids, `/ius` command names and config keys stay English on purpose: they are identifiers you type. `python scripts/verify_contribution.py --static` fails on a missing key, a key-set drift between languages, or a placeholder mismatch.
+
 ## Contributing
 
 Iustitia is an open-source community project. Contributions are welcome from Minecraft/Fabric developers, anticheat researchers, moderators, documentation writers, testers, and developers who use AI-assisted tools.

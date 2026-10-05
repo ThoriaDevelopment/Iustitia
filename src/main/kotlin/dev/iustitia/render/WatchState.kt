@@ -1,5 +1,6 @@
 package dev.iustitia.render
 
+import dev.iustitia.i18n.L10n
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.option.Perspective
 import net.minecraft.util.math.Vec3d
@@ -151,7 +152,7 @@ object WatchState {
                 if (dx * dx + dy * dy + dz * dz > MOVE_THRESHOLD_SQ) {
                     try { restore() } catch (_: Throwable) {}
                     active = false
-                    return "you moved — watch cancelled"
+                    return L10n.s("iustitia.render.watchExitMoved")
                 }
             }
 
@@ -160,7 +161,7 @@ object WatchState {
             if (ht > 0 && lastHurtTime == 0) {
                 try { restore() } catch (_: Throwable) {}
                 active = false
-                return "you were hit — watch cancelled"
+                return L10n.s("iustitia.render.watchExitHit")
             }
             lastHurtTime = ht
 

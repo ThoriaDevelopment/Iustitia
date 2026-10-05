@@ -12,6 +12,7 @@ import dev.iustitia.config.ConfigManager
 import dev.iustitia.config.YaclScreenBuilder
 import dev.iustitia.history.FlagHistory
 import dev.iustitia.history.Evidence
+import dev.iustitia.i18n.L10n
 import dev.iustitia.info.CheckInfo
 import dev.iustitia.info.FeatureInfo
 import dev.iustitia.persistence.NoteStore
@@ -64,43 +65,46 @@ object IustitiaCommand {
     private val checkIds: List<String>
         get() = ConfigManager.config.checks().map { it.first }
 
-    private val subcommands: List<Pair<String, String>> = listOf(
-        "list" to "show all checks + enabled state",
-        "status" to "health panel: master, tracked players, protocol, alerts",
-        "hist" to "flag history: /ius hist [name] [check]",
-        "report" to "copy a player's report card to clipboard: /ius report <name> [markdown|json|text]  (text = the chat-friendly transcript form)",
-        "transcript" to "print a player's session timeline to chat (text form of /ius report): /ius transcript <name>  (or /ius transcript panel [name] to toggle the side panel)",
-        "evidence" to "one chat line of a player's last few seconds of flags: /ius evidence <name>",
-        "note" to "moderator tag a player: /ius note <name> <closet|blatant|needsReview|legit> <text...>  (or /ius note <name> to view)",
-        "session" to "session summary: tracked players, tier counts, who peaked highest  (or /ius session screen for the timeline screen)",
-        "snapshot" to "evidence snapshot of your crosshair target: /ius snapshot [name]",
-        "spectate" to "watch follow-cam on a player: /ius spectate [name]  (no name = crosshair target; /ius spectate off to stop; same as the watch keybind)",
-        "replay" to "instant replay: /ius replay [<player>|<seconds>] [<seconds>] [1|0.5|0.25]  — rewinds the world and plays back ghost positions+look at FULL speed by default (add 0.5 or 0.25 for slow-mo). Examples: /ius replay 60 (60s, no focus), /ius replay thoria 60 0.5 (focus thoria, 60s, slow-mo). Controls while running: /ius replay pause|resume|seek <s>|step +|-|speed <1|0.5|0.25>|cam <free|follow|pov>|off  (numpad 5 = pause, +/- = seek 5s, numpad 0 = exit). Also /ius replay save <name> to save the replay you're watching as a clip.",
-        "clip" to "export the last N seconds to a .iusclip file: /ius clip <seconds> [name]  (name = the clip's filename; also sets the focus player if name matches someone online; omit for scene_<tick>)",
-        "playclip" to "play back a saved .iusclip in-world at FULL speed by default: /ius playclip <name> [1|0.5|0.25]  (no name = list saved clips)",
-        "clips" to "open the clip manager screen: list saved .iusclip files, play or delete each",
-        "deleteclip" to "delete a saved clip by name: /ius deleteclip <name>  (alias /ius delclip <name>)",
-        "delclip" to "alias for /ius deleteclip",
-        "record" to "record the live scene for later export: /ius record  (start), /ius record stop [name]  (save as <name>.iusclip, capped at 10 min/segment)",
-        "chathist" to "chat history for tracked players: /ius chathist <username> [page], /ius chathist phrase <phrase> [page], /ius chathist target <username> <phrase> [page], /ius chathist panel user|phrase|target ...",
+    /** A getter, not an init-time `val`: `/ius help` prints these, so a language switch mid-session
+     *  must be re-read instead of frozen at class load (see README "Language"). */
+    private val subcommands: List<Pair<String, String>>
+        get() = listOf(
+        "list" to L10n.s("iustitia.cmd.sub.list"),
+        "status" to L10n.s("iustitia.cmd.sub.status"),
+        "hist" to L10n.s("iustitia.cmd.sub.hist"),
+        "report" to L10n.s("iustitia.cmd.sub.report"),
+        "transcript" to L10n.s("iustitia.cmd.sub.transcript"),
+        "evidence" to L10n.s("iustitia.cmd.sub.evidence"),
+        "note" to L10n.s("iustitia.cmd.sub.note"),
+        "session" to L10n.s("iustitia.cmd.sub.session"),
+        "snapshot" to L10n.s("iustitia.cmd.sub.snapshot"),
+        "spectate" to L10n.s("iustitia.cmd.sub.spectate"),
+        "replay" to L10n.s("iustitia.cmd.sub.replay"),
+        "clip" to L10n.s("iustitia.cmd.sub.clip"),
+        "playclip" to L10n.s("iustitia.cmd.sub.playclip"),
+        "clips" to L10n.s("iustitia.cmd.sub.clips"),
+        "deleteclip" to L10n.s("iustitia.cmd.sub.deleteclip"),
+        "delclip" to L10n.s("iustitia.cmd.sub.delclip"),
+        "record" to L10n.s("iustitia.cmd.sub.record"),
+        "chathist" to L10n.s("iustitia.cmd.sub.chathist"),
         // The built-in list is derived, so adding a preset cannot leave this row claiming the old set.
-        "preset" to "apply a named config preset: /ius preset <name>  (bare = list; built-ins: ${dev.iustitia.config.PresetManager.builtInNames.joinToString("/")}; custom presets via /ius createpreset)",
-        "presets" to "list all presets (built-in + custom): /ius presets",
-        "createpreset" to "save the current config as a custom preset: /ius createpreset <name>",
-        "deletepreset" to "delete a custom preset: /ius deletepreset <name>  (built-ins can't be deleted)",
-        "wizard" to "re-run the first-launch setup wizard",
-        "keybinds" to "open the keybind hub screen (lists binds, highlights conflicts)",
-        "help" to "this help, or /ius help <check|subcommand|feature>",
-        "alerts" to "toggle all chat alerts: /ius alerts  (or mute one: /ius alerts <name|check> [on|off])",
-        "toggle" to "enable/disable a check: /ius toggle <check>",
-        "threshold" to "set a check's threshold: /ius threshold <check> <v>",
-        "config" to "open the config screen",
-        "verbose" to "toggle verbose console logging",
-        "reload" to "reload config from disk",
-        "reset" to "reset all tracker/check/alert/history state",
-        "clear" to "reset one player's flags (tier→green) or everyone's: /ius clear <name|all>",
-        "exempt" to "exempt a player from all checks: /ius exempt [name [on|off]]  (bare = list exempted)",
-        "debugfps" to "render-thread sampling profiler: /ius debugfps  (start), /ius debugfps stop  (write a text report to %APPDATA%/.iustitia/debugfps/)",
+        "preset" to L10n.s("iustitia.cmd.sub.preset", dev.iustitia.config.PresetManager.builtInNames.joinToString("/")),
+        "presets" to L10n.s("iustitia.cmd.sub.presets"),
+        "createpreset" to L10n.s("iustitia.cmd.sub.createpreset"),
+        "deletepreset" to L10n.s("iustitia.cmd.sub.deletepreset"),
+        "wizard" to L10n.s("iustitia.cmd.sub.wizard"),
+        "keybinds" to L10n.s("iustitia.cmd.sub.keybinds"),
+        "help" to L10n.s("iustitia.cmd.sub.help"),
+        "alerts" to L10n.s("iustitia.cmd.sub.alerts"),
+        "toggle" to L10n.s("iustitia.cmd.sub.toggle"),
+        "threshold" to L10n.s("iustitia.cmd.sub.threshold"),
+        "config" to L10n.s("iustitia.cmd.sub.config"),
+        "verbose" to L10n.s("iustitia.cmd.sub.verbose"),
+        "reload" to L10n.s("iustitia.cmd.sub.reload"),
+        "reset" to L10n.s("iustitia.cmd.sub.reset"),
+        "clear" to L10n.s("iustitia.cmd.sub.clear"),
+        "exempt" to L10n.s("iustitia.cmd.sub.exempt"),
+        "debugfps" to L10n.s("iustitia.cmd.sub.debugfps"),
     )
 
     fun register(dispatcher: CommandDispatcher<FabricClientCommandSource>) {
@@ -346,56 +350,56 @@ object IustitiaCommand {
     // and every other command are unaffected. See dev.iustitia.compat.CompanionMods.
     private fun companionOwnsReplay(ctx: CommandContext<FabricClientCommandSource>): Boolean {
         if (!dev.iustitia.compat.CompanionMods.snapClip) return false
-        send(ctx, "$tag §7replay/clip/record is handled by §fSnapClip§7 (installed) — use its §f/replay§7, §f/clip§7 and §f/record§7 commands.")
+        send(ctx, L10n.s("iustitia.cmd.companionSnapClip", tag))
         return true
     }
     private fun companionOwnsChat(ctx: CommandContext<FabricClientCommandSource>): Boolean {
         if (!dev.iustitia.compat.CompanionMods.scrollback) return false
-        send(ctx, "$tag §7chat history is handled by §fScrollback§7 (installed) — use its §f/scrollback§7 command.")
+        send(ctx, L10n.s("iustitia.cmd.companionScrollback", tag))
         return true
     }
     private fun companionOwnsWatch(ctx: CommandContext<FabricClientCommandSource>): Boolean {
         if (!dev.iustitia.compat.CompanionMods.followCam) return false
-        send(ctx, "$tag §7the follow-cam is handled by §fFollowCam§7 (installed) — use its §f/follow§7 command.")
+        send(ctx, L10n.s("iustitia.cmd.companionFollowCam", tag))
         return true
     }
 
     // ---- existing subcommands ----
     private fun list(ctx: CommandContext<FabricClientCommandSource>): Int {
         val cfg = ConfigManager.config
-        send(ctx, "$tag §7checks:")
+        send(ctx, L10n.s("iustitia.cmd.checksHeader", tag))
         for ((id, cc) in cfg.checks()) {
-            val state = if (cc.enabled) "§aON" else "§cOFF"
-            val muted = if (id in cfg.mutedChecks) " §7[muted]" else ""
+            val state = if (cc.enabled) L10n.s("iustitia.cmd.stateOn") else L10n.s("iustitia.cmd.stateOff")
+            val muted = if (id in cfg.mutedChecks) L10n.s("iustitia.cmd.mutedSuffix") else ""
             send(ctx, " §f$id §7vl>${cc.setbackVL} §7decay=${cc.decay} §7thr=${cc.threshold} $state$muted")
         }
-        val master = if (cfg.enabled) "§aON" else "§cOFF"
-        send(ctx, "§7master=$master verbose=${cfg.verbose}")
+        val master = if (cfg.enabled) L10n.s("iustitia.cmd.stateOn") else L10n.s("iustitia.cmd.stateOff")
+        send(ctx, L10n.s("iustitia.cmd.statusMasterVerbose", master, cfg.verbose))
         send(ctx, CheckInfo.SEVERITY_LEGEND)
         return 1
     }
 
     private fun status(ctx: CommandContext<FabricClientCommandSource>): Int {
         val cfg = ConfigManager.config
-        val master = if (cfg.enabled) "§aON" else "§cOFF"
-        val chatAlerts = if (cfg.alertsEnabled) "§aON" else "§cOFF (muted)"
+        val master = if (cfg.enabled) L10n.s("iustitia.cmd.stateOn") else L10n.s("iustitia.cmd.stateOff")
+        val chatAlerts = if (cfg.alertsEnabled) L10n.s("iustitia.cmd.stateOn") else L10n.s("iustitia.cmd.stateOffMuted")
         val total = cfg.checks().size
         val enabled = cfg.checks().count { it.second.enabled }
         val tracked = try { EntityTrackerManager.all().size } catch (_: Throwable) { -1 }
         val proto = ProtocolDetector.current
-        val era = if (ProtocolDetector.is1_8OrLess) " §7(§e1.8 era§7)" else ""
+        val era = if (ProtocolDetector.is1_8OrLess) L10n.s("iustitia.cmd.statusEra18") else ""
         val lag = try { EntityTrackerManager.lastServerLagTick } catch (_: Throwable) { -10000 }
         val alerts = FlagHistory.totalAlerts
-        send(ctx, "$tag §7status")
-        send(ctx, " §7master: $master")
-        send(ctx, " §7chat alerts: $chatAlerts")
-        send(ctx, " §7checks: §f$enabled§7/§f$total §7enabled")
-        send(ctx, " §7players tracked: §f$tracked")
-        send(ctx, " §7protocol: §f$proto$era")
-        send(ctx, " §7last server-lag tick: §f$lag")
-        send(ctx, " §7alerts this session: §f$alerts")
+        send(ctx, L10n.s("iustitia.cmd.statusHeader", tag))
+        send(ctx, L10n.s("iustitia.cmd.statusMaster", master))
+        send(ctx, L10n.s("iustitia.cmd.statusChatAlerts", chatAlerts))
+        send(ctx, L10n.s("iustitia.cmd.statusChecks", enabled, total))
+        send(ctx, L10n.s("iustitia.cmd.playersTracked", tracked))
+        send(ctx, L10n.s("iustitia.cmd.statusProtocol", proto, era))
+        send(ctx, L10n.s("iustitia.cmd.statusLag", lag))
+        send(ctx, L10n.s("iustitia.cmd.alertsThisSession", alerts))
         val top = FlagHistory.topOffenders(1)
-        if (top.isNotEmpty()) send(ctx, " §7top offender: §f${top[0].first} §7(${top[0].second})")
+        if (top.isNotEmpty()) send(ctx, L10n.s("iustitia.cmd.statusTopOffender", top[0].first, top[0].second))
         send(ctx, CheckInfo.SEVERITY_LEGEND)
         return 1
     }
@@ -412,10 +416,10 @@ object IustitiaCommand {
             val backlog = dev.iustitia.VerboseLog.backlog()
             val dropped = dev.iustitia.VerboseLog.dropCount()
             if (backlog > 0) {
-                send(ctx, " §7$backlog line(s) still queued — still writing to §flogs/latest.log§7 in the background.")
+                send(ctx, L10n.s("iustitia.cmd.verboseBacklog", backlog))
             }
             if (dropped > 0L) {
-                send(ctx, " §7note: §f$dropped§7 verbose line(s) were dropped this session (appender could not keep up), so the transcript is §fpartial§7. Detection data is unaffected — §f/ius hist§7 keeps the exact per-flag record.")
+                send(ctx, L10n.s("iustitia.cmd.verboseDropped", dropped))
             }
         }
         return 1
@@ -423,15 +427,15 @@ object IustitiaCommand {
 
     private fun reload(ctx: CommandContext<FabricClientCommandSource>): Int {
         ConfigManager.reload()
-        send(ctx, "$tag §7config reloaded.")
+        send(ctx, L10n.s("iustitia.cmd.configReloaded", tag))
         return 1
     }
 
     private fun reset(ctx: CommandContext<FabricClientCommandSource>): Int {
         dev.iustitia.Iustitia.resetAll()
         val persist = ConfigManager.config.persistenceEnabled
-        send(ctx, "$tag §7live state reset (detection vl, alerts, session stats cleared; nametags back to green)." +
-            if (persist) " §7Persisted tier/flag history + notes reloaded from §f%APPDATA%/.iustitia§7." else "")
+        send(ctx, L10n.s("iustitia.cmd.resetDone", tag) +
+            if (persist) L10n.s("iustitia.cmd.resetPersisted") else "")
         return 1
     }
 
@@ -441,7 +445,7 @@ object IustitiaCommand {
                 MinecraftClient.getInstance().setScreen(YaclScreenBuilder.build(MinecraftClient.getInstance().currentScreen))
             } catch (_: Throwable) {
                 MinecraftClient.getInstance().player?.sendMessage(
-                    Text.literal("$tag §cfailed to open config screen"), false
+                    L10n.t("iustitia.cmd.configOpenFail", tag), false
                 )
             }
         }
@@ -450,25 +454,25 @@ object IustitiaCommand {
 
     private fun toggle(ctx: CommandContext<FabricClientCommandSource>): Int {
         val id = StringArgumentType.getString(ctx, "check")
-        if (id !in checkIds) { send(ctx, "$tag §cunknown check: $id"); return 0 }
+        if (id !in checkIds) { send(ctx, L10n.s("iustitia.cmd.unknownCheck", tag, id)); return 0 }
         val cc = ConfigManager.config.slice(id)
         cc.enabled = !cc.enabled
         ConfigManager.save()
-        send(ctx, "$tag §7$id = ${if (cc.enabled) "§aON" else "§cOFF"}")
+        send(ctx, L10n.s("iustitia.cmd.toggleResult", tag, id, if (cc.enabled) L10n.s("iustitia.cmd.stateOn") else L10n.s("iustitia.cmd.stateOff")))
         return 1
     }
 
     /** Bare `/ius toggle` (no check arg) — print usage instead of Brigadier's cryptic
      *  "Unknown or incomplete command". Same for [thresholdUsage]. */
     private fun toggleUsage(ctx: CommandContext<FabricClientCommandSource>): Int {
-        send(ctx, "$tag §7usage: §f/ius toggle <check>")
-        send(ctx, " §7checks: §f${checkIds.joinToString(" ")}")
+        send(ctx, L10n.s("iustitia.cmd.toggleUsage", tag))
+        send(ctx, L10n.s("iustitia.cmd.checksList", checkIds.joinToString(" ")))
         return 0
     }
 
     private fun threshold(ctx: CommandContext<FabricClientCommandSource>): Int {
         val id = StringArgumentType.getString(ctx, "check")
-        if (id !in checkIds) { send(ctx, "$tag §cunknown check: $id"); return 0 }
+        if (id !in checkIds) { send(ctx, L10n.s("iustitia.cmd.unknownCheck", tag, id)); return 0 }
         val value = DoubleArgumentType.getDouble(ctx, "value")
         ConfigManager.config.slice(id).threshold = value
         ConfigManager.save()
@@ -477,16 +481,16 @@ object IustitiaCommand {
     }
 
     private fun thresholdUsage(ctx: CommandContext<FabricClientCommandSource>): Int {
-        send(ctx, "$tag §7usage: §f/ius threshold <check> <value>")
-        send(ctx, " §7checks: §f${checkIds.joinToString(" ")}")
+        send(ctx, L10n.s("iustitia.cmd.thresholdUsage", tag))
+        send(ctx, L10n.s("iustitia.cmd.checksList", checkIds.joinToString(" ")))
         return 0
     }
 
     // ---- clear (reset a player's or everyone's flags) ----
     /** Bare `/ius clear` — print usage (a bare clear is too easy to fat-finger into a wipe). */
     private fun clearUsage(ctx: CommandContext<FabricClientCommandSource>): Int {
-        send(ctx, "$tag §7usage: §f/ius clear <name>§7 (reset one player's flags → §agreen§7) or §f/ius clear all§7 (everyone).")
-        send(ctx, " §7detection vl, flag timeline, tier + alert routing are wiped; tracking/replay keep running. Exemptions are untouched.")
+        send(ctx, L10n.s("iustitia.cmd.clearUsage", tag))
+        send(ctx, L10n.s("iustitia.cmd.clearUsageDetail"))
         return 0
     }
 
@@ -498,7 +502,7 @@ object IustitiaCommand {
     private fun clearPlayer(ctx: CommandContext<FabricClientCommandSource>): Int {
         val name = StringArgumentType.getString(ctx, "name")
         val uuid = resolveUuid(name)
-        if (uuid == null) { send(ctx, "$tag §cno data for §f$name§7 (must be tracked or have flagged first)."); return 0 }
+        if (uuid == null) { send(ctx, L10n.s("iustitia.cmd.noData", tag, name)); return 0 }
         send(ctx, dev.iustitia.Iustitia.clearPlayerFlags(uuid))
         return 1
     }
@@ -507,10 +511,10 @@ object IustitiaCommand {
     /** Bare `/ius exempt` — list currently-exempted players. */
     private fun exemptList(ctx: CommandContext<FabricClientCommandSource>): Int {
         val all = try { dev.iustitia.exempt.Exemptions.all() } catch (_: Throwable) { emptyList() }
-        if (all.isEmpty()) { send(ctx, "$tag §7no exempted players. §f/ius exempt <name>§7 to exempt one (they stop flagging)."); return 1 }
-        send(ctx, "$tag §7exempted players §8(${all.size})§7 — invisible to every check:")
+        if (all.isEmpty()) { send(ctx, L10n.s("iustitia.cmd.exemptNone", tag)); return 1 }
+        send(ctx, L10n.s("iustitia.cmd.exemptListHeader", tag, all.size))
         all.forEach { (uuid, name) -> send(ctx, " §f$name §8$uuid") }
-        send(ctx, " §7toggle with §f/ius exempt <name>§7 or §f/ius exempt <name> off§7. Persists with the persistence toggle; not cleared on world change.")
+        send(ctx, L10n.s("iustitia.cmd.exemptHint"))
         return 1
     }
 
@@ -521,7 +525,7 @@ object IustitiaCommand {
         // Exempting a not-yet-tracked player is allowed (you may pre-exempt a trusted regular by
         // name before they join); but toggling OFF a name we can't resolve is ambiguous — bail.
         if (uuid == null) {
-            send(ctx, "$tag §cno data for §f$name§7. To exempt a player who isn't tracked yet, they must have flagged or be online first.")
+            send(ctx, L10n.s("iustitia.cmd.exemptUnknownTarget", tag, name))
             return 0
         }
         val want = when (stateArg?.lowercase()) { "on" -> true; "off" -> false; else -> null }
@@ -530,8 +534,8 @@ object IustitiaCommand {
             false -> dev.iustitia.exempt.Exemptions.set(uuid, name, false)
             null -> dev.iustitia.exempt.Exemptions.toggle(uuid, name)
         }
-        send(ctx, "$tag §7player §f$name §7exempt ${if (nowOn) "§aON§7 (no check will flag them)" else "§cOFF§7 (checks run normally again)"}.")
-        if (nowOn) send(ctx, " §7existing flags were §fnot§7 cleared — use §f/ius clear $name§7 to reset their tier.")
+        send(ctx, L10n.s("iustitia.cmd.exemptResult", tag, name, if (nowOn) L10n.s("iustitia.cmd.exemptOn") else L10n.s("iustitia.cmd.exemptOff")))
+        if (nowOn) send(ctx, L10n.s("iustitia.cmd.exemptNotCleared", name))
         return 1
     }
 
@@ -544,8 +548,8 @@ object IustitiaCommand {
      *  captures the render thread. Fail-open. */
     private fun profileStart(ctx: CommandContext<FabricClientCommandSource>): Int {
         val err = dev.iustitia.profiling.RenderProfiler.start()
-        if (err != null) { send(ctx, "$tag §7profiler §c$err§7."); return 0 }
-        send(ctx, "$tag §aprofiler running§7 — sampling the render thread every 5ms. Reproduce the lag now (walk through the dense-player area). When done: §f/ius debugfps stop§7 → writes a text report to §f%APPDATA%/.iustitia/debugfps/§7.")
+        if (err != null) { send(ctx, L10n.s("iustitia.cmd.profilerStartFail", tag, err)); return 0 }
+        send(ctx, L10n.s("iustitia.cmd.profilerRunning", tag))
         return 1
     }
 
@@ -554,11 +558,11 @@ object IustitiaCommand {
     private fun profileStop(ctx: CommandContext<FabricClientCommandSource>): Int {
         val res = dev.iustitia.profiling.RenderProfiler.stop()
         when {
-            res == "not running" -> { send(ctx, "$tag §cprofiler not running (start with §f/ius debugfps§7)."); return 0 }
+            res == "not running" -> { send(ctx, L10n.s("iustitia.cmd.profilerNotRunning", tag)); return 0 }
             res.startsWith("failed") -> { send(ctx, "$tag §c$res"); return 0 }
             else -> {
-                send(ctx, "$tag §7profiler §astopped§7 — report written: §f$res")
-                send(ctx, " §7send me that file (or paste its contents) and I'll pinpoint the dominant render-thread cost from the measured data, not static guessing.")
+                send(ctx, L10n.s("iustitia.cmd.profilerStopped", tag, res))
+                send(ctx, L10n.s("iustitia.cmd.profilerSendFile"))
             }
         }
         return 1
@@ -571,7 +575,7 @@ object IustitiaCommand {
     private fun recordStart(ctx: CommandContext<FabricClientCommandSource>): Int {
         if (companionOwnsReplay(ctx)) return 1
         if (!ConfigManager.config.replayCapture) {
-            send(ctx, "$tag §7replay capture is §cdisabled§7 in config — recording needs it on.")
+            send(ctx, L10n.s("iustitia.cmd.recordCaptureDisabled", tag))
             return 0
         }
         send(ctx, dev.iustitia.replay.RecordManager.start())
@@ -593,14 +597,14 @@ object IustitiaCommand {
     /** Bare `/ius chathist` / `/ius chathist phrase` usage hint. */
     private fun chathistUsage(ctx: CommandContext<FabricClientCommandSource>): Int {
         if (companionOwnsChat(ctx)) return 1
-        send(ctx, "$tag §7usage:")
-        send(ctx, " §f/ius chathist <username> [page]§7 — a player's messages (newest first).")
-        send(ctx, " §f/ius chathist phrase <phrase> [page]§7 — everyone who said <phrase>, in order.")
-        send(ctx, " §f/ius chathist target <username> <phrase> [page]§7 — <username>'s messages with <phrase>.")
-        send(ctx, " §f/ius chathist panel user <username> [n]§7 — side panel of <username>'s last [n] msgs (default 15).")
-        send(ctx, " §f/ius chathist panel phrase <word> [n]§7 — side panel of everyone who said <word>.")
-        send(ctx, " §f/ius chathist panel target <username> <word> [n]§7 — side panel of <username>'s msgs with <word>.")
-        send(ctx, " §7captures tracked OTHER players only; per-server (persists with the persistence toggle).")
+        send(ctx, L10n.s("iustitia.cmd.usageHeader", tag))
+        send(ctx, L10n.s("iustitia.cmd.chathistUsageUser"))
+        send(ctx, L10n.s("iustitia.cmd.chathistUsagePhrase"))
+        send(ctx, L10n.s("iustitia.cmd.chathistUsageTarget"))
+        send(ctx, L10n.s("iustitia.cmd.chathistUsagePanelUser"))
+        send(ctx, L10n.s("iustitia.cmd.chathistUsagePanelPhrase"))
+        send(ctx, L10n.s("iustitia.cmd.chathistUsagePanelTarget"))
+        send(ctx, L10n.s("iustitia.cmd.chathistUsageNote"))
         return 1
     }
 
@@ -633,11 +637,11 @@ object IustitiaCommand {
     /** Bare `/ius chathist panel` usage hint. */
     private fun chathistPanelUsage(ctx: CommandContext<FabricClientCommandSource>): Int {
         if (companionOwnsChat(ctx)) return 1
-        send(ctx, "$tag §7usage:")
-        send(ctx, " §f/ius chathist panel user <username> [n]§7 — side panel of <username>'s last [n] msgs (default 15).")
-        send(ctx, " §f/ius chathist panel phrase <word> [n]§7 — side panel of everyone who said <word>.")
-        send(ctx, " §f/ius chathist panel target <username> <word> [n]§7 — side panel of <username>'s msgs with <word>.")
-        send(ctx, " §7[n] = max messages to show; panel refreshes live while open.")
+        send(ctx, L10n.s("iustitia.cmd.usageHeader", tag))
+        send(ctx, L10n.s("iustitia.cmd.chathistUsagePanelUser"))
+        send(ctx, L10n.s("iustitia.cmd.chathistUsagePanelPhrase"))
+        send(ctx, L10n.s("iustitia.cmd.chathistUsagePanelTarget"))
+        send(ctx, L10n.s("iustitia.cmd.chathistPanelUsageNote"))
         return 1
     }
 
@@ -664,7 +668,7 @@ object IustitiaCommand {
         if (companionOwnsChat(ctx)) return
         val mc = MinecraftClient.getInstance()
         mc.execute { try { mc.setScreen(ChatHistPanelScreen(subtitle, rowsProvider, limit, null)) } catch (_: Throwable) {} }
-        send(ctx, "$tag §7chathist panel: §f$subtitle §8($limit)")
+        send(ctx, L10n.s("iustitia.cmd.chathistPanelHeader", tag, subtitle, limit))
     }
 
     /**
@@ -677,7 +681,7 @@ object IustitiaCommand {
      */
     private fun renderChatPage(ctx: CommandContext<FabricClientCommandSource>, rows: List<dev.iustitia.chathist.ChatHistory.Row>, page: Int, cmdPrefix: String) {
         val src = ctx.source
-        if (rows.isEmpty()) { send(ctx, "$tag §7no chat history to show."); return }
+        if (rows.isEmpty()) { send(ctx, L10n.s("iustitia.cmd.chatHistEmpty", tag)); return }
         val total = rows.size
         val totalPages = ceil(total.toDouble() / dev.iustitia.chathist.ChatHistory.PAGE_SIZE_ROWS).toInt().coerceAtLeast(1)
         val p = page.coerceIn(1, totalPages)
@@ -687,7 +691,7 @@ object IustitiaCommand {
         // left-aligns with the rows and the bottom divider.
         src.sendFeedback(Text.literal(tag))
         // top divider: ...---[IUS ChatHistory]---...
-        src.sendFeedback(Text.literal("§8...§7---§f[§bIUS ChatHistory§f]§7---§8..."))
+        src.sendFeedback(L10n.t("iustitia.cmd.chatHistDivider"))
         for (r in pageRows) {
             val ts = try { chatTimeFmt.format(java.util.Date(r.wallClockMs)) } catch (_: Throwable) { "??:??:??" }
             src.sendFeedback(Text.literal("§8[$ts] §7[§f${r.name}§7]§r ${r.text}"))
@@ -696,9 +700,9 @@ object IustitiaCommand {
         val bottom: MutableText = Text.literal("")
         val prevCmd = "/ius $cmdPrefix ${p - 1}"
         val nextCmd = "/ius $cmdPrefix ${p + 1}"
-        bottom.append(clickButton("§3<§r", if (p > 1) prevCmd else null, "Previous page"))
-        bottom.append(Text.literal("§8...§7---§f[§7Page §f$p§7/$totalPages§f]§7---§8...§r"))
-        bottom.append(clickButton("§3>§r", if (p < totalPages) nextCmd else null, "Next page"))
+        bottom.append(clickButton("§3<§r", if (p > 1) prevCmd else null, L10n.s("iustitia.cmd.prevPageHover")))
+        bottom.append(L10n.t("iustitia.cmd.pageDivider", p, totalPages))
+        bottom.append(clickButton("§3>§r", if (p < totalPages) nextCmd else null, L10n.s("iustitia.cmd.nextPageHover")))
         src.sendFeedback(bottom)
     }
 
@@ -729,8 +733,8 @@ object IustitiaCommand {
 
     private fun histTopChat(ctx: CommandContext<FabricClientCommandSource>): Int {
         val top = FlagHistory.topOffenders(8)
-        if (top.isEmpty()) { send(ctx, "$tag §7no alerts yet this session."); return 1 }
-        send(ctx, "$tag §7top offenders (by alert count):")
+        if (top.isEmpty()) { send(ctx, L10n.s("iustitia.cmd.histNoAlerts", tag)); return 1 }
+        send(ctx, L10n.s("iustitia.cmd.histTopHeader", tag))
         top.forEach { (name, count) -> send(ctx, " §f$name §7$count") }
         return 1
     }
@@ -748,7 +752,7 @@ object IustitiaCommand {
                 EntityTrackerManager.all().firstOrNull { it.username().equals(name, ignoreCase = true) }?.uuid
             } catch (_: Throwable) { null }
         }
-        if (uuid == null) { send(ctx, "$tag §cno history for §f$name§7 (must be tracked or have flagged first)."); return 0 }
+        if (uuid == null) { send(ctx, L10n.s("iustitia.cmd.noHistory", tag, name)); return 0 }
         val mc = MinecraftClient.getInstance()
         mc.execute {
             try {
@@ -764,11 +768,11 @@ object IustitiaCommand {
      *  pre-GUI `/ius hist <name>` behavior intact as a safety net. */
     private fun histPlayerChat(ctx: CommandContext<FabricClientCommandSource>, uuid: UUID, name: String, checkFilter: String?): Int {
         val flags = FlagHistory.flags(uuid)
-        if (flags.isEmpty()) { send(ctx, "$tag §7no flags recorded for §f$name§7."); return 1 }
+        if (flags.isEmpty()) { send(ctx, L10n.s("iustitia.cmd.histNoFlags", tag, name)); return 1 }
         val filtered = if (checkFilter == null) flags else flags.filter { it.checkId == checkFilter }
-        if (filtered.isEmpty()) { send(ctx, "$tag §7no §f$checkFilter§7 flags for §f$name§7."); return 1 }
+        if (filtered.isEmpty()) { send(ctx, L10n.s("iustitia.cmd.histNoFlagsForCheck", tag, checkFilter, name)); return 1 }
         val distinctChecks = filtered.map { it.checkId }.distinct().size
-        send(ctx, "$tag §f$name §7— §f${filtered.size}§7 flag(s) across §f$distinctChecks§7 check(s):")
+        send(ctx, L10n.s("iustitia.cmd.histFlagsHeader", tag, name, filtered.size, distinctChecks))
         filtered.take(20).forEach { f ->
             send(ctx, " §7@t${f.tick} §f${f.label} §8(${f.checkId}) §evl=${fmt(f.vl)}")
         }
@@ -790,7 +794,7 @@ object IustitiaCommand {
                 EntityTrackerManager.all().firstOrNull { it.username().equals(name, ignoreCase = true) }?.uuid
             } catch (_: Throwable) { null }
         }
-        if (uuid == null) { send(ctx, "$tag §cno history for §f$name§7 (must be tracked or have flagged first)."); return 0 }
+        if (uuid == null) { send(ctx, L10n.s("iustitia.cmd.noHistory", tag, name)); return 0 }
         val fmt = when (format.lowercase()) { "json" -> "json"; "text" -> "text"; else -> "markdown" }
         val text = try {
             when (fmt) {
@@ -799,12 +803,12 @@ object IustitiaCommand {
                 else -> reportMarkdown(uuid, name)
             }
         } catch (_: Throwable) {
-            send(ctx, "$tag §cfailed to build report for §f$name§7."); return 0
+            send(ctx, L10n.s("iustitia.cmd.reportBuildFail", tag, name)); return 0
         }
         try { MinecraftClient.getInstance().keyboard.setClipboard(text) } catch (_: Throwable) {
-            send(ctx, "$tag §cfailed to write clipboard."); return 0
+            send(ctx, L10n.s("iustitia.cmd.clipboardFail", tag)); return 0
         }
-        send(ctx, "$tag §7report for §f$name§7 copied to clipboard §8(${text.length} chars, $fmt)")
+        send(ctx, L10n.s("iustitia.cmd.reportCopied", tag, name, text.length, fmt))
         return 1
     }
 
@@ -818,21 +822,22 @@ object IustitiaCommand {
         val maxVlMap = FlagHistory.maxVlByCheck(uuid)
         val totalFlags = counts.values.sum()
         val maxVl = maxVlMap.values.maxOrNull() ?: 0.0
-        val spanTxt = if (sp == null) "no flags" else "first flag @t${sp.first} | last flag @t${sp.second}"
-        sb.append("# Iustitia report — $name\n\n")
-        sb.append("tier: $tierName | $spanTxt | alerts: $alerts | flags: $totalFlags | max vl: ${fmt(maxVl)}\n")
-        sb.append("confidence: ${FlagHistory.confidenceLine(uuid)}\n")
+        val spanTxt = if (sp == null) L10n.s("iustitia.cmd.report.spanNone")
+            else L10n.s("iustitia.cmd.report.span", sp.first, sp.second)
+        sb.append(L10n.s("iustitia.cmd.report.header", name))
+        sb.append(L10n.s("iustitia.cmd.report.summary", tierName, spanTxt, alerts, totalFlags, fmt(maxVl)))
+        sb.append(L10n.s("iustitia.cmd.report.confidence", FlagHistory.confidenceLine(uuid)))
         val topCheck = FlagHistory.topCheck(uuid)
-        if (topCheck != null) sb.append("top check: $topCheck\n")
-        sb.append("\n## Flags by check (count / max vl)\n")
-        if (counts.isEmpty()) sb.append("(no flags this session)\n")
+        if (topCheck != null) sb.append(L10n.s("iustitia.cmd.report.topCheck", topCheck))
+        sb.append(L10n.s("iustitia.cmd.report.flagsByCheck"))
+        if (counts.isEmpty()) sb.append(L10n.s("iustitia.cmd.report.noFlagsSession"))
         counts.forEach { (cid, c) ->
             val mv = maxVlMap[cid] ?: 0.0
-            sb.append("- $cid: $c flags, max vl ${fmt(mv)}\n")
+            sb.append(L10n.s("iustitia.cmd.report.checkRow", cid, c, fmt(mv)))
         }
-        sb.append("\n## Timeline (last 50)\n")
+        sb.append(L10n.s("iustitia.cmd.report.timelineHeader", REPORT_TIMELINE_CAP))
         val flags = FlagHistory.flags(uuid).takeLast(REPORT_TIMELINE_CAP)
-        if (flags.isEmpty()) sb.append("(no flags recorded)\n")
+        if (flags.isEmpty()) sb.append(L10n.s("iustitia.cmd.report.noFlagsRecorded"))
         flags.forEach { f ->
             val ev = f.evidence
             val evTxt = if (ev == null) "" else " " + evidenceMd(ev)
@@ -946,18 +951,18 @@ object IustitiaCommand {
     private fun transcriptPrint(ctx: CommandContext<FabricClientCommandSource>): Int {
         val name = StringArgumentType.getString(ctx, "name")
         val uuid = resolveUuid(name)
-        if (uuid == null) { send(ctx, "$tag §cno data for §f$name§7 (must be tracked or have flagged first)."); return 0 }
+        if (uuid == null) { send(ctx, L10n.s("iustitia.cmd.noData", tag, name)); return 0 }
         val text = try { reportText(uuid, name) } catch (_: Throwable) {
-            send(ctx, "$tag §cfailed to build transcript for §f$name§7."); return 0 }
+            send(ctx, L10n.s("iustitia.cmd.transcriptBuildFail", tag, name)); return 0 }
         send(ctx, text)
         // Honest save result: with persistence on, a disk error in the export write is
         // reported instead of hiding behind the unconditional "printed" line (the export
         // file is optional, but when it's promised it must land or say so).
         if (try { ConfigManager.config.persistenceEnabled } catch (_: Throwable) { false }) {
             val exported = try { PersistenceManager.saveExport("transcript", name, text) } catch (_: Throwable) { false }
-            if (!exported) send(ctx, "$tag §ctranscript export failed (disk error) — chat still has the full text.")
+            if (!exported) send(ctx, L10n.s("iustitia.cmd.transcriptExportFail", tag))
         }
-        send(ctx, "$tag §7transcript for §f$name§7 printed §8(paste into a report; same as §f/ius report $name text§7)")
+        send(ctx, L10n.s("iustitia.cmd.transcriptPrinted", tag, name, name))
         // If the transcript side panel is enabled in config, also pop it open for this player —
         // same surface the keybind / `/ius transcript panel` use, so the chat print + the live panel
         // aren't mutually exclusive. Fail-open (a screen-open error never blocks the chat print).
@@ -977,17 +982,17 @@ object IustitiaCommand {
         val tier = FlagHistory.tierFor(uuid)
         val score = FlagHistory.confidenceScore(uuid)
         val st = SessionStats.stats(uuid)
-        sb.append("=== Iustitia transcript: $name (tier ${tier.label} [$score]) ===\n")
-        sb.append("session: swings=${st.swings.get()} hits=${st.hits.get()} velocity=${st.velocity.get()}\n")
-        sb.append("alerts=${FlagHistory.sessionAlertCount(uuid)} flags=${FlagHistory.flagCounts(uuid).values.sum()}")
-        FlagHistory.topCheck(uuid)?.let { sb.append(" top=$it") }
+        sb.append(L10n.s("iustitia.cmd.report.transcriptHeader", name, tier.label, score))
+        sb.append(L10n.s("iustitia.cmd.report.sessionStats", st.swings.get(), st.hits.get(), st.velocity.get()))
+        sb.append(L10n.s("iustitia.cmd.report.alertsFlags", FlagHistory.sessionAlertCount(uuid), FlagHistory.flagCounts(uuid).values.sum()))
+        FlagHistory.topCheck(uuid)?.let { sb.append(L10n.s("iustitia.cmd.report.topSuffix", it)) }
         sb.append("\n")
-        NoteStore.get(uuid)?.let { n -> sb.append("note: ${n.category.name.lowercase()} (\"${n.text}\")\n") }
+        NoteStore.get(uuid)?.let { n -> sb.append(L10n.s("iustitia.cmd.report.noteLine", n.category.name.lowercase(), n.text)) }
         // One flags snapshot (FlagHistory.flags locks + copies the deque) — reuse it for the header
         // count AND the iteration, instead of fetching it twice.
         val flags = FlagHistory.flags(uuid).takeLast(REPORT_TIMELINE_CAP)
-        sb.append("timeline (last ${flags.size} flags):\n")
-        if (flags.isEmpty()) sb.append("(no flags recorded)\n")
+        sb.append(L10n.s("iustitia.cmd.report.timelineList", flags.size))
+        if (flags.isEmpty()) sb.append(L10n.s("iustitia.cmd.report.noFlagsRecorded"))
         flags.forEach { f ->
             sb.append(" @t${f.tick} ${f.checkId} (${f.label}) vl=${fmt(f.vl)}")
             // Reuse the shared [evidenceMd] formatter so the text form carries the same fields as
@@ -1004,12 +1009,12 @@ object IustitiaCommand {
     private fun transcriptToggle(ctx: CommandContext<FabricClientCommandSource>): Int {
         val mc = MinecraftClient.getInstance()
         try {
-            if (mc.currentScreen is TranscriptPanelScreen) { mc.setScreen(null); send(ctx, "$tag §7transcript panel closed."); return 1 }
+            if (mc.currentScreen is TranscriptPanelScreen) { mc.setScreen(null); send(ctx, L10n.s("iustitia.cmd.transcriptPanelClosed", tag)); return 1 }
             val target = crosshairTarget()
-            if (target == null) { send(ctx, "$tag §7look at a player to open their transcript panel (or use §f/ius transcript panel <name>§7)."); return 0 }
+            if (target == null) { send(ctx, L10n.s("iustitia.cmd.transcriptPanelLook", tag)); return 0 }
             mc.execute { try { mc.setScreen(TranscriptPanelScreen(target.first, target.second, null)) } catch (_: Throwable) {} }
-            send(ctx, "$tag §7transcript panel: §f${target.second}")
-        } catch (_: Throwable) { send(ctx, "$tag §cfailed to toggle transcript panel."); }
+            send(ctx, L10n.s("iustitia.cmd.transcriptPanelOpen", tag, target.second))
+        } catch (_: Throwable) { send(ctx, L10n.s("iustitia.cmd.transcriptPanelFail", tag)); }
         return 1
     }
 
@@ -1017,10 +1022,10 @@ object IustitiaCommand {
     private fun transcriptPanelNamed(ctx: CommandContext<FabricClientCommandSource>): Int {
         val name = StringArgumentType.getString(ctx, "name")
         val uuid = resolveUuid(name)
-        if (uuid == null) { send(ctx, "$tag §cno data for §f$name§7 (must be tracked or have flagged first)."); return 0 }
+        if (uuid == null) { send(ctx, L10n.s("iustitia.cmd.noData", tag, name)); return 0 }
         val mc = MinecraftClient.getInstance()
         mc.execute { try { mc.setScreen(TranscriptPanelScreen(uuid, name, null)) } catch (_: Throwable) {} }
-        send(ctx, "$tag §7transcript panel: §f$name")
+        send(ctx, L10n.s("iustitia.cmd.transcriptPanelOpen", tag, name))
         return 1
     }
 
@@ -1028,11 +1033,11 @@ object IustitiaCommand {
     private fun evidence(ctx: CommandContext<FabricClientCommandSource>): Int {
         val name = StringArgumentType.getString(ctx, "name")
         val uuid = resolveUuid(name)
-        if (uuid == null) { send(ctx, "$tag §cno data for §f$name§7."); return 0 }
+        if (uuid == null) { send(ctx, L10n.s("iustitia.cmd.noDataShort", tag, name)); return 0 }
         val window = ConfigManager.config.evidenceWindowTicks
         val now = dev.iustitia.Iustitia.tickCounter
         val recent = try { FlagHistory.flags(uuid).filter { now - it.tick <= window } } catch (_: Throwable) { emptyList() }
-        if (recent.isEmpty()) { send(ctx, "$tag §7no flags for §f$name§7 in the last ${window / 20}s."); return 1 }
+        if (recent.isEmpty()) { send(ctx, L10n.s("iustitia.cmd.evidenceNone", tag, name, window / 20)); return 1 }
         val grouped = recent.groupBy { it.checkId }.toList().sortedByDescending { it.second.size }
         val parts = grouped.take(5).map { (cid, list) ->
             val maxVl = list.maxOf { it.vl }
@@ -1041,12 +1046,12 @@ object IustitiaCommand {
             if (list.size > 1) "$cid$mv ×${list.size}" else "$cid$mv"
         }
         val tier = FlagHistory.tierFor(uuid)
-        val line = "$tag §f$name §7(last ${window / 20}s): §e${parts.joinToString(", ")} §7| Tier: §f${tier.label} §7[${FlagHistory.confidenceScore(uuid)}]"
+        val line = L10n.s("iustitia.cmd.evidenceLine", tag, name, window / 20, parts.joinToString(", "), tier.label, FlagHistory.confidenceScore(uuid))
         send(ctx, line)
         // Honest save result (mirrors the transcript export path).
         if (try { ConfigManager.config.persistenceEnabled } catch (_: Throwable) { false }) {
             val exported = try { PersistenceManager.saveExport("evidence", name, line) } catch (_: Throwable) { false }
-            if (!exported) send(ctx, "$tag §cevidence export failed (disk error) — chat still has the line.")
+            if (!exported) send(ctx, L10n.s("iustitia.cmd.evidenceExportFail", tag))
         }
         return 1
     }
@@ -1054,10 +1059,10 @@ object IustitiaCommand {
     // ---- note (#8) ----
     private fun noteShow(ctx: CommandContext<FabricClientCommandSource>): Int {
         val name = StringArgumentType.getString(ctx, "name")
-        val uuid = resolveUuid(name) ?: run { send(ctx, "$tag §cunknown player: §f$name§7."); return 0 }
+        val uuid = resolveUuid(name) ?: run { send(ctx, L10n.s("iustitia.cmd.unknownPlayer", tag, name)); return 0 }
         val note = NoteStore.get(uuid)
-        if (note == null) { send(ctx, "$tag §f$name §7has no note."); return 1 }
-        send(ctx, "$tag §f$name §7— ${NoteStore.categoryLabel(note.category)}§7: §f${note.text}")
+        if (note == null) { send(ctx, L10n.s("iustitia.cmd.noteNone", tag, name)); return 1 }
+        send(ctx, L10n.s("iustitia.cmd.noteShow", tag, name, NoteStore.categoryLabel(note.category), note.text))
         return 1
     }
 
@@ -1066,10 +1071,10 @@ object IustitiaCommand {
         val catRaw = StringArgumentType.getString(ctx, "category")
         val text = StringArgumentType.getString(ctx, "text")
         val cat = NoteStore.parseCategory(catRaw)
-        if (cat == null) { send(ctx, "$tag §cunknown category: §f$catRaw§7 (closet / blatant / needsReview / legit)."); return 0 }
-        val uuid = resolveUuid(name) ?: run { send(ctx, "$tag §cunknown player: §f$name§7."); return 0 }
+        if (cat == null) { send(ctx, L10n.s("iustitia.cmd.noteUnknownCategory", tag, catRaw)); return 0 }
+        val uuid = resolveUuid(name) ?: run { send(ctx, L10n.s("iustitia.cmd.unknownPlayer", tag, name)); return 0 }
         NoteStore.set(uuid, name, cat, text, dev.iustitia.Iustitia.tickCounter)
-        send(ctx, "$tag §7noted §f$name §7as ${NoteStore.categoryLabel(cat)}§7: §f$text")
+        send(ctx, L10n.s("iustitia.cmd.noteSet", tag, name, NoteStore.categoryLabel(cat), text))
         return 1
     }
 
@@ -1089,11 +1094,11 @@ object IustitiaCommand {
             val s = try { FlagHistory.confidenceScore(u) } catch (_: Throwable) { 0 }
             if (s > peakScore) { peakScore = s; peakName = FlagHistory.nameFor(u) ?: u.toString().take(8) }
         }
-        send(ctx, "$tag §7session summary")
-        send(ctx, " §7players tracked: §f${uuids.size}")
-        send(ctx, " §aGREEN §f$green §7| §eYELLOW §f$yellow §7| §cRED §f$red")
-        send(ctx, " §7alerts this session: §f${FlagHistory.totalAlerts}")
-        if (peakName != null && peakScore > 0) send(ctx, " §7peaked highest: §f$peakName §7[$peakScore]")
+        send(ctx, L10n.s("iustitia.cmd.sessionHeader", tag))
+        send(ctx, L10n.s("iustitia.cmd.playersTracked", uuids.size))
+        send(ctx, L10n.s("iustitia.cmd.sessionTiers", green, yellow, red))
+        send(ctx, L10n.s("iustitia.cmd.alertsThisSession", FlagHistory.totalAlerts))
+        if (peakName != null && peakScore > 0) send(ctx, L10n.s("iustitia.cmd.sessionPeak", peakName, peakScore))
         return 1
     }
 
@@ -1108,9 +1113,9 @@ object IustitiaCommand {
         val target: Pair<java.util.UUID, String>? = if (nameArg != null) {
             val u = resolveUuid(nameArg); if (u != null) u to nameArg else null
         } else crosshairTarget()
-        if (target == null) { send(ctx, "$tag §7look at a player (or use §f/ius snapshot <name>§7)."); return 0 }
+        if (target == null) { send(ctx, L10n.s("iustitia.cmd.snapshotLook", tag)); return 0 }
         Snapshot.capture(target.first, target.second)
-        send(ctx, "$tag §7snapshot of §f${target.second}§7 posted + copied to clipboard")
+        send(ctx, L10n.s("iustitia.cmd.snapshotPosted", tag, target.second))
         return 1
     }
 
@@ -1129,20 +1134,20 @@ object IustitiaCommand {
         if (nameArg != null && nameArg.equals("off", ignoreCase = true)) {
             if (active) {
                 val reason = dev.iustitia.render.WatchState.disableNow("disabled")
-                send(ctx, "$tag §7watch follow-cam §c$reason§7 — view restored.")
+                send(ctx, L10n.s("iustitia.cmd.spectateStopped", tag, reason))
             } else {
-                send(ctx, "$tag §7not watching anyone.")
+                send(ctx, L10n.s("iustitia.cmd.spectateNotWatching", tag))
             }
             return 1
         }
         if (!ConfigManager.config.watchFollowCam) {
-            send(ctx, "$tag §7watch follow-cam is §cdisabled§7 in config (enable it via §f/ius config§7).")
+            send(ctx, L10n.s("iustitia.cmd.spectateDisabled", tag))
             return 0
         }
         // Bare command while already watching → toggle off (press-again semantics).
         if (nameArg == null && active) {
             val reason = dev.iustitia.render.WatchState.disableNow("disabled")
-            send(ctx, "$tag §7watch follow-cam §c$reason§7 — view restored.")
+            send(ctx, L10n.s("iustitia.cmd.spectateStopped", tag, reason))
             return 1
         }
         val target: Pair<java.util.UUID, String>? = if (nameArg != null) {
@@ -1150,22 +1155,22 @@ object IustitiaCommand {
         } else crosshairTarget()
         if (target == null) {
             send(ctx, if (nameArg == null)
-                "$tag §7look at a player (or use §f/ius spectate <name>§7) to watch them."
-                else "$tag §cno data for §f$nameArg§7 (must be tracked or have flagged first).")
+                L10n.s("iustitia.cmd.spectateLook", tag)
+                else L10n.s("iustitia.cmd.noData", tag, nameArg))
             return 0
         }
         // The watched player must be currently loaded so the camera can position on them; if not,
         // the render-thread target-gone path would just immediately cancel the watch.
         val loaded = try { mc.world?.getPlayerByUuid(target.first) != null } catch (_: Throwable) { false }
         if (!loaded) {
-            send(ctx, "$tag §c${target.second} §7isn't currently rendered — can't watch (move closer / unloaded).")
+            send(ctx, L10n.s("iustitia.cmd.spectateNotRendered", tag, target.second))
             return 0
         }
         // Switching from another target: restore the saved state first so the forced HUD/perspective
         // isn't re-saved as the new baseline (would lose the user's original view on exit).
         if (active) { try { dev.iustitia.render.WatchState.disableNow("switched") } catch (_: Throwable) {} }
         dev.iustitia.render.WatchState.enable(target.first)
-        send(ctx, "$tag §7watching §f${target.second}§7 — orbit follow-cam §aON§7. Mouse to look around; move or get hit to stop (or §f/ius spectate off§7).")
+        send(ctx, L10n.s("iustitia.cmd.spectateWatching", tag, target.second))
         return 1
     }
 
@@ -1175,9 +1180,9 @@ object IustitiaCommand {
     private fun replayStop(ctx: CommandContext<FabricClientCommandSource>): Int {
         if (companionOwnsReplay(ctx)) return 1
         val active = try { dev.iustitia.replay.ReplayState.active } catch (_: Throwable) { false }
-        if (!active) { send(ctx, "$tag §7no replay running."); return 1 }
+        if (!active) { send(ctx, L10n.s("iustitia.cmd.replayNone", tag)); return 1 }
         dev.iustitia.replay.ReplayState.stop("stopped")
-        send(ctx, "$tag §7replay §cstopped§7 — live view restored.")
+        send(ctx, L10n.s("iustitia.cmd.replayStopped", tag))
         return 1
     }
 
@@ -1186,14 +1191,14 @@ object IustitiaCommand {
     private fun replayPause(ctx: CommandContext<FabricClientCommandSource>): Int {
         if (!replayActive(ctx)) return 1
         val paused = dev.iustitia.replay.ReplayState.togglePause()
-        send(ctx, "$tag §7replay ${if (paused) "§e⏸ paused§7 (§f/ius replay resume§7)" else "§aresumed§7"}.")
+        send(ctx, L10n.s("iustitia.cmd.replayPauseToggle", tag, if (paused) L10n.s("iustitia.cmd.replayPaused") else L10n.s("iustitia.cmd.replayResumed")))
         return 1
     }
 
     private fun replayResume(ctx: CommandContext<FabricClientCommandSource>): Int {
         if (!replayActive(ctx)) return 1
-        if (dev.iustitia.replay.ReplayState.isPaused()) { dev.iustitia.replay.ReplayState.togglePause(); send(ctx, "$tag §7replay §aresumed§7.") }
-        else send(ctx, "$tag §7replay was already playing.")
+        if (dev.iustitia.replay.ReplayState.isPaused()) { dev.iustitia.replay.ReplayState.togglePause(); send(ctx, L10n.s("iustitia.cmd.replayResumedLine", tag)) }
+        else send(ctx, L10n.s("iustitia.cmd.replayAlreadyPlaying", tag))
         return 1
     }
 
@@ -1204,10 +1209,10 @@ object IustitiaCommand {
         // seek to that timestamp — matching the keybind capability the command previously lacked.
         if (secs < 0) {
             dev.iustitia.replay.ReplayState.seekBy(secs)
-            send(ctx, "$tag §7seeked §f${NumFmt.d(digits = 1, v = -secs)}s§7 back§7.")
+            send(ctx, L10n.s("iustitia.cmd.replaySeekBack", tag, NumFmt.d(digits = 1, v = -secs)))
         } else {
             dev.iustitia.replay.ReplayState.seekTo(secs)
-            send(ctx, "$tag §7seeked to §f${NumFmt.d(digits = 1, v = secs)}s§7.")
+            send(ctx, L10n.s("iustitia.cmd.replaySeekTo", tag, NumFmt.d(digits = 1, v = secs)))
         }
         return 1
     }
@@ -1215,10 +1220,10 @@ object IustitiaCommand {
     private fun replayStep(ctx: CommandContext<FabricClientCommandSource>, dir: Int): Int {
         if (!replayActive(ctx)) return 1
         if (!dev.iustitia.replay.ReplayState.isPaused()) {
-            send(ctx, "$tag §7step works while §epaused§7 (§f/ius replay pause§7 first)."); return 1
+            send(ctx, L10n.s("iustitia.cmd.replayStepNeedsPause", tag)); return 1
         }
         dev.iustitia.replay.ReplayState.step(dir)
-        send(ctx, "$tag §7stepped ${if (dir > 0) "forward" else "back"} one frame.")
+        send(ctx, L10n.s("iustitia.cmd.replayStepped", tag, if (dir > 0) L10n.s("iustitia.cmd.replayForward") else L10n.s("iustitia.cmd.replayBackward")))
         return 1
     }
 
@@ -1227,9 +1232,9 @@ object IustitiaCommand {
         val sp = when (speedArg) { "1", "1.0" -> dev.iustitia.replay.ReplayState.SPEED_FULL
             "0.25" -> dev.iustitia.replay.ReplayState.SPEED_QUARTER
             "0.5" -> dev.iustitia.replay.ReplayState.SPEED_HALF
-            else -> { send(ctx, "$tag §7speed must be §f1§7/§f0.5§7/§f0.25§7."); return 0 } }
+            else -> { send(ctx, L10n.s("iustitia.cmd.replaySpeedInvalid", tag)); return 0 } }
         dev.iustitia.replay.ReplayState.setSpeed(sp)
-        send(ctx, "$tag §7replay speed §f${NumFmt.d(digits = 2, v = sp)}×§7.")
+        send(ctx, L10n.s("iustitia.cmd.replaySpeedSet", tag, NumFmt.d(digits = 2, v = sp)))
         return 1
     }
 
@@ -1240,21 +1245,21 @@ object IustitiaCommand {
             "follow" -> dev.iustitia.replay.ReplayState.CameraMode.FOLLOW
             "pov" -> dev.iustitia.replay.ReplayState.CameraMode.POV
             "freecam" -> dev.iustitia.replay.ReplayState.CameraMode.FREECAM
-            else -> { send(ctx, "$tag §7camera mode must be §ffree§7/§ffollow§7/§fpov§7/§ffreecam§7."); return 0 } }
+            else -> { send(ctx, L10n.s("iustitia.cmd.replayCamInvalid", tag)); return 0 } }
         // FREECAM needs a chunk world to fly through — it's the free-spectate mode for a chunk-bearing
         // /ius playclip. Refuse (with a hint) when there's no chunk world so the camera doesn't end up
         // floating in void with nothing to look at.
         if (mode == dev.iustitia.replay.ReplayState.CameraMode.FREECAM &&
             dev.iustitia.replay.ReplayState.chunks == null) {
-            send(ctx, "$tag §7freecam needs a §fchunk-bearing playclip§7 (a clip saved with the full-world capture on). Use §ffree§7/§ffollow§7/§fpov§7 for a plain replay.")
+            send(ctx, L10n.s("iustitia.cmd.replayFreecamNeedsClip", tag))
             return 0
         }
         dev.iustitia.replay.ReplayState.setCameraMode(mode)
-        val label = when (mode) { dev.iustitia.replay.ReplayState.CameraMode.FREE -> "free (your view)"
-            dev.iustitia.replay.ReplayState.CameraMode.FOLLOW -> "follow (orbit the focus ghost)"
-            dev.iustitia.replay.ReplayState.CameraMode.POV -> "POV (the focus ghost's eyes)"
-            dev.iustitia.replay.ReplayState.CameraMode.FREECAM -> "freecam (fly the detached camera — WASD + mouse, no collision)" }
-        send(ctx, "$tag §7replay camera: §f$label§7.")
+        val label = when (mode) { dev.iustitia.replay.ReplayState.CameraMode.FREE -> L10n.s("iustitia.cmd.camModeFree")
+            dev.iustitia.replay.ReplayState.CameraMode.FOLLOW -> L10n.s("iustitia.cmd.camModeFollow")
+            dev.iustitia.replay.ReplayState.CameraMode.POV -> L10n.s("iustitia.cmd.camModePov")
+            dev.iustitia.replay.ReplayState.CameraMode.FREECAM -> L10n.s("iustitia.cmd.camModeFreecam") }
+        send(ctx, L10n.s("iustitia.cmd.replayCamSet", tag, label))
         return 1
     }
 
@@ -1262,7 +1267,7 @@ object IustitiaCommand {
     private fun replayActive(ctx: CommandContext<FabricClientCommandSource>): Boolean {
         if (companionOwnsReplay(ctx)) return false
         val active = try { dev.iustitia.replay.ReplayState.active } catch (_: Throwable) { false }
-        if (!active) send(ctx, "$tag §7no replay running (start one with §f/ius replay <sec>§7 or §f/ius replay <name> <sec>§7).")
+        if (!active) send(ctx, L10n.s("iustitia.cmd.replayNoneHint", tag))
         return active
     }
 
@@ -1273,7 +1278,7 @@ object IustitiaCommand {
         null, "1", "1.0" -> dev.iustitia.replay.ReplayState.SPEED_FULL
         "0.5" -> dev.iustitia.replay.ReplayState.SPEED_HALF
         "0.25" -> dev.iustitia.replay.ReplayState.SPEED_QUARTER
-        else -> { send(ctx, "$tag §cspeed must be §f1§7, §f0.5 §7or §f0.25§7."); null }
+        else -> { send(ctx, L10n.s("iustitia.cmd.speedInvalid", tag)); null }
     }
 
     /** Default window (seconds) when none is given — bare `/ius replay` or `/ius replay <name>`. */
@@ -1299,7 +1304,7 @@ object IustitiaCommand {
         if (companionOwnsReplay(ctx)) return 1
         val cfg = ConfigManager.config
         if (!cfg.replayCapture) {
-            send(ctx, "$tag §7replay capture is §cdisabled§7 in config (enable via §f/ius config§7) — nothing buffered.")
+            send(ctx, L10n.s("iustitia.cmd.replayCaptureDisabled", tag))
             return 0
         }
         val speed = parseSpeed(ctx, speedArg) ?: return 0
@@ -1311,7 +1316,7 @@ object IustitiaCommand {
         val secs: Int
         val focusTxt: String
         when {
-            target == null -> { focus = null; secs = DEFAULT_REPLAY_SECS; focusTxt = "everyone" }
+            target == null -> { focus = null; secs = DEFAULT_REPLAY_SECS; focusTxt = L10n.s("iustitia.cmd.replayEveryone") }
             target.toDoubleOrNull() != null -> {
                 focus = null
                 // A trailing <seconds> arg wins over the target number (`/ius replay 60 30` parses
@@ -1323,7 +1328,7 @@ object IustitiaCommand {
                 val s = try { DoubleArgumentType.getDouble(ctx, "seconds") } catch (_: Throwable) { -1.0 }
                 secs = (if (s >= 1.0) s else target.toDouble()).toInt()
                     .coerceIn(1, dev.iustitia.replay.ReplayBuffer.MAX_SECONDS)
-                focusTxt = "everyone"
+                focusTxt = L10n.s("iustitia.cmd.replayEveryone")
             }
             else -> {
                 val uuid = resolveUuid(target)
@@ -1331,8 +1336,8 @@ object IustitiaCommand {
                 val s = try { DoubleArgumentType.getDouble(ctx, "seconds") } catch (_: Throwable) { -1.0 }
                 secs = if (s >= 1.0) s.toInt().coerceIn(1, dev.iustitia.replay.ReplayBuffer.MAX_SECONDS) else DEFAULT_REPLAY_SECS
                 if (uuid == null) {
-                    send(ctx, "$tag §7no tracked data for §f$target§7 — replaying everyone (no focus).")
-                    focusTxt = "everyone"
+                    send(ctx, L10n.s("iustitia.cmd.replayNoTrack", tag, target))
+                    focusTxt = L10n.s("iustitia.cmd.replayEveryone")
                 } else {
                     focusTxt = target
                 }
@@ -1343,13 +1348,13 @@ object IustitiaCommand {
             dev.iustitia.replay.ReplayBuffer.Window(emptyList(), emptyList())
         }
         if (window.frames.isEmpty()) {
-            send(ctx, "$tag §7no buffered data for the last §f${secs}s§7 (not tracked yet).")
+            send(ctx, L10n.s("iustitia.cmd.replayNoBuffer", tag, secs))
             return 0
         }
         val started = try { dev.iustitia.replay.ReplayState.start(window, focus, speed, cfg.replayHideLive, relocate = false, legacy = false) } catch (_: Throwable) { false }
-        if (!started) { send(ctx, "$tag §7couldn't start the replay (empty window)."); return 0 }
-        val hideTxt = if (cfg.replayHideLive) " §7(live players hidden)" else ""
-        send(ctx, "$tag §7replaying last §f${secs}s §7for §f$focusTxt§7 at §f${NumFmt.d(digits = 2, v = speed)}×§7 — ghosts drawn in-world$hideTxt. Holds at the end (or §f/ius replay off§7).")
+        if (!started) { send(ctx, L10n.s("iustitia.cmd.replayStartFail", tag)); return 0 }
+        val hideTxt = if (cfg.replayHideLive) L10n.s("iustitia.cmd.replayHideLiveSuffix") else ""
+        send(ctx, L10n.s("iustitia.cmd.replayStarted", tag, secs, focusTxt, NumFmt.d(digits = 2, v = speed), hideTxt))
         return 1
     }
 
@@ -1361,7 +1366,7 @@ object IustitiaCommand {
     private fun replaySave(ctx: CommandContext<FabricClientCommandSource>, nameArg: String): Int {
         if (companionOwnsReplay(ctx)) return 1
         if (!dev.iustitia.replay.ReplayState.active) {
-            send(ctx, "$tag §cno active replay to save§7 — start one with §f/ius replay§7 first.")
+            send(ctx, L10n.s("iustitia.cmd.replaySaveNoActive", tag))
             return 0
         }
         val cfg = ConfigManager.config
@@ -1369,7 +1374,7 @@ object IustitiaCommand {
         val base = try { dev.iustitia.replay.ReplayState.exportWindow() } catch (_: Throwable) {
             dev.iustitia.replay.ReplayBuffer.Window(emptyList(), emptyList())
         }
-        if (base.frames.isEmpty()) { send(ctx, "$tag §7replay window is empty — nothing to save."); return 0 }
+        if (base.frames.isEmpty()) { send(ctx, L10n.s("iustitia.cmd.replaySaveEmpty", tag)); return 0 }
         // Capture terrain + chunks at save time only when MODERN and the replay isn't already
         // carrying them (a /ius replay window has none; a playclip-modern window already has them).
         val modern = cfg.playclipMode == dev.iustitia.config.IustitiaConfig.PlayclipMode.MODERN
@@ -1384,20 +1389,20 @@ object IustitiaCommand {
         } else withSegments
         val w2 = if (modern && cfg.clipChunkWorld) ensureClipWorld(w1, cfg) else w1
         val saved = try { dev.iustitia.replay.ClipStore.save(nameArg, w2, focus) } catch (_: Throwable) { null }
-        if (saved == null) { send(ctx, "$tag §cfailed to write clip (disk error)."); return 0 }
+        if (saved == null) { send(ctx, L10n.s("iustitia.cmd.clipWriteFail", tag)); return 0 }
         val frames = w2.frames.size
         val alerts = w2.alerts.size
         val blocks = w2.terrain?.nonAirCount() ?: 0
-        val terrainTxt = if (blocks > 0) "§8, $blocks terrain blocks§7" else ""
+        val terrainTxt = if (blocks > 0) L10n.s("iustitia.cmd.clipTerrainSuffix", blocks) else ""
         val chunkSections = w2.chunks?.sectionCount()
             ?: w2.segments.sumOf { it.chunks?.sectionCount() ?: 0 }
-        val chunksTxt = if (chunkSections > 0) "§8, $chunkSections chunk sections§7" else ""
+        val chunksTxt = if (chunkSections > 0) L10n.s("iustitia.cmd.clipChunksSuffix", chunkSections) else ""
         val segCount = w2.segments.size
-        val segTxt = if (segCount > 1) "§8, $segCount segments§7" else ""
+        val segTxt = if (segCount > 1) L10n.s("iustitia.cmd.clipSegmentsSuffix", segCount) else ""
         val deltaCount = w2.segments.sumOf { it.blockDeltas.size }
-        val deltaTxt = if (deltaCount > 0) "§8, $deltaCount block edits§7" else ""
-        send(ctx, "$tag §7replay saved as clip §f$saved§7 §8($frames frames, $alerts alerts$terrainTxt$chunksTxt$segTxt$deltaTxt) §7→ §f${dev.iustitia.replay.ClipStore.dirDisplay()}§7. Replay still active.")
-        send(ctx, " §7play it back with §f/ius playclip $saved§7.")
+        val deltaTxt = if (deltaCount > 0) L10n.s("iustitia.cmd.clipDeltasSuffix", deltaCount) else ""
+        send(ctx, L10n.s("iustitia.cmd.replaySavedAsClip", tag, saved, frames, alerts, terrainTxt, chunksTxt, segTxt, deltaTxt, dev.iustitia.replay.ClipStore.dirDisplay()))
+        send(ctx, L10n.s("iustitia.cmd.replaySavedPlayHint", saved))
         return 1
     }
 
@@ -1434,7 +1439,7 @@ object IustitiaCommand {
         if (companionOwnsReplay(ctx)) return 1
         val cfg = ConfigManager.config
         if (!cfg.replayCapture) {
-            send(ctx, "$tag §7replay capture is §cdisabled§7 in config — nothing to export.")
+            send(ctx, L10n.s("iustitia.cmd.clipCaptureDisabled", tag))
             return 0
         }
         val secs = DoubleArgumentType.getDouble(ctx, "seconds").toInt().coerceIn(1, dev.iustitia.replay.ReplayBuffer.MAX_SECONDS)
@@ -1450,7 +1455,7 @@ object IustitiaCommand {
             dev.iustitia.replay.ReplayBuffer.Window(emptyList(), emptyList())
         }
         if (window.frames.isEmpty()) {
-            send(ctx, "$tag §7no buffered data for the last §f${secs}s§7 (not tracked yet).")
+            send(ctx, L10n.s("iustitia.cmd.replayNoBuffer", tag, secs))
             return 0
         }
         // The clip FILENAME is the user's [name] verbatim — so `/ius playclip <name>` round-trips.
@@ -1476,24 +1481,24 @@ object IustitiaCommand {
         val windowWithWorld = if (modern && cfg.clipChunkWorld) ensureClipWorld(windowWithTerrain, cfg) else windowWithTerrain
         val saved = try { dev.iustitia.replay.ClipStore.save(clipName, windowWithWorld, focus) } catch (_: Throwable) { null }
         if (saved == null) {
-            send(ctx, "$tag §cfailed to write clip (disk error).")
+            send(ctx, L10n.s("iustitia.cmd.clipWriteFail", tag))
             return 0
         }
         val frames = window.frames.size
         val alerts = window.alerts.size
         val blocks = windowWithWorld.terrain?.nonAirCount() ?: 0
-        val terrainTxt = if (blocks > 0) "§8, $blocks terrain blocks§7" else ""
+        val terrainTxt = if (blocks > 0) L10n.s("iustitia.cmd.clipTerrainSuffix", blocks) else ""
         // Chunk sections can live on the top-level snapshot (pre-v13/world-less-segments export) or
         // inside per-segment snapshots; count both so the feedback line matches what was written.
         val chunkSections = windowWithWorld.chunks?.sectionCount()
             ?: windowWithWorld.segments.sumOf { it.chunks?.sectionCount() ?: 0 }
-        val chunksTxt = if (chunkSections > 0) "§8, $chunkSections chunk sections§7" else ""
+        val chunksTxt = if (chunkSections > 0) L10n.s("iustitia.cmd.clipChunksSuffix", chunkSections) else ""
         val segCount = windowWithWorld.segments.size
-        val segTxt = if (segCount > 1) "§8, $segCount segments§7" else ""
+        val segTxt = if (segCount > 1) L10n.s("iustitia.cmd.clipSegmentsSuffix", segCount) else ""
         val deltaCount = windowWithWorld.segments.sumOf { it.blockDeltas.size }
-        val deltaTxt = if (deltaCount > 0) "§8, $deltaCount block edits§7" else ""
-        send(ctx, "$tag §7clip saved: §f$saved§7 §8($frames frames, $alerts alerts, ${secs}s$terrainTxt$chunksTxt$segTxt$deltaTxt) §7→ §f${dev.iustitia.replay.ClipStore.dirDisplay()}")
-        send(ctx, " §7play it back with §f/ius playclip $saved§7.")
+        val deltaTxt = if (deltaCount > 0) L10n.s("iustitia.cmd.clipDeltasSuffix", deltaCount) else ""
+        send(ctx, L10n.s("iustitia.cmd.clipSaved", tag, saved, frames, alerts, secs, terrainTxt, chunksTxt, segTxt, deltaTxt, dev.iustitia.replay.ClipStore.dirDisplay()))
+        send(ctx, L10n.s("iustitia.cmd.replaySavedPlayHint", saved))
         return 1
     }
 
@@ -1505,24 +1510,24 @@ object IustitiaCommand {
         if (companionOwnsReplay(ctx)) return 1
         if (nameArg == null) {
             val clips = try { dev.iustitia.replay.ClipStore.list() } catch (_: Throwable) { emptyList() }
-            if (clips.isEmpty()) { send(ctx, "$tag §7no saved clips yet. Save one with §f/ius clip <seconds> [name]§7."); return 1 }
-            send(ctx, "$tag §7saved clips §8(${dev.iustitia.replay.ClipStore.dirDisplay()}§8)§7:")
+            if (clips.isEmpty()) { send(ctx, L10n.s("iustitia.cmd.clipsNone", tag)); return 1 }
+            send(ctx, L10n.s("iustitia.cmd.clipsHeader", tag, dev.iustitia.replay.ClipStore.dirDisplay()))
             clips.forEach { send(ctx, " §f$it §7— §f/ius playclip $it") }
             return 1
         }
         val speed = parseSpeed(ctx, speedArg) ?: return 0
         when (val r = ClipPlayback.start(nameArg, speed)) {
             is ClipPlayback.Result.Started -> {
-                val focusTxt = r.focus?.let { " §7focus §f${FlagHistory.nameOrShort(it)}" } ?: ""
-                send(ctx, "$tag §7playing clip §f$nameArg§7 at §f${NumFmt.d(digits = 2, v = speed)}×§7 — §f${r.frames}§7 frames$focusTxt. Holds at the end (or §f/ius playclip off§7).")
+                val focusTxt = r.focus?.let { L10n.s("iustitia.cmd.clipFocusSuffix", FlagHistory.nameOrShort(it)) } ?: ""
+                send(ctx, L10n.s("iustitia.cmd.clipPlaying", tag, nameArg, NumFmt.d(digits = 2, v = speed), r.frames, focusTxt))
                 return 1
             }
             is ClipPlayback.Result.LoadFailed -> {
                 val why = r.reason?.let { " §8— $it" } ?: ""
-                send(ctx, "$tag §cno clip §f$nameArg§7$why §7(save one with /ius clip; check the name with /ius playclip).")
+                send(ctx, L10n.s("iustitia.cmd.clipNotFound", tag, nameArg, why))
             }
             ClipPlayback.Result.StartFailed -> {
-                send(ctx, "$tag §ccouldn't start the clip (playback failed).")
+                send(ctx, L10n.s("iustitia.cmd.clipStartFail", tag))
             }
         }
         return 0
@@ -1556,9 +1561,9 @@ object IustitiaCommand {
         val name = StringArgumentType.getString(ctx, "name")
         val ok = try { dev.iustitia.replay.ClipStore.delete(name) } catch (_: Throwable) { false }
         if (ok) {
-            send(ctx, "$tag §7deleted clip §f$name§7 → §f${dev.iustitia.replay.ClipStore.dirDisplay()}")
+            send(ctx, L10n.s("iustitia.cmd.clipDeleted", tag, name, dev.iustitia.replay.ClipStore.dirDisplay()))
         } else {
-            send(ctx, "$tag §cno clip named §f$name§7 (check §f/ius playclip§7 for the list).")
+            send(ctx, L10n.s("iustitia.cmd.clipDeleteMissing", tag, name))
         }
         return if (ok) 1 else 0
     }
@@ -1567,21 +1572,23 @@ object IustitiaCommand {
      *  carry the profile's own blurb, so a reader learns what a profile costs before applying it and
      *  not after; the same wording the setup wizard's buttons show. */
     private fun presetList(ctx: CommandContext<FabricClientCommandSource>): Int {
-        send(ctx, "$tag §7presets §8(built-in + custom)§7:")
+        send(ctx, L10n.s("iustitia.cmd.presetsHeader", tag))
         for (b in dev.iustitia.config.PresetManager.builtIns) {
             val mark = when {
-                b.recommended -> " §a(recommended)"
-                b.diagnostic -> " §8(diagnostic, not offered by the wizard)"
+                b.recommended -> L10n.s("iustitia.cmd.presetMarkRecommended")
+                b.diagnostic -> L10n.s("iustitia.cmd.presetMarkDiagnostic")
                 else -> ""
             }
-            send(ctx, " §b${b.label}§7$mark §8— §f/ius preset ${b.name}")
-            b.blurb.forEach { line -> send(ctx, "   §7$line") }
+            send(ctx, L10n.s("iustitia.cmd.presetRow", L10n.s("iustitia.preset.${b.name}.label"), mark, b.name))
+            b.blurb.indices.forEach { i ->
+                send(ctx, L10n.s("iustitia.cmd.presetBlurb", L10n.s("iustitia.preset.${b.name}.blurb$i")))
+            }
         }
         val customs = try { dev.iustitia.config.PresetManager.listCustom() } catch (_: Throwable) { emptyList() }
         if (customs.isEmpty()) {
-            send(ctx, " §7no custom presets. Save one with §f/ius createpreset <name>§7.")
+            send(ctx, L10n.s("iustitia.cmd.presetsNone"))
         } else {
-            customs.forEach { n -> send(ctx, " §d$n §7— §f/ius preset $n §8(custom; /ius deletepreset $n)§7") }
+            customs.forEach { n -> send(ctx, L10n.s("iustitia.cmd.presetCustomRow", n, n, n)) }
         }
         return 1
     }
@@ -1591,10 +1598,10 @@ object IustitiaCommand {
         val name = StringArgumentType.getString(ctx, "name")
         val ok = try { dev.iustitia.config.PresetManager.apply(name) } catch (_: Throwable) { false }
         if (ok) {
-            val kind = if (dev.iustitia.config.PresetManager.isBuiltIn(name)) "built-in" else "custom"
-            send(ctx, "$tag §7applied $kind preset §f$name§7 — config saved. §8(/ius list§7 to see it; /ius status§7 for the panel.)")
+            val kind = if (dev.iustitia.config.PresetManager.isBuiltIn(name)) L10n.s("iustitia.cmd.presetKindBuiltin") else L10n.s("iustitia.cmd.presetKindCustom")
+            send(ctx, L10n.s("iustitia.cmd.presetApplied", tag, kind, name))
         } else {
-            send(ctx, "$tag §ccouldn't apply preset §f$name§7 §8(not found, or the preset file is unreadable)§7. Built-ins: §f${dev.iustitia.config.PresetManager.builtInNames.joinToString("/")}§7. List all with §f/ius presets§7.")
+            send(ctx, L10n.s("iustitia.cmd.presetApplyFailed", tag, name, dev.iustitia.config.PresetManager.builtInNames.joinToString("/")))
         }
         return if (ok) 1 else 0
     }
@@ -1603,12 +1610,12 @@ object IustitiaCommand {
     private fun presetCreate(ctx: CommandContext<FabricClientCommandSource>): Int {
         val name = StringArgumentType.getString(ctx, "name")
         if (dev.iustitia.config.PresetManager.isBuiltIn(name)) {
-            send(ctx, "$tag §c$name§7 is a built-in preset — pick a different name for your custom one.")
+            send(ctx, L10n.s("iustitia.cmd.presetCreateBuiltinTaken", tag, name))
             return 0
         }
         val ok = try { dev.iustitia.config.PresetManager.saveCustom(name) } catch (_: Throwable) { false }
-        if (ok) send(ctx, "$tag §7saved custom preset §f$name§7 from the current config. Apply it anytime with §f/ius preset $name§7.")
-        else send(ctx, "$tag §cfailed to save preset §f$name§7 (disk error / bad name).")
+        if (ok) send(ctx, L10n.s("iustitia.cmd.presetCreateOk", tag, name, name))
+        else send(ctx, L10n.s("iustitia.cmd.presetCreateFail", tag, name))
         return if (ok) 1 else 0
     }
 
@@ -1616,22 +1623,22 @@ object IustitiaCommand {
     private fun presetDelete(ctx: CommandContext<FabricClientCommandSource>): Int {
         val name = StringArgumentType.getString(ctx, "name")
         if (dev.iustitia.config.PresetManager.isBuiltIn(name)) {
-            send(ctx, "$tag §cbuilt-in presets can't be deleted.")
+            send(ctx, L10n.s("iustitia.cmd.presetDeleteBuiltin", tag))
             return 0
         }
         val ok = try { dev.iustitia.config.PresetManager.deleteCustom(name) } catch (_: Throwable) { false }
-        if (ok) send(ctx, "$tag §7deleted custom preset §f$name§7.")
-        else send(ctx, "$tag §cno custom preset §f$name§7 (list with §f/ius presets§7).")
+        if (ok) send(ctx, L10n.s("iustitia.cmd.presetDeleteOk", tag, name))
+        else send(ctx, L10n.s("iustitia.cmd.presetDeleteMissing", tag, name))
         return if (ok) 1 else 0
     }
 
     // ---- help ----
     private fun help(ctx: CommandContext<FabricClientCommandSource>, topic: String?): Int {
         if (topic == null) {
-            send(ctx, "$tag §7commands (alias: §f/ius§7):")
+            send(ctx, L10n.s("iustitia.cmd.helpHeader", tag))
             subcommands.forEach { (s, d) -> send(ctx, " §f$s §7— $d") }
             send(ctx, CheckInfo.SEVERITY_LEGEND)
-            send(ctx, "§7nametag: §a[+] §7clean §e[!] §7suspect (≥1 red-capable or lone killAura) §c[X] §7caught (≥2 distinct)§7. Fades one tier per ~10 min idle. Hover an alert for details, click it for history.")
+            send(ctx, L10n.s("iustitia.cmd.nametagLegend"))
             return 1
         }
         // subcommand?
@@ -1641,8 +1648,8 @@ object IustitiaCommand {
         if (topic in checkIds) {
             val cc = ConfigManager.config.slice(topic)
             val tier = when {
-                CheckInfo.isDefinitive(topic) -> " §7(red-capable → §eyellow§7/§cred§7 nametag; §cred§7 needs ≥2 distinct)"
-                topic == "killAura" -> " §7(corroborator → counts toward §cred§7 only with another red-capable alert)"
+                CheckInfo.isDefinitive(topic) -> L10n.s("iustitia.cmd.helpTierDefinitive")
+                topic == "killAura" -> L10n.s("iustitia.cmd.helpTierCorroborator")
                 else -> ""
             }
             send(ctx, "$tag §f$topic$tier")
@@ -1653,7 +1660,7 @@ object IustitiaCommand {
         // feature? (transcript/evidence/note/session/snapshot/wizard/keybinds/compact/hist/report/alerts/watch)
         val feature = FeatureInfo.describe(topic)
         if (feature != null) { send(ctx, "$tag §f$topic §7— $feature"); return 1 }
-        send(ctx, "$tag §cunknown topic: $topic §7(try a subcommand, check id, or feature; /ius help lists them).")
+        send(ctx, L10n.s("iustitia.cmd.helpUnknownTopic", tag, topic))
         return 0
     }
 
@@ -1665,15 +1672,15 @@ object IustitiaCommand {
         val cfg = ConfigManager.config
         cfg.alertsEnabled = !cfg.alertsEnabled
         ConfigManager.save()
-        val state = if (cfg.alertsEnabled) "§aON" else "§cOFF (muted)"
-        send(ctx, "$tag §7chat alerts: $state")
-        send(ctx, "$tag §7muted checks: §f${cfg.mutedChecks.joinToString(", ").ifEmpty { "(none)" }}")
+        val state = if (cfg.alertsEnabled) L10n.s("iustitia.cmd.stateOn") else L10n.s("iustitia.cmd.stateOffMuted")
+        send(ctx, L10n.s("iustitia.cmd.alertsList", tag, state))
+        send(ctx, L10n.s("iustitia.cmd.alertsMutedChecks", tag, cfg.mutedChecks.joinToString(", ").ifEmpty { L10n.s("iustitia.cmd.none") }))
         val playerNames = cfg.mutedPlayers.joinToString(", ") { uuid ->
             try { FlagHistory.nameFor(UUID.fromString(uuid)) ?: uuid.take(8) }
             catch (_: Throwable) { uuid.take(8) }
         }
-        send(ctx, "$tag §7muted players: §f${playerNames.ifEmpty { "(none)" }}")
-        send(ctx, "§7detection/tier keep running — only chat is silenced. Per-check: /ius alerts <check>")
+        send(ctx, L10n.s("iustitia.cmd.alertsMutedPlayers", tag, playerNames.ifEmpty { L10n.s("iustitia.cmd.none") }))
+        send(ctx, L10n.s("iustitia.cmd.alertsHint"))
         return 1
     }
 
@@ -1701,12 +1708,12 @@ object IustitiaCommand {
                          else { cfg.mutedChecks.add(checkMatch); false }
             }
             ConfigManager.save()
-            send(ctx, "$tag §7check §f$checkMatch §7chat-alerts ${if (nowOn) "§aON" else "§cOFF (muted)"}")
+            send(ctx, L10n.s("iustitia.cmd.alertsCheckState", tag, checkMatch, if (nowOn) L10n.s("iustitia.cmd.stateOn") else L10n.s("iustitia.cmd.stateOffMuted")))
             return 1
         }
         // player name?
         val uuid = FlagHistory.resolveName(target)
-        if (uuid == null) { send(ctx, "$tag §cunknown target: §f$target§7 (not a check id or known player)."); return 0 }
+        if (uuid == null) { send(ctx, L10n.s("iustitia.cmd.alertsUnknownTarget", tag, target)); return 0 }
         val key = uuid.toString()
         // Same semantics as the check path: nowOn=true ⟺ alerts ON (unmuted), false ⟺ muted.
         val nowOn = when (wantOn) {
@@ -1716,7 +1723,7 @@ object IustitiaCommand {
                      else { cfg.mutedPlayers.add(key); false }
         }
         ConfigManager.save()
-        send(ctx, "$tag §7player §f$target §7chat-alerts ${if (nowOn) "§aON" else "§cOFF (muted)"}")
+        send(ctx, L10n.s("iustitia.cmd.alertsPlayerState", tag, target, if (nowOn) L10n.s("iustitia.cmd.stateOn") else L10n.s("iustitia.cmd.stateOffMuted")))
         return 1
     }
 

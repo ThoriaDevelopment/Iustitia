@@ -1,5 +1,6 @@
 package dev.iustitia.history
 
+import dev.iustitia.i18n.L10n
 import java.util.ArrayDeque
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -55,7 +56,19 @@ object FlagHistory {
         val evidence: Evidence? = null,
     )
 
-    enum class Tier(val label: String) { GREEN("GREEN"), YELLOW("YELLOW"), RED("RED") }
+    /** Display tier name, localized from `iustitia.misc.tier.<name>` so confidence lines, reports,
+     *  snapshots and evidence chat follow the client's language (README "Language"). The English
+     *  enum name shows if the key is ever missing — a failed lookup never leaks the raw key.
+     *  Live lookup (getter), so a runtime language switch applies immediately. */
+    enum class Tier {
+        GREEN, YELLOW, RED;
+
+        val label: String
+            get() {
+                val key = "iustitia.misc.tier.$name"
+                return L10n.s(key).takeIf { it != key } ?: name
+            }
+    }
 
     /**
      * Primary red-capable checks (the former "definitive" set, trimmed): a single alert from
@@ -218,7 +231,8 @@ object FlagHistory {
         val alerts = sessionAlertCount(uuid)
         val set = alertedChecksByUuid[uuid]
         if (set == null) {
-            return if (alerts > 0) "tier-neutral signals only ($alerts alerts)" else "clean (no red-capable alerts)"
+            return if (alerts > 0) L10n.s("iustitia.misc.confidenceTierNeutralAlerts", alerts)
+                else L10n.s("iustitia.misc.confidenceClean")
         }
         // Snapshot the set under its lock: recordAlert adds to this set from the network thread
         // while these readers run on the render thread, and an unsynchronized iterate would CME
@@ -226,17 +240,24 @@ object FlagHistory {
         // already locks; the readers now do too. Display-only.
         val body = synchronized(set) {
             if (set.isEmpty()) return@confidenceLine (
-                if (alerts > 0) "tier-neutral signals only ($alerts alerts)" else "clean (no red-capable alerts)"
+                if (alerts > 0) L10n.s("iustitia.misc.confidenceTierNeutralAlerts", alerts)
+                else L10n.s("iustitia.misc.confidenceClean")
             )
             val primaries = set.filter { it in DEFINITIVE }
             val corroborators = set.filter { it in CORROBORATOR }
             val parts = ArrayList<String>(2)
             if (primaries.isNotEmpty()) parts += primaries.joinToString(" + ")
-            if (corroborators.isNotEmpty()) parts += "${corroborators.joinToString(" + ")} corroborated"
-            if (parts.isEmpty()) "no red-capable alerts" else parts.joinToString(", ")
+            if (corroborators.isNotEmpty()) parts += L10n.s("iustitia.misc.confidenceCorroborated", corroborators.joinToString(" + "))
+            if (parts.isEmpty()) L10n.s("iustitia.misc.confidenceNoRed") else parts.joinToString(", ")
         }
-        "$body, $alerts alert${if (alerts == 1) "" else "s"}"
-    } catch (_: Throwable) { "clean (no red-capable alerts)" }
+        L10n.s("iustitia.misc.confidenceAlertsTail", body, alerts, if (alerts == 1) "" else pluralSuffix())
+    } catch (_: Throwable) { L10n.s("iustitia.misc.confidenceClean") }
+
+    /** Plural tail appended after a count ≠ 1 (English "s"). Romance languages (fr/es/pt) ship
+     *  "s" like English; the rest ship "" — a fixed Latin suffix cannot decline their noun — so
+     *  their templates take the bare count. No-plural locales (ja/ko/zh/lzh) are pinned to "" by
+     *  the static verifier. */
+    private fun pluralSuffix(): String = L10n.s("iustitia.misc.pluralSuffix")
 
     /**
      * Numeric cheat-confidence score 0–99 for the nametag badge + `/ius session` "who peaked
@@ -271,7 +292,8 @@ object FlagHistory {
     fun confidenceExplanation(uuid: UUID): String = try {
         val set = alertedChecksByUuid[uuid]
         if (set == null) {
-            return if (sessionAlertCount(uuid) > 0) "tier-neutral signals only (no red-capable alert)" else "clean (no red-capable alerts)"
+            return if (sessionAlertCount(uuid) > 0) L10n.s("iustitia.misc.confidenceTierNeutralPlain")
+                else L10n.s("iustitia.misc.confidenceClean")
         }
         // Snapshot the set contents under its lock (recordAlert mutates cross-thread; see
         // confidenceLine). primaries + the full-CSV are local snapshots safe to use outside.
@@ -279,19 +301,20 @@ object FlagHistory {
             Triple(set.isEmpty(), set.filter { it in DEFINITIVE }, set.joinToString(", "))
         }
         if (empty) {
-            return if (sessionAlertCount(uuid) > 0) "tier-neutral signals only (no red-capable alert)" else "clean (no red-capable alerts)"
+            return if (sessionAlertCount(uuid) > 0) L10n.s("iustitia.misc.confidenceTierNeutralPlain")
+                else L10n.s("iustitia.misc.confidenceClean")
         }
         val tier = tierFor(uuid)
         val tierName = tier.label
         val sp = span(uuid)
-        val window = if (sp == null) "" else " within ${(sp.second - sp.first) / 20}s"
+        val window = if (sp == null) "" else L10n.s("iustitia.misc.confidenceWindow", (sp.second - sp.first) / 20)
         if (primaries.isEmpty()) {
-            "$tierName: corroborator only ($allCsv)$window"
+            L10n.s("iustitia.misc.confidenceCorroboratorOnly", tierName, allCsv, window)
         } else {
-            "$tierName: ${primaries.size} primary check${if (primaries.size == 1) "" else "s"} " +
-                "(${primaries.joinToString(", ")})$window"
+            L10n.s("iustitia.misc.confidencePrimaryChecks", tierName, primaries.size,
+                if (primaries.size == 1) "" else pluralSuffix(), primaries.joinToString(", "), window)
         }
-    } catch (_: Throwable) { "clean (no red-capable alerts)" }
+    } catch (_: Throwable) { L10n.s("iustitia.misc.confidenceClean") }
 
     // --- persistence accessors (read by PersistenceManager, written by mergePersisted) ---
 
