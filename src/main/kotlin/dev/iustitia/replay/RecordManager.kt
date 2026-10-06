@@ -2,6 +2,7 @@ package dev.iustitia.replay
 
 import dev.iustitia.Iustitia
 import dev.iustitia.config.ConfigManager
+import dev.iustitia.i18n.L10n
 import dev.iustitia.tracking.TrackedPlayer
 import java.util.ArrayDeque
 import java.util.UUID
@@ -74,8 +75,8 @@ object RecordManager {
      */
     fun start(): String = try {
         // Yield long-recording to SnapClip when it's installed (it owns /record).
-        if (dev.iustitia.compat.CompanionMods.snapClip) return "$tag §7recording is handled by §fSnapClip§7 (installed) — use its §f/record start§7."
-        if (recording) return "$tag §7already recording §8(§f${frameCount()}§7 frames so far) — §f/ius record stop§7 to save."
+        if (dev.iustitia.compat.CompanionMods.snapClip) return "$tag " + L10n.s("iustitia.replay.recordCompanionActive")
+        if (recording) return "$tag " + L10n.s("iustitia.replay.recordAlreadyRecording", frameCount())
         val cfg = ConfigManager.config
         recording = true
         segmentStartTick = Iustitia.tickCounter
@@ -98,11 +99,11 @@ object RecordManager {
                 }
             } catch (_: Throwable) {}
         }
-        val mapTxt = if (mapOn) " §7+ map" else ""
-        "$tag §7recording started §8(segment §f$segmentIndex§8)§7 — §f/ius record stop§7 to save$mapTxt§7."
+        val mapTxt = if (mapOn) L10n.s("iustitia.replay.recordMapSuffix") else ""
+        "$tag " + L10n.s("iustitia.replay.recordStarted", segmentIndex, mapTxt)
     } catch (_: Throwable) {
         recording = false
-        "$tag §cfailed to start recording."
+        "$tag " + L10n.s("iustitia.replay.recordStartFailed")
     }
 
     /**
@@ -110,7 +111,7 @@ object RecordManager {
      * Returns a chat-feedback string. Idempotent — `stop` while not recording just says so.
      */
     fun stop(name: String?): String = try {
-        if (!recording) return "$tag §7not recording. §f/ius record start§7 to begin."
+        if (!recording) return "$tag " + L10n.s("iustitia.replay.recordNotRecording")
         val saved = saveSegment(name)
         recording = false
         synchronized(frames) { frames.clear() }
@@ -118,11 +119,11 @@ object RecordManager {
         synchronized(totems) { totems.clear() }
         synchronized(blockDeltas) { blockDeltas.clear() }
         try { ChunkRollingCapture.clearSegment(RECORD_SEGMENT_ID) } catch (_: Throwable) {}
-        if (saved == null) "$tag §cfailed to write recording (disk error)."
-        else "$tag §7recording saved: §f$saved§7 §8(${frameCountBeforeClear} frames) §7→ §f${ClipStore.dirDisplay()}"
+        if (saved == null) "$tag " + L10n.s("iustitia.replay.recordWriteFailed")
+        else "$tag " + L10n.s("iustitia.replay.recordSaved", saved, frameCountBeforeClear, ClipStore.dirDisplay())
     } catch (_: Throwable) {
         recording = false
-        "$tag §cfailed to save recording."
+        "$tag " + L10n.s("iustitia.replay.recordSaveFailed")
     }
 
     /**

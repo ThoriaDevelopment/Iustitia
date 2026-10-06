@@ -474,6 +474,9 @@ What the number means depends on the check (reach = max distance, autoclicker = 
 **Is this allowed on servers?**
 Iustitia is read-only and sends nothing to the server. It's no more "detectable" or "cheating" than reading your own chat. That said, server rules vary; if a server bans third-party mods entirely, don't use it there.
 
+**Which languages does it support?**
+It follows the language your Minecraft client is already in. A set of languages ships translated and the rest falls back to English; check ids and `/ius` command names stay English either way, because they are what you type.
+
 **Will it false-accuse innocent people?**
 Possibly, on the yellow tier — those are heuristic checks. That's why yellow means "watch," not "guilty." Red checks are high-confidence. Always check `/ius hist` before judging.
 

@@ -4,6 +4,7 @@ import dev.iustitia.NumFmt
 import dev.iustitia.Iustitia
 import dev.iustitia.history.Evidence
 import dev.iustitia.history.FlagHistory
+import dev.iustitia.i18n.L10n
 import net.minecraft.client.gui.Click
 import net.minecraft.client.gui.DrawContext
 import net.minecraft.client.gui.screen.Screen
@@ -29,7 +30,7 @@ import net.minecraft.text.Text
  * `Click`-based input API. Whole body fail-open.
  */
 class PlayerHistoryScreen(private val uuid: java.util.UUID, private val parent: Screen?) :
-    Screen(Text.literal("Iustitia — player report")) {
+    Screen(L10n.t("iustitia.screen.playerHistory.title")) {
 
     private sealed class Item {
         data class Group(val checkId: String, val count: Int, val maxVl: Double) : Item()
@@ -83,18 +84,18 @@ class PlayerHistoryScreen(private val uuid: java.util.UUID, private val parent: 
             val x = 10
             var y = 12
             // ---- profile card (#2) ----
-            context.drawTextWithShadow(tr, Text.literal(glyphFor(tier) + " §f§l" + name + " §7(" + tierLabel(tier) + ")"), x, y, WHITE); y += 14
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.playerHistory.header", glyphFor(tier), name, tierLabel(tier)), x, y, WHITE); y += 14
             val sp = FlagHistory.span(uuid)
-            val spanTxt = if (sp == null) "§7no flags this session" else "§7first §f@t${sp.first} §7last §f@t${sp.second}"
+            val spanTxt = if (sp == null) L10n.s("iustitia.screen.playerHistory.spanNone") else L10n.s("iustitia.screen.playerHistory.span", sp.first, sp.second)
             context.drawTextWithShadow(tr, Text.literal(spanTxt), x, y, WHITE); y += 12
             val total = counts.values.sum()
             val maxVl = maxVlMap.values.maxOrNull() ?: 0.0
             context.drawTextWithShadow(tr, Text.literal(
-                "§7alerts §f${FlagHistory.sessionAlertCount(uuid)} §7flags §f$total §7max vl §f${NumFmt.d(digits = 1, v = maxVl)}" +
-                    (FlagHistory.topCheck(uuid)?.let { " §7top §b$it" } ?: "")), x, y, WHITE); y += 12
-            context.drawTextWithShadow(tr, Text.literal("§7confidence: §f" + FlagHistory.confidenceLine(uuid)), x, y, WHITE); y += 14
+                L10n.s("iustitia.screen.playerHistory.stats", FlagHistory.sessionAlertCount(uuid), total, NumFmt.d(digits = 1, v = maxVl)) +
+                    (FlagHistory.topCheck(uuid)?.let { L10n.s("iustitia.screen.playerHistory.topCheck", it) } ?: "")), x, y, WHITE); y += 12
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.playerHistory.confidence", FlagHistory.confidenceLine(uuid)), x, y, WHITE); y += 14
             // max vl per check bar (top 8)
-            context.drawTextWithShadow(tr, Text.literal("§7max vl per check:"), x, y, WHITE); y += 11
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.playerHistory.maxVlHeader"), x, y, WHITE); y += 11
             val maxVlForScale = (maxVlMap.values.maxOrNull() ?: 0.0).coerceAtLeast(0.001)
             maxVlMap.entries.take(8).forEach { (cid, vl) ->
                 val filled = (vl / maxVlForScale * 10.0).toInt().coerceIn(0, 10)
@@ -103,8 +104,8 @@ class PlayerHistoryScreen(private val uuid: java.util.UUID, private val parent: 
             }
             y += 4
             // ---- filter row ----
-            val checkLabel = "§7[§fCheck: ${checkFilter ?: "all"}§7]"
-            val timeLabel = "§7[§fTime: ${timeLabel()}§7]"
+            val checkLabel = L10n.s("iustitia.screen.playerHistory.checkFilter", checkFilter ?: L10n.s("iustitia.screen.playerHistory.filterAll"))
+            val timeLabel = L10n.s("iustitia.screen.playerHistory.timeFilter", timeLabel())
             val checkW = tr.getWidth(Text.literal(checkLabel)) + 2
             context.drawTextWithShadow(tr, Text.literal(checkLabel), x, y, WHITE)
             context.drawTextWithShadow(tr, Text.literal(timeLabel), x + checkW + 12, y, WHITE)
@@ -129,12 +130,12 @@ class PlayerHistoryScreen(private val uuid: java.util.UUID, private val parent: 
                 when (item) {
                     is Item.Group -> {
                         if (hovered) context.fill(x, ry, this.width - 4, ry + ROW_H, 0x30FFFF00)
-                        context.drawTextWithShadow(tr, Text.literal("§e§l${item.checkId} §r§7(${item.count} flags, max ${NumFmt.d(digits = 1, v = item.maxVl)})"), x + 2, ry + 4, WHITE)
+                        context.drawTextWithShadow(tr, L10n.t("iustitia.screen.playerHistory.groupHeader", item.checkId, item.count, NumFmt.d(digits = 1, v = item.maxVl)), x + 2, ry + 4, WHITE)
                     }
                     is Item.Row -> {
                         if (hovered) context.fill(x, ry, this.width - 4, ry + ROW_H, 0x20FFFFFF)
                         val f = item.flag
-                        context.drawTextWithShadow(tr, Text.literal("§7  @t${f.tick} §f${f.label} §7vl§f${NumFmt.d(digits = 1, v = f.vl)}"), x + 2, ry + 2, WHITE)
+                        context.drawTextWithShadow(tr, L10n.t("iustitia.screen.playerHistory.flagRow", f.tick, f.label, NumFmt.d(digits = 1, v = f.vl)), x + 2, ry + 2, WHITE)
                         val ev = f.evidence
                         if (ev != null) context.drawTextWithShadow(tr, Text.literal("§7    " + evidenceLine(ev)), x + 2, ry + 12, WHITE)
                     }
@@ -148,7 +149,7 @@ class PlayerHistoryScreen(private val uuid: java.util.UUID, private val parent: 
                 val sx = this.width - 6
                 context.fill(sx, bodyTop, sx + 3, bodyBottom, 0x33FFFFFF)
                 context.fill(sx, knobY, sx + 3, knobY + knobH, 0x66FFFFFF)
-                context.drawTextWithShadow(tr, Text.literal("§7scroll"), x, this.height - 11, WHITE)
+                context.drawTextWithShadow(tr, L10n.t("iustitia.screen.playerHistory.scrollHint"), x, this.height - 11, WHITE)
             }
         } catch (_: Throwable) {}
     }
@@ -186,14 +187,14 @@ class PlayerHistoryScreen(private val uuid: java.util.UUID, private val parent: 
         val i = keys.indexOf(checkFilter)
         checkFilter = if (i < 0 || i + 1 >= keys.size) null else keys[i + 1]
     }
-    private fun timeLabel(): String = when (timeFilter) { 1 -> "last 200t"; 2 -> "last 50t"; else -> "all" }
+    private fun timeLabel(): String = when (timeFilter) { 1 -> L10n.s("iustitia.screen.playerHistory.timeLast200"); 2 -> L10n.s("iustitia.screen.playerHistory.timeLast50"); else -> L10n.s("iustitia.screen.playerHistory.filterAll") }
 
     private fun evidenceLine(e: Evidence): String {
         val parts = ArrayList<String>()
         e.subLabel?.let { parts += it }
         if (e.measurement != null || e.threshold != null) parts += "${e.measurement ?: "?"}/${e.threshold ?: "?"}"
         e.pos?.let { parts += "(${it.x.toInt()},${it.y.toInt()},${it.z.toInt()})" }
-        e.victim?.let { parts += "victim=" + (FlagHistory.nameFor(it) ?: it.toString().take(8)) }
+        e.victim?.let { parts += L10n.s("iustitia.screen.playerHistory.victimLabel", FlagHistory.nameFor(it) ?: it.toString().take(8)) }
         e.extra?.let { parts += it }
         return parts.joinToString(" · ")
     }
@@ -212,7 +213,7 @@ class PlayerHistoryScreen(private val uuid: java.util.UUID, private val parent: 
             FlagHistory.Tier.GREEN -> "§a[+]§r"; FlagHistory.Tier.YELLOW -> "§e[!]§r"; FlagHistory.Tier.RED -> "§c[X]§r"
         }
         private fun tierLabel(t: FlagHistory.Tier): String = when (t) {
-            FlagHistory.Tier.GREEN -> "clean"; FlagHistory.Tier.YELLOW -> "suspect"; FlagHistory.Tier.RED -> "blatant"
+            FlagHistory.Tier.GREEN -> L10n.s("iustitia.screen.playerHistory.tierClean"); FlagHistory.Tier.YELLOW -> L10n.s("iustitia.screen.playerHistory.tierSuspect"); FlagHistory.Tier.RED -> L10n.s("iustitia.screen.playerHistory.tierBlatant")
         }
     }
 }

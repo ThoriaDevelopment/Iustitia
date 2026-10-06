@@ -1,6 +1,7 @@
 package dev.iustitia.alert
 
 import dev.iustitia.history.FlagHistory
+import dev.iustitia.i18n.L10n
 import dev.iustitia.info.CheckInfo
 import net.minecraft.text.ClickEvent
 import net.minecraft.text.HoverEvent
@@ -32,19 +33,7 @@ object AlertFormatter {
     fun format(name: String, check: String, vl: Double, setbackVL: Double, uuid: UUID, checkId: String): Text {
         val sev = sevChar(band(vl, setbackVL))
         val count = ceil(vl).toInt().coerceAtLeast(1)
-        val raw = buildString {
-            append("§8[§diustitia§8] §f")
-            append(name)
-            append(" §")
-            append(sev)
-            append('(')
-            append(check)
-            append(") §")
-            append(sev)
-            append('(')
-            append(count)
-            append(')')
-        }
+        val raw = L10n.s("iustitia.alert.line", name, sev, check, sev, count)
         val base = Text.literal(raw)
         return try {
             val hover = buildHover(uuid, checkId, check)
@@ -70,23 +59,15 @@ object AlertFormatter {
     ): Text {
         val sev = sevChar(worstBand)
         val raw = buildString {
-            if (lag) append("§7[lag] ")
-            append("§8[§diustitia§8] §f")
-            append(name)
-            append(" §")
-            append(sev)
-            append('(')
-            append(parts.joinToString(", "))
-            append(") §7(last ")
-            append(windowSec)
-            append("s)")
+            if (lag) append(L10n.s("iustitia.alert.lagPrefix"))
+            append(L10n.s("iustitia.alert.batchLine", name, sev, parts.joinToString(", "), windowSec))
         }
         val base = Text.literal(raw)
         if (compact) return base
         return try {
             val hover = Text.empty()
                 .append(Text.literal("§7${FlagHistory.confidenceExplanation(uuid)}"))
-                .append(Text.literal("\n§7click for flag history"))
+                .append(Text.literal(L10n.s("iustitia.alert.clickForHistory")))
             base.styled { s: Style ->
                 s.withClickEvent(ClickEvent.RunCommand("/ius hist $name")).withHoverEvent(HoverEvent.ShowText(hover))
             }
@@ -97,15 +78,7 @@ object AlertFormatter {
     fun formatCompact(name: String, check: String, vl: Double, setbackVL: Double, uuid: UUID, checkId: String): Text {
         val sev = sevChar(band(vl, setbackVL))
         val count = ceil(vl).toInt().coerceAtLeast(1)
-        val raw = buildString {
-            append("§8[§diustitia§8] §f")
-            append(name)
-            append(" §")
-            append(sev)
-            append(check)
-            append(" §7vl")
-            append(count)
-        }
+        val raw = L10n.s("iustitia.alert.compactLine", name, sev, check, count)
         val base = Text.literal(raw)
         return try {
             base.styled { s: Style -> s.withClickEvent(ClickEvent.RunCommand("/ius hist $name")) }
@@ -118,7 +91,7 @@ object AlertFormatter {
         try {
             val alerts = FlagHistory.sessionAlertCount(uuid)
             val checkFlags = FlagHistory.flagsForCheck(uuid, checkId).size
-            lines.append(Text.literal("\n§7alerts: §f$alerts §7| §7$checkLabel flags: §f$checkFlags"))
+            lines.append(Text.literal(L10n.s("iustitia.alert.hoverCounts", alerts, checkLabel, checkFlags)))
         } catch (_: Throwable) {
             // counts unavailable — skip the line
         }
@@ -135,12 +108,12 @@ object AlertFormatter {
                         if (ev.measurement != null || ev.threshold != null)
                             "${ev.measurement ?: "?"}/${ev.threshold ?: "?"}" else null)
                       .joinToString(" · ")
-                if (why.isNotEmpty()) lines.append(Text.literal("\n§bwhy §7$why"))
+                if (why.isNotEmpty()) lines.append(Text.literal(L10n.s("iustitia.alert.hoverWhy", why)))
             }
         } catch (_: Throwable) {}
         // FP-cause hint (Phase 2 #18 text version): one benign-cause line so users learn when not
         // to hackusate. The standalone HUD note is a deferred Phase B render piece.
-        try { dev.iustitia.info.FpHint.hint(checkId)?.let { lines.append(Text.literal("\n§8FP note: §7$it")) } } catch (_: Throwable) {}
+        try { dev.iustitia.info.FpHint.hint(checkId)?.let { lines.append(Text.literal(L10n.s("iustitia.alert.fpNote", it))) } } catch (_: Throwable) {}
         try { lines.append(Text.literal("\n§7${FlagHistory.confidenceExplanation(uuid)}")) } catch (_: Throwable) {}
         lines.append(Text.literal("\n${CheckInfo.SEVERITY_LEGEND}"))
         return lines

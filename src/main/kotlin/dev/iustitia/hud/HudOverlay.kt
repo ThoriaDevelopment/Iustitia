@@ -3,6 +3,7 @@ package dev.iustitia.hud
 import dev.iustitia.Iustitia
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
+import dev.iustitia.i18n.L10n
 import dev.iustitia.info.FpHint
 import dev.iustitia.tracking.EntityTrackerManager
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback
@@ -112,7 +113,7 @@ object HudOverlay {
         val recent = (tick - lagTick) in 0..LAG_RECENT_TICKS ||
             (tick - burstTick) in 0..LAG_RECENT_TICKS
         if (!recent) return
-        val line = Text.literal("§c⚠ §7lag")
+        val line = L10n.t("iustitia.hud.lagIcon")
         val w = tr.getWidth(line) + 8
         context.fill(2, 2, 2 + w, 14, BG)
         context.drawTextWithShadow(tr, line, 6, 5, WHITE)
@@ -130,7 +131,7 @@ object HudOverlay {
             FlagHistory.Tier.YELLOW -> "e" to "!"
             FlagHistory.Tier.RED -> "c" to "X"
         }
-        val head = Text.literal("§8[§diustitia§8] §f$name §${color}[$glyph $score]")
+        val head = L10n.t("iustitia.hud.confidenceHead", name, color, glyph, score)
 
         val explanation = try { FlagHistory.confidenceExplanation(uuid) } catch (_: Throwable) { "" }
         val explLine = if (explanation.isEmpty()) null else Text.literal("§7$explanation")
@@ -140,7 +141,7 @@ object HudOverlay {
             val checks = FlagHistory.alertedChecksOf(uuid)
             val first = checks.firstOrNull { FpHint.hint(it) != null }
             val hint = first?.let { FpHint.hint(it) }
-            if (hint != null) Text.literal("§7FP: §f$hint") else null
+            if (hint != null) L10n.t("iustitia.hud.fpLine", hint) else null
         } catch (_: Throwable) { null }
 
         val lines = ArrayList<Text>(3)
@@ -191,14 +192,14 @@ object HudOverlay {
             FlagHistory.Tier.RED -> "c" to "X"
         }
         val lines = ArrayList<Text>(5)
-        lines.add(Text.literal("§8[§diustitia§8] §f$name §${color}[$glyph $score]"))
+        lines.add(L10n.t("iustitia.hud.confidenceHead", name, color, glyph, score))
         val explanation = try { FlagHistory.confidenceExplanation(uuid) } catch (_: Throwable) { "" }
         if (explanation.isNotEmpty()) lines.add(Text.literal("§7$explanation"))
         try {
             val checks = FlagHistory.alertedChecksOf(uuid)
             val first = checks.firstOrNull { FpHint.hint(it) != null }
             val hint = first?.let { FpHint.hint(it) }
-            if (hint != null) lines.add(Text.literal("§7FP: §f$hint"))
+            if (hint != null) lines.add(L10n.t("iustitia.hud.fpLine", hint))
         } catch (_: Throwable) {}
         // Top most-flagged checks this session — the "what are they actually doing" detail.
         try {

@@ -1,5 +1,6 @@
 package dev.iustitia.ui
 
+import dev.iustitia.i18n.L10n
 import dev.iustitia.keybind.Keybinds
 import net.minecraft.client.gui.DrawContext
 import net.minecraft.client.gui.Click
@@ -50,14 +51,14 @@ class KeybindHubScreen(private val parent: Screen?) : Screen(TITLE) {
             context.fill(0, 0, this.width, this.height, BG)
             super.render(context, mouseX, mouseY, delta)
             val tr = this.textRenderer
-            context.drawTextWithShadow(tr, Text.literal("§8[§diustitia§8] §f§lKeybind hub"), 10, 10, WHITE)
-            context.drawTextWithShadow(tr, Text.literal("§7Rebind any of these in §fOptions → Controls → Iustitia§7. Red = key conflict."), 10, 24, WHITE)
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.keybinds.header"), 10, 10, WHITE)
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.keybinds.hint"), 10, 24, WHITE)
             var y = 44
             for (r in rows) {
                 try {
                     val conflictColor = r.conflict != null
                     val kb = r.bind.keyBinding
-                    val keyText = if (kb == null) Text.literal("§cunregistered")
+                    val keyText = if (kb == null) L10n.t("iustitia.screen.keybinds.unregistered")
                         else try { kb.boundKeyLocalizedText } catch (_: Throwable) { Text.literal("?") }
                     val keyStr = "§f${keyText.string}"
                     val nameColor = if (conflictColor) "§c" else "§f"
@@ -68,7 +69,7 @@ class KeybindHubScreen(private val parent: Screen?) : Screen(TITLE) {
                     if (conflictColor && r.conflict != null) {
                         val otherName = try { Text.translatable(r.conflict.id).string }
                         catch (_: Throwable) { r.conflict.id }
-                        context.drawTextWithShadow(tr, Text.literal("§c⚠ conflicts with §f$otherName"), 200, y + 11, WHITE)
+                        context.drawTextWithShadow(tr, L10n.t("iustitia.screen.keybinds.conflict", otherName), 200, y + 11, WHITE)
                     }
                 } catch (_: Throwable) {}
                 y += 26
@@ -79,7 +80,7 @@ class KeybindHubScreen(private val parent: Screen?) : Screen(TITLE) {
     override fun close() { client?.setScreen(parent) }
 
     companion object {
-        private val TITLE = Text.literal("Iustitia — keybind hub")
+        private val TITLE get() = L10n.t("iustitia.screen.keybinds.title")
         private const val WHITE = -1  // opaque 0xFFFFFFFF (see PlayerSearchScreen for the gotcha)
         private val BG = 0xCC101010.toInt()
     }

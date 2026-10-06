@@ -1,6 +1,7 @@
 package dev.iustitia.replay
 
 import java.util.UUID
+import dev.iustitia.i18n.L10n
 import net.minecraft.util.math.MathHelper
 import net.minecraft.util.math.Vec3d
 import kotlin.math.PI
@@ -651,7 +652,7 @@ object ReplayState {
             syncSegmentAndDeltas()
             return null
         } catch (_: Throwable) {
-            return stop("replay error")
+            return stop(L10n.s("iustitia.replay.reasonError"))
         }
     }
 
