@@ -95,10 +95,10 @@ object LagCombatCorrelator {
     }
 
     private fun updateEntity(tp: TrackedPlayer, tick: Int) {
-        // Global lag = everyone froze (lastServerLagTick) or a batched catch-up snapped
-        // (lastLagBurstTick). During a global-lag window this entity's near-zero Δ is the
-        // server's freeze, not a self-induced one → do NOT stamp (this is the negative
-        // control that separates real lag from cheat lag). Same windows the checks exempt.
+        // Global lag = the server's own clock is late (lastServerLagTick) or it just resumed and
+        // the catch-up snapped (lastLagBurstTick). During a global-lag window this entity's
+        // near-zero Δ is the server's freeze, not a self-induced one → do NOT stamp (this is the
+        // negative control that separates real lag from cheat lag). Same windows the checks exempt.
         val globalLag = tick - EntityTrackerManager.lastServerLagTick <= LagWindows.LAG_WINDOW ||
             tick - EntityTrackerManager.lastLagBurstTick <= LagWindows.BURST_WINDOW
         val dx = tp.delta.x
@@ -106,8 +106,8 @@ object LagCombatCorrelator {
         val dz = tp.delta.z
         val mag2 = dx * dx + dy * dy + dz * dz
         // AFK guard: an entity that hasn't moved in >RECENT_MOVE ticks is idle, not Blinking —
-        // mirrors EntityTrackerManager's mass-freeze tally guard so an AFK player frozen alone
-        // (e.g. standing next to a Blinker) never reads as a self-induced freeze.
+        // an AFK player frozen alone (e.g. standing next to a Blinker) must never read as a
+        // self-induced freeze.
         val recent = tick - tp.lastMoveTick <= RECENT_MOVE
         val frozenLocally = !globalLag && mag2 < FREEZE_MAG2 && recent
         val ep = episodes.getOrPut(tp.uuid) { Episode() }
