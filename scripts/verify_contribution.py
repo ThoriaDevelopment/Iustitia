@@ -394,7 +394,14 @@ def check_privacy_signals(errors: list[str], warnings: list[str]) -> None:
     # This is deliberately a review signal, not a simplistic ban on networking APIs. Minecraft
     # client mods must use Minecraft's existing connection, while Iustitia's documented observer
     # boundary forbids new remote reporting/telemetry.
-    source_text = "\n".join(read(p) for p in SRC.rglob("*.kt"))
+    # Comments are not code: strip /* */ and // before matching (a `//` right after `:` is
+    # part of a URL, so string literals keep being scanned).
+    source_text = re.sub(
+        r"/\*.*?\*/|(?<!:)//[^\n]*",
+        "",
+        "\n".join(read(p) for p in SRC.rglob("*.kt")),
+        flags=re.S,
+    )
     forbidden = re.findall(r"https?://|URL\s*\(|HttpClient|OkHttp|java\.net\.http", source_text)
     if forbidden:
         issue(errors, "source contains possible new remote/network code; review against the local-only policy")

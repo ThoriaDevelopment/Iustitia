@@ -96,7 +96,7 @@ That's it. Alerts appear in chat; other players get a colored tier prefix on the
 /ius config          # open the YACL config screen
 ```
 
-There are also **thirteen keybinds** (snapshot, transcript, session, keybinds, config, note, compact, watch, replay toggle, plus four **numpad replay controls**: pause/resume, seek +5s, seek −5s, exit) — configurable in vanilla Controls → Miscellaneous, and listed with conflict-detection in the keybind hub (`/ius keybinds`).
+There are also **thirteen keybinds** (snapshot, transcript, session, keybinds, config, note, compact, watch, replay toggle, plus four **numpad replay controls**: pause/resume, seek +5s, seek −5s, exit) — configurable in vanilla Controls → Iustitia, and listed with conflict-detection in the keybind hub (`/ius keybinds`).
 
 See **[USERMANUAL.md](USERMANUAL.md)** for a non-developer walkthrough.
 
@@ -249,7 +249,7 @@ A control surface and a visual layer that turn raw detections into a moderation 
 - `/ius snapshot [name]` — a one-line evidence snapshot of your crosshair target, copied to clipboard.
 
 ### Keybinds
-Thirteen configurable binds registered in vanilla Controls → Miscellaneous: `snapshot`, `transcript`, `session`, `keybinds`, `config`, `note`, `compact`, `watch` (default F9), `replayToggle` (numpad *, starts/stops a replay), plus four **numpad replay controls** — `replayPause` (numpad 5), `replaySeekFwd` (numpad +, +5s, works while playing), `replaySeekBack` (numpad −, −5s), and `replayExit` (numpad 0). `/ius keybinds` opens a hub screen that lists them all and highlights any that conflict with another bind in red.
+Thirteen configurable binds registered in vanilla Controls → Iustitia: `snapshot`, `transcript`, `session`, `keybinds`, `config`, `note`, `compact`, `watch` (default F9), `replayToggle` (numpad *, starts/stops a replay), plus four **numpad replay controls** — `replayPause` (numpad 5), `replaySeekFwd` (numpad +, +5s, works while playing), `replaySeekBack` (numpad −, −5s), and `replayExit` (numpad 0). `/ius keybinds` opens a hub screen that lists them all and highlights any that conflict with another bind in red.
 
 ### Watch follow-cam
 `/ius spectate [name]` (or the `watch` keybind, default F9) starts a sustained follow-cam on a player: it forces F1, shows a third-party view of the target (all entities, including yourself, still rendered), and lets you orbit with the mouse while the target stays centered. It auto-stops when you move >0.5 blocks, get hit, or the target leaves render range; `/ius spectate off` (or the bind again) stops it manually. The camera auto-reverts to your view the instant it stops (vanilla re-derives it each frame, so it can never get stuck).

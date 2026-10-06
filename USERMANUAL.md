@@ -361,7 +361,7 @@ When you want to actually write up a report or keep track of a suspect, these pu
 
 ### Keybinds
 
-There are thirteen configurable keybinds, all settable under Minecraft's **Options → Controls → Miscellaneous**:
+There are thirteen configurable keybinds, all settable under Minecraft's **Options → Controls → Iustitia**:
 
 | keybind | default | what it does |
 |---|---|---|

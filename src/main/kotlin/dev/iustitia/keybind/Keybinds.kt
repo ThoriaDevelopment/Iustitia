@@ -3,11 +3,12 @@ package dev.iustitia.keybind
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper
 import net.minecraft.client.option.KeyBinding
 import net.minecraft.client.util.InputUtil
+import net.minecraft.util.Identifier
 import org.lwjgl.glfw.GLFW
 
 /**
  * The Iustitia keybind registry (Phase 2 #14). Each bind is a vanilla [KeyBinding] in the
- * "Miscellaneous" category (rebindable in Controls → Miscellaneous), registered through Fabric's
+ * "Iustitia" category (rebindable in Controls → Iustitia), registered through Fabric's
  * [KeyBindingHelper] so it shows up in the vanilla keybinds screen and coexists with other mods.
  *
  * **Decoupled design:** the [Bind] metadata (id / label / description / default key) is constructed
@@ -25,13 +26,13 @@ import org.lwjgl.glfw.GLFW
  *
  * Default keys are deliberately uncommon (mostly unbound in vanilla) to avoid hijacking existing
  * binds; [dev.iustitia.ui.KeybindHubScreen] highlights any conflict red so the user can rebind.
- *
- * NOTE: a custom "Iustitia" category (`KeyBinding.Category.create(...)`) was attempted first but did
- * not surface in the Controls screen at runtime in 1.21.11, so we use the vanilla `MISC` category —
- * the binds appear under "Miscellaneous" and are fully rebindable. A dedicated "Iustitia" group is a
- * future probe item, not worth blocking working keybinds on.
  */
 object Keybinds {
+
+    // Create once during client registration, not object initialization: duplicate IDs are rejected.
+    private val category: KeyBinding.Category by lazy {
+        KeyBinding.Category.create(Identifier.of("iustitia", "keybinds"))
+    }
 
     /** A registered bind: metadata always present; [keyBinding] is null until [register] succeeds. */
     data class Bind(
@@ -86,9 +87,7 @@ object Keybinds {
      * failure leaves that bind's [Bind.keyBinding] null (hub shows "unregistered", poll skips it).
      */
     fun register() {
-        // Vanilla "Miscellaneous" category — guaranteed present in KeyBinding.Category.CATEGORIES so
-        // the binds appear in Controls → Miscellaneous and are rebindable.
-        val category = KeyBinding.Category.MISC
+        val category = this.category
         for (b in binds) {
             try {
                 val kb = KeyBinding("key.iustitia.${b.id}", InputUtil.Type.KEYSYM, b.defaultKey, category)
