@@ -9,6 +9,8 @@ import dev.iustitia.config.IustitiaConfig
 import dev.iustitia.event.AttackEvent
 import dev.iustitia.event.SwingSignal
 import dev.iustitia.tracking.TrackedPlayer
+import net.minecraft.client.MinecraftClient
+import net.minecraft.world.GameMode
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -151,6 +153,11 @@ abstract class Check {
             // an exempt player stays clean. Tracking/replay/render still run (only detection is
             // suppressed). Forward-looking only — does NOT clear existing flags (use /ius clear).
             if (dev.iustitia.exempt.Exemptions.isExempt(tp.uuid)) return
+            // Creative-mode exemption: a player the server reports as CREATIVE (an admin flying
+            // around, a creative test) never flags. Game mode comes from the tab list
+            // PlayerListEntry. Fail-open: no tab entry / no network handler → not creative →
+            // checks run as before.
+            if (creativeExempt(tp.uuid)) return
             ctx.addVl(level)
             VerboseLog.countFlag()
             // Session flag history (drives /ius hist, status counts, alert hover, nametag tier).
@@ -219,4 +226,9 @@ abstract class Check {
             try { if (VerboseLog.isEnabled()) VerboseLog.log("$id flag threw: ${e.javaClass.simpleName}: ${e.message}") } catch (_: Throwable) {}
         }
     }
+
+    /** Tab-list game mode == CREATIVE (see the gate in [flag]). Fail-open to checking. */
+    private fun creativeExempt(uuid: UUID): Boolean = try {
+        MinecraftClient.getInstance().networkHandler?.getPlayerListEntry(uuid)?.gameMode == GameMode.CREATIVE
+    } catch (_: Throwable) { false }
 }
