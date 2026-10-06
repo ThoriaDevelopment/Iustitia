@@ -93,7 +93,7 @@ object IustitiaCommand {
         "help" to "this help, or /ius help <check|subcommand|feature>",
         "alerts" to "toggle all chat alerts: /ius alerts  (or mute one: /ius alerts <name|check> [on|off])",
         "toggle" to "enable/disable a check: /ius toggle <check>",
-        "threshold" to "set a check's threshold: /ius threshold <check> <v>",
+        "threshold" to "set or restore a check's threshold: /ius threshold <check> <v|default|reset>",
         "config" to "open the config screen",
         "verbose" to "toggle verbose console logging",
         "reload" to "reload config from disk",
@@ -265,7 +265,11 @@ object IustitiaCommand {
                 .then(ClientCommandManager.argument("check", StringArgumentType.word())
                     .suggests { _, b -> suggestFiltered(b, checkIds); b.buildFuture() }
                     .then(ClientCommandManager.argument("value", DoubleArgumentType.doubleArg(0.0, 1000.0))
-                        .executes { threshold(it) })))
+                        .executes { threshold(it) })
+                    .then(ClientCommandManager.literal("default")
+                        .executes { thresholdDefault(it) })
+                    .then(ClientCommandManager.literal("reset")
+                        .executes { thresholdDefault(it) })))
             .then(ClientCommandManager.literal("clear")
                 .executes { clearUsage(it) }
                 .then(ClientCommandManager.literal("all").executes { clearAll(it) })
@@ -476,8 +480,26 @@ object IustitiaCommand {
         return 1
     }
 
+    private fun thresholdDefault(ctx: CommandContext<FabricClientCommandSource>): Int {
+        val id = StringArgumentType.getString(ctx, "check")
+        if (id !in checkIds) {
+            send(ctx, "$tag §cunknown check: $id")
+            return 0
+        }
+
+        // IustitiaConfig() is the single source of truth for shipped defaults.
+        val defaultThreshold = dev.iustitia.config.IustitiaConfig()
+            .slice(id)
+            .threshold
+
+        ConfigManager.config.slice(id).threshold = defaultThreshold
+        ConfigManager.save()
+        send(ctx, "$tag §7$id.threshold reset to default: §f$defaultThreshold")
+        return 1
+    }
+
     private fun thresholdUsage(ctx: CommandContext<FabricClientCommandSource>): Int {
-        send(ctx, "$tag §7usage: §f/ius threshold <check> <value>")
+        send(ctx, "$tag §7usage: §f/ius threshold <check> <value|default|reset>")
         send(ctx, " §7checks: §f${checkIds.joinToString(" ")}")
         return 0
     }
