@@ -17,6 +17,7 @@ changes are reported as required live verification for the contributor to run.
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import re
 import subprocess
@@ -409,6 +410,115 @@ def check_privacy_signals(errors: list[str], warnings: list[str]) -> None:
         warning(warnings, "ClientConnectionMixin exists; confirm gameplay packet suppression remains explicitly gated")
 
 
+def check_language_assets(errors: list[str], warnings: list[str]) -> None:
+    """Language files must cover every key the source asks for, on every shipped language.
+
+    L10n fails open, so a missing key or a bad `%` spec never crashes -- it just shows the raw
+    key (or a degraded line) in front of the player. That makes this the only place either
+    problem can be caught before release.
+    """
+    lang_dir = RESOURCES / "assets" / "iustitia" / "lang"
+    en_path = lang_dir / "en_us.json"
+    if not en_path.exists():
+        issue(errors, "src/main/resources/assets/iustitia/lang/en_us.json is missing")
+        return
+
+    # Translation namespaces; anything else whose name starts with "iustitia." (a config file, the
+    # mixin json, the jar) is not a key and must not be treated as one.
+    namespaces = (
+        "iustitia.cmd.", "iustitia.cfg.", "iustitia.screen.", "iustitia.info.", "iustitia.alert.",
+        "iustitia.hud.", "iustitia.render.", "iustitia.session.", "iustitia.replay.",
+        "iustitia.misc.", "iustitia.preset.", "key.iustitia.",
+    )
+    call = re.compile(r'L10n\.(?:t|s)\(\s*"([^"]+)"')
+    used: set[str] = set()
+    referenced: set[str] = set()
+    dyn_prefixes: set[str] = set()
+    for path in sorted(SRC.rglob("*.kt")):
+        text = read(path)
+        used.update(call.findall(text))
+        # Keys handed to a helper (YACL's bool/int/double take keys, not L10n calls directly).
+        for lit in re.findall(r'"((?:[^"\\\n]|\\.)*)"', text):
+            if not lit.startswith(namespaces):
+                continue
+            if "$" in lit:
+                dyn_prefixes.add(lit.split("$", 1)[0])  # assembled at runtime -> pins a prefix
+            else:
+                referenced.add(lit)
+    prefixes = sorted(dyn_prefixes | {k.split("$", 1)[0] for k in used if "$" in k})
+    referenced.update(k for k in used if "$" not in k)
+
+    tables: dict[str, dict[str, str]] = {}
+    for path in sorted(lang_dir.glob("*.json")):
+        try:
+            data = json.loads(read(path))
+        except ValueError as exc:
+            issue(errors, f"{rel(path)} is not valid JSON: {exc}")
+            continue
+        if not isinstance(data, dict) or not all(isinstance(v, str) for v in data.values()):
+            issue(errors, f"{rel(path)} must be a flat string-to-string object")
+            continue
+        raw_keys = re.findall(r'"((?:[^"\\]|\\.)*)"\s*:', read(path))
+        duplicates = sorted(k for k, n in collections.Counter(raw_keys).items() if n > 1)
+        if duplicates:
+            issue(errors, f"{rel(path)} contains duplicate keys: {duplicates[:3]}")
+        tables[path.stem] = data
+
+    en = tables.get("en_us")
+    if en is None:
+        issue(errors, "en_us.json did not load; it is the fallback for every other language")
+        return
+
+    for key in sorted(referenced):
+        if key not in en and not any(key.startswith(p) for p in prefixes):
+            issue(errors, f"source asks for key '{key}' but en_us.json has no such entry")
+    for prefix in prefixes:
+        if not any(k.startswith(prefix) for k in en):
+            issue(errors, f"source builds keys under '{prefix}*' but en_us.json has none")
+
+    # Generated keys (check descriptions, presets, keybind hub rows, tier labels) get pinned
+    # here as their call sites move onto L10n; until then they have no lang entries to check.
+
+    spec = re.compile(r"%(?:%|[-0-9.]*[a-zA-Z])")
+    conversions = lambda value: sorted(re.findall(r"%(?!%)(?:[-0-9.]*)([a-zA-Z])", value))
+    for code, table in sorted(tables.items()):
+        if code != "en_us" and set(table) != set(en):
+            missing, extra = sorted(set(en) - set(table)), sorted(set(table) - set(en))
+            issue(
+                errors,
+                f"{code}.json keys differ from en_us.json (missing {len(missing)}, extra {len(extra)})"
+                + (f"; first missing: {missing[:3]}" if missing else ""),
+            )
+        # No-plural locales must never carry the English "s" tail — a value copied from en renders
+        # "3警報s". (Romance s-plural languages legitimately ship "s", so this is locale-scoped.)
+        if code in ("ja_jp", "ko_kr", "zh_cn", "zh_hk", "zh_tw", "lzh") and table.get(
+            "iustitia.misc.pluralSuffix", ""
+        ):
+            issue(errors, f"{code}.json must ship an empty iustitia.misc.pluralSuffix")
+        for key, value in table.items():
+            pos = 0
+            while (i := value.find("%", pos)) >= 0:
+                match = spec.match(value, i)
+                if not match:
+                    issue(
+                        errors,
+                        f"{code}.json key '{key}' has an invalid format spec at offset {i}: "
+                        f"...{value[max(0, i - 10):i + 5]!r}",
+                    )
+                    break
+                pos = match.end()
+            if code != "en_us" and key in en and conversions(value) != conversions(en[key]):
+                issue(errors, f"{code}.json key '{key}' placeholders {conversions(value)} != en_us {conversions(en[key])}")
+            # Colour codes are positional styling: dropping or adding one silently changes how the
+            # line renders (and a stray trailing § bleeds into whatever is drawn after it).
+            if code != "en_us" and key in en and value.count("§") != en[key].count("§"):
+                issue(errors, f"{code}.json key '{key}' has {value.count('§')} § vs en_us {en[key].count('§')}")
+
+    covered = referenced | {k for k in en if any(k.startswith(p) for p in prefixes)}
+    for key in sorted(set(en) - covered):
+        warning(warnings, f"en_us.json key '{key}' is not referenced by any L10n call")
+
+
 def git_changed() -> list[str]:
     try:
         result = subprocess.run(
@@ -489,6 +599,7 @@ def main() -> int:
         check_check_registry(errors, warnings)
         check_selftest_harness(errors, warnings)
         check_docs(errors, warnings)
+        check_language_assets(errors, warnings)
         check_privacy_signals(errors, warnings)
 
     if args.changed or do_static:
