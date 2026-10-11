@@ -2,7 +2,7 @@
 name: Detection or accuracy report
 about: Report a false positive, missed detection, or questionable confidence/tier behavior
 title: "[Detection] "
-labels: detection
+labels: bug
 assignees: ''
 ---
 

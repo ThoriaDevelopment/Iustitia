@@ -2,7 +2,7 @@
 name: Compatibility report
 about: Report behavior tied to a Minecraft version, server, protocol, graphics stack, or mod combination
 title: "[Compatibility] "
-labels: compatibility
+labels: bug
 assignees: ''
 ---
 
