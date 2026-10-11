@@ -474,6 +474,13 @@ object IustitiaCommand {
         val id = StringArgumentType.getString(ctx, "check")
         if (id !in checkIds) { send(ctx, "$tag §cunknown check: $id"); return 0 }
         val value = DoubleArgumentType.getDouble(ctx, "value")
+        // Ratio thresholds have a narrower range than the generic argument: 0 on throughWalls
+        // flags every fight (issue #32). Reject rather than clamp so the user sees why.
+        if (!dev.iustitia.config.ThresholdBounds.accepts(id, value)) {
+            val r = dev.iustitia.config.ThresholdBounds.rangeFor(id)
+            send(ctx, "$tag §c$id.threshold is a ratio; must be between ${r.start} and ${r.endInclusive} (got $value)")
+            return 0
+        }
         ConfigManager.config.slice(id).threshold = value
         ConfigManager.save()
         send(ctx, "$tag §7$id.threshold = $value")

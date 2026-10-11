@@ -425,17 +425,22 @@ object ConfigManager {
         // default (30). No CONFIG_VERSION bump.
         if (o.has("blinkFreezeTicks")) c.blinkFreezeTicks = o.get("blinkFreezeTicks").asInt
         for ((key, cc) in c.checks()) {
-            if (o.has(key)) readCheck(o.getAsJsonObject(key), cc, resetCalibration)
+            if (o.has(key)) readCheck(key, o.getAsJsonObject(key), cc, resetCalibration)
         }
     }
 
-    private fun readCheck(o: JsonObject, cc: IustitiaConfig.CheckConfig, resetCalibration: Boolean) {
+    private fun readCheck(id: String, o: JsonObject, cc: IustitiaConfig.CheckConfig, resetCalibration: Boolean) {
         try {
             if (o.has("enabled")) cc.enabled = o.get("enabled").asBoolean
             if (resetCalibration) return // keep code-default setbackVL/decay/threshold (migration)
             if (o.has("setbackVL")) cc.setbackVL = o.get("setbackVL").asDouble
             if (o.has("decay")) cc.decay = o.get("decay").asDouble
-            if (o.has("threshold")) cc.threshold = o.get("threshold").asDouble
+            // An out-of-range ratio threshold (e.g. a hand-edited throughWalls 0, which flags
+            // every fight) keeps the default instead — see [ThresholdBounds], issue #32.
+            if (o.has("threshold")) {
+                val t = o.get("threshold").asDouble
+                if (ThresholdBounds.accepts(id, t)) cc.threshold = t
+            }
         } catch (_: Throwable) {
             // ignore per-field errors
         }
