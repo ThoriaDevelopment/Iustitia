@@ -19,7 +19,9 @@ import net.minecraft.client.MinecraftClient
  * exceeded the oldest segment (never the current one) is evicted. The check runs at a segment
  * boundary and again on every [tickCapture], so a single long segment can keep making progress
  * once the budget fills instead of stalling until the next split. [PER_TICK] bounds the per-tick
- * work so a large radius streams in over a few seconds rather than stalling one frame. Fail-open
+ * work so a large radius streams in over a few seconds rather than stalling one frame. Once a
+ * segment's whole ring around the current centre is captured, [tickCapture] skips the ring scan
+ * until the centre chunk, radius or segment changes ([complete]). Fail-open
  * throughout — a capture error just leaves that chunk out.
  *
  * ## Relationship to SnapClip
@@ -43,6 +45,20 @@ object ChunkRollingCapture {
     private val store: HashMap<Int, HashMap<Long, ChunkSnapshot.ChunkRec>> = HashMap()
     private var totalSections: Int = 0
 
+    /** segmentId → packed (centre chunk, radius) whose full ring was found captured. While the caller's
+     *  centre/radius match, there is nothing left to capture and [tickCapture] skips the scan. Captured
+     *  chunks are never dropped from a live segment except by [clearSegment] / [reset] / eviction, which
+     *  all drop this entry too. Keyed per segment because [RecordManager] ticks its own segment
+     *  alongside the rolling one. */
+    private val complete: HashMap<Int, Long> = HashMap()
+
+    private fun ringKey(pcx: Int, pcz: Int, r: Int): Long =
+        (pcx.toLong() and 0x3FFFFFFL) or ((pcz.toLong() and 0x3FFFFFFL) shl 26) or (r.toLong() shl 52)
+
+    private const val CAPTURED = 0
+    private const val PRESENT = 1
+    private const val MISSED = 2
+
     /** Delegates to the shared encoding ([BlockDeltaBuffer.chunkKey]) — this store is read back by key
      *  from the export path, which uses the canonical form. */
     private fun chunkKey(chunkX: Int, chunkZ: Int): Long = BlockDeltaBuffer.chunkKey(chunkX, chunkZ)
@@ -60,6 +76,7 @@ object ChunkRollingCapture {
         while (totalSections >= cap) {
             val oldest = store.keys.filter { it != keepSegment }.minOrNull() ?: return false
             val ev = store.remove(oldest) ?: return false
+            complete.remove(oldest)
             totalSections -= ev.values.sumOf { it.sections.size }
         }
         return true
@@ -70,6 +87,7 @@ object ChunkRollingCapture {
         try {
             evictToFit(rollingChunkCap(), segmentId)
             store.getOrPut(segmentId) { HashMap() }
+            complete.remove(segmentId)
         } catch (_: Throwable) {
         }
     }
@@ -91,21 +109,37 @@ object ChunkRollingCapture {
             // scan is O(radius^2) hash lookups.
             if (!evictToFit(cap, segmentId)) return
             val r = radius.coerceIn(1, 32)
+            // Steady state: the whole (2r+1)^2 ring was already captured for this centre, so every
+            // lookup below would hit containsKey. Skip the scan until the player crosses a chunk
+            // border or the radius changes.
+            val ring = ringKey(pcx, pcz, r)
+            if (complete[segmentId] == ring) return
             var n = 0
+            var missed = 0
+            fun visit(cx: Int, cz: Int): Boolean {
+                when (tryCapture(st, world, cx, cz, cap)) {
+                    CAPTURED -> n++
+                    MISSED -> missed++
+                }
+                return n >= PER_TICK
+            }
             for (d in 0..r) {
                 if (d == 0) {
-                    if (tryCapture(st, world, pcx, pcz, cap)) { n++; if (n >= PER_TICK) return }
+                    if (visit(pcx, pcz)) return
                 } else {
                     for (cx in (pcx - d)..(pcx + d)) {
-                        if (tryCapture(st, world, cx, pcz - d, cap)) { n++; if (n >= PER_TICK) return }
-                        if (tryCapture(st, world, cx, pcz + d, cap)) { n++; if (n >= PER_TICK) return }
+                        if (visit(cx, pcz - d)) return
+                        if (visit(cx, pcz + d)) return
                     }
                     for (cz in (pcz - d + 1)..(pcz + d - 1)) {
-                        if (tryCapture(st, world, pcx - d, cz, cap)) { n++; if (n >= PER_TICK) return }
-                        if (tryCapture(st, world, pcx + d, cz, cap)) { n++; if (n >= PER_TICK) return }
+                        if (visit(pcx - d, cz)) return
+                        if (visit(pcx + d, cz)) return
                     }
                 }
             }
+            // Scanned the whole ring without hitting the per-tick budget. If nothing was missed (an
+            // unloaded chunk or a full budget), every chunk in it is now captured.
+            if (missed == 0) complete[segmentId] = ring
         } catch (_: Throwable) {
         }
     }
@@ -115,19 +149,19 @@ object ChunkRollingCapture {
         world: net.minecraft.client.world.ClientWorld,
         cx: Int, cz: Int,
         cap: Int,
-    ): Boolean {
+    ): Int {
         val k = chunkKey(cx, cz)
-        if (st.containsKey(k)) return false
-        if (totalSections >= cap) return false
+        if (st.containsKey(k)) return PRESENT
+        if (totalSections >= cap) return MISSED
         val secs = try { ChunkCapture.captureChunkAt(world, cx, cz) } catch (_: Throwable) { null }
-            ?: return false
+            ?: return MISSED
         // Budget nearly full: DON'T store a truncated chunk. A truncated ChunkRec would be a
         // permanent hole in the replay world (containsKey -> never re-captured). Skip instead —
         // the chunk is retried on a later tick once segment eviction frees budget.
-        if (totalSections + secs.size > cap) return false
+        if (totalSections + secs.size > cap) return MISSED
         st[k] = ChunkSnapshot.ChunkRec(cx, cz, secs)
         totalSections += secs.size
-        return true
+        return CAPTURED
     }
 
     /** Assemble the [ChunkSnapshot] for [segmentId], or null when nothing was captured for it. */
@@ -141,6 +175,7 @@ object ChunkRollingCapture {
     fun reset() {
         try {
             store.clear()
+            complete.clear()
             totalSections = 0
         } catch (_: Throwable) {
         }
@@ -150,6 +185,7 @@ object ChunkRollingCapture {
     fun clearSegment(segmentId: Int) {
         try {
             val st = store.remove(segmentId)
+            complete.remove(segmentId)
             if (st != null) totalSections -= st.values.sumOf { it.sections.size }
             if (totalSections < 0) totalSections = 0
         } catch (_: Throwable) {

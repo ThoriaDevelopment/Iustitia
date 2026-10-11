@@ -39,9 +39,10 @@ import java.util.UUID
  * ## Memory bounds
  *
  * Frames cap at [MAX_FRAMES] (1200 = 60s @ 20 tps); adding past the cap drops the oldest. Each frame
- * holds at most [MAX_PLAYERS_PER_FRAME] player snaps and [MAX_ENTITIES_PER_FRAME] entity snaps (the
- * rest are dropped — a 64-player / 64-entity cap covers any realistic scene and bounds the worst case
- * at a few MB). Alerts cap at [MAX_ALERTS] (drop oldest). Recording is gated by
+ * holds at most [MAX_PLAYERS_PER_FRAME] player snaps and [entityCap] entity snaps (the rest are
+ * dropped). The entity cap is the user's `clipEntityCap` (default 64, clamped 0..[MAX_ENTITY_CAP]); the
+ * 64-player / 64-entity default covers any realistic scene and bounds the worst case at a few MB, and
+ * the 256 ceiling at roughly four times that. Alerts cap at [MAX_ALERTS] (drop oldest). Recording is gated by
  * [dev.iustitia.config.IustitiaConfig.replayCapture] (default on) so a user who never uses
  * replay/clip can disable the per-tick work — and by [dev.iustitia.compat.CompanionMods.snapClip]
  * (SnapClip owns the buffer when installed).
@@ -59,7 +60,8 @@ object ReplayBuffer {
     const val MAX_SECONDS = 60
     private const val MAX_FRAMES = MAX_SECONDS * 20
     private const val MAX_PLAYERS_PER_FRAME = 64
-    private const val MAX_ENTITIES_PER_FRAME = 64
+    /** Hard ceiling on [IustitiaConfig.clipEntityCap]; matches the YACL slider range. */
+    private const val MAX_ENTITY_CAP = 256
     private const val MAX_ALERTS = 4000
     private const val MAX_TOTEMS = 1000
 
@@ -71,8 +73,8 @@ object ReplayBuffer {
      *  the caller's per-tick config snapshot — see [recordTick]. Fail-open to the default (on). */
     private fun entityCaptureEnabled(cfg: IustitiaConfig): Boolean = cfg.clipEntities
 
-    /** Per-frame non-player entity cap ([IustitiaConfig.clipEntityCap]), clamped 0..256. Fail-open to 64. */
-    private fun entityCap(cfg: IustitiaConfig): Int = cfg.clipEntityCap.coerceIn(0, 256)
+    /** Per-frame non-player entity cap ([IustitiaConfig.clipEntityCap]), clamped 0..[MAX_ENTITY_CAP]. Fail-open to 64. */
+    private fun entityCap(cfg: IustitiaConfig): Int = cfg.clipEntityCap.coerceIn(0, MAX_ENTITY_CAP)
 
     /** Distance (blocks) the local player must move (or a world change) to begin a new capture segment
      *  ([IustitiaConfig.clipSegmentTeleportThreshold]), clamped 1..512. Fail-open to 64. */
@@ -176,7 +178,6 @@ object ReplayBuffer {
     private var currentSegmentId: Int = -1
     private var lastWorld: World? = null
     private var lastX: Double = 0.0
-    private var lastY: Double = 0.0
     private var lastZ: Double = 0.0
     private val segmentDimensions: HashMap<Int, String> = HashMap()
 
@@ -244,7 +245,6 @@ object ReplayBuffer {
     private fun updateSegment(mc: MinecraftClient, world: World?, cfg: IustitiaConfig) {
         val self = mc.player
         val px = self?.x ?: 0.0
-        val py = self?.y ?: 0.0
         val pz = self?.z ?: 0.0
         val thr = segmentTeleportThreshold(cfg)
         val newSegment = when {
@@ -269,7 +269,7 @@ object ReplayBuffer {
             // the world already captured instead of sweeping ~300 chunks synchronously in the command.
             tickSegmentCapture(currentSegmentId, px, pz, cfg)
             lastWorld = world
-            lastX = px; lastY = py; lastZ = pz
+            lastX = px; lastZ = pz
         }
     }
 
@@ -427,7 +427,7 @@ object ReplayBuffer {
         try {
             currentSegmentId = -1
             lastWorld = null
-            lastX = 0.0; lastY = 0.0; lastZ = 0.0
+            lastX = 0.0; lastZ = 0.0
             segmentDimensions.clear()
             ChunkRollingCapture.reset()
             BlockDeltaBuffer.reset()
@@ -530,30 +530,64 @@ object ReplayBuffer {
         val p = self ?: return emptyList()
         val sx = p.x; val sy = p.y; val sz = p.z
         val out = ArrayList<EntitySnap>(minOf(cap, 32))
+        val candidates = candidateScratch
         try {
-            // Collect + sort by distance BEFORE the cap: `world.entities` iterates in hash order,
-            // so taking the first `cap` in-range entities could keep far ones and drop the mobs
-            // right next to the player when a crowd fills the budget.
-            val candidates = ArrayList<Pair<Entity, Double>>(64)
+            // Only types that can produce a snap are candidates, so the cap and the sort below are
+            // spent on entities that will actually be captured (a dropped item / arrow never is).
             for (entity in world.entities) {
                 if (entity === self) continue
                 if (entity is PlayerEntity) continue
                 if (entity.isRemoved) continue
+                if (!isCapturable(entity)) continue
                 val dx = entity.x - sx; val dy = entity.y - sy; val dz = entity.z - sz
                 val dSq = dx * dx + dy * dy + dz * dz
                 if (dSq > ENTITY_CAPTURE_RADIUS_SQ) continue
-                candidates.add(entity to dSq)
+                val idx = candidates.size
+                if (idx == candidateKeys.size) candidateKeys = candidateKeys.copyOf(idx * 2)
+                // Pack (distance, index) into one Long so a primitive LongArray sort orders by
+                // distance with no boxing. A non-negative float's raw bits sort like its value.
+                candidateKeys[idx] = (java.lang.Float.floatToRawIntBits(dSq.toFloat()).toLong() shl 32) or idx.toLong()
+                candidates.add(entity)
             }
-            candidates.sortBy { it.second }
-            for ((entity, _) in candidates) {
-                if (out.size >= cap) break
-                val snap = if (entity is LivingEntity) buildEntitySnap(entity) else buildNonLivingEntitySnap(entity)
-                if (snap != null) out.add(snap)
+            val n = candidates.size
+            if (n <= cap) {
+                // Everything in range fits: no need to rank by distance.
+                for (i in 0 until n) {
+                    val snap = snapOf(candidates[i])
+                    if (snap != null) out.add(snap)
+                }
+            } else {
+                // Sort by distance BEFORE the cap: `world.entities` iterates in hash order, so taking
+                // the first `cap` in-range entities could keep far ones and drop the mobs right next to
+                // the player when a crowd fills the budget.
+                java.util.Arrays.sort(candidateKeys, 0, n)
+                for (i in 0 until n) {
+                    if (out.size >= cap) break
+                    val snap = snapOf(candidates[(candidateKeys[i] and 0xFFFFFFFFL).toInt()])
+                    if (snap != null) out.add(snap)
+                }
             }
         } catch (_: Throwable) {
+        } finally {
+            candidates.clear()
         }
         return out
     }
+
+    /** Reused per-call scratch for [buildEntitySnaps] so a steady-state tick allocates no candidate list.
+     *  Both callers ([recordTick] and [RecordManager]) run on the client tick thread, one after the other. */
+    private val candidateScratch = ArrayList<Entity>(64)
+    private var candidateKeys = LongArray(64)
+
+    /** Mirrors the type filter in [buildEntitySnap] / [buildNonLivingEntitySnap]. */
+    private fun isCapturable(e: Entity): Boolean =
+        e is LivingEntity ||
+            e is net.minecraft.entity.vehicle.BoatEntity ||
+            e is net.minecraft.entity.vehicle.ChestBoatEntity ||
+            e is net.minecraft.entity.vehicle.AbstractMinecartEntity
+
+    private fun snapOf(e: Entity): EntitySnap? =
+        if (e is LivingEntity) buildEntitySnap(e) else buildNonLivingEntitySnap(e)
 
     private fun buildEntitySnap(e: LivingEntity): EntitySnap? = try {
         val u = e.uuid
