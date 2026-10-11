@@ -130,7 +130,16 @@ class FlyEnvelopeCheck : Check() {
             // every exemption here this is a *concession* on a cheater who can hold Δy≈0 within
             // 0.05 of a solid block (which reads as grounded) — the same posture [Fly(Blink)]
             // documents for a pure midair freeze.
-            if (tp.groundedProxy) {
+            //
+            // Edge support counts as ground (issue #35). `groundedProxy` samples only the column
+            // under the hitbox *center*, so a player sneaking at a ledge (the void edge, a tower
+            // top) with the center past the edge reads as airborne while legitimately standing --
+            // and a motionless airborne tick is exactly the FlyB band: dy = 0, prevDeltaY = 0 ⇒
+            // expectedY ≈ -0.078, so dy - expectedY ≈ 0.078 ∈ (FLYB_TOL, threshold], every tick,
+            // which alerted within a few ticks. [isEdgeSupported] repeats the proxy's test over the
+            // whole 0.6-wide footprint. It only runs when the proxy already said airborne and the
+            // player is level, so the common path costs nothing extra.
+            if (tp.groundedProxy || isEdgeSupported(tp)) {
                 ctx.breachTicks = 0
                 ctx.flyBTicks = 0
                 ctx.ascendTicks = 0
@@ -379,6 +388,24 @@ class FlyEnvelopeCheck : Check() {
             if (WorldQueries.isClimbableAt(world, bx, y, bz - 1)) return true
         }
         false
+    } catch (_: Throwable) {
+        false
+    }
+
+    /**
+     * The `groundedProxy` test (|Δy| < 0.01 and a solid block within 0.05 below) over the whole
+     * hitbox footprint instead of the center column: a sneak-edge stance is supported by the
+     * column the rest of the box overlaps. Same concession as the proxy — a flyer holding Δy ≈ 0
+     * right above a block edge reads as grounded. Fail-negative (false → no exemption) on error,
+     * matching the proxy's own catch.
+     */
+    private fun isEdgeSupported(tp: TrackedPlayer): Boolean = try {
+        if (abs(tp.deltaY) >= 0.01) {
+            false
+        } else {
+            val world = MinecraftClient.getInstance().world
+            world != null && WorldQueries.isSolidBelowFootprint(world, tp.pos.x, tp.pos.y, tp.pos.z, 0.05)
+        }
     } catch (_: Throwable) {
         false
     }

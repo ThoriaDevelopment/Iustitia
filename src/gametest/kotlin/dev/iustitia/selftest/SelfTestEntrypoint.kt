@@ -111,6 +111,9 @@ class SelfTestEntrypoint : FabricClientGameTest {
         // same drives as their survival twins, differing only in tab-list game mode.
         CreativeFlightScenarios.legitCreativeFlight(),
         CreativeFlightScenarios.legitSpectatorPhase(),
+        // Issue #35: sneaking at a ledge with the hitbox center past the edge -- `flyEnvelope`'s
+        // center-only footing read the stance as airborne and FlyB alerted on it.
+        Scenarios.legitSneakEdge(),
     )
 
     /**

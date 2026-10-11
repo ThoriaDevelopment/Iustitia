@@ -101,6 +101,25 @@ object WorldQueries {
         }
     }
 
+    /**
+     * [isSolidBelow] over the player's whole hitbox footprint ([Footprint.columns]) instead of the
+     * center column only: true iff any column the 0.6-wide box overlaps has a solid block within
+     * [offset] below (same two-block band per column). A player sneaking at a ledge with the
+     * center past the edge is supported by the column the rest of the box still overlaps, which
+     * the center-only query reads as airborne. The center column is tested first, so the common
+     * supported case costs the same as [isSolidBelow]. Fail-open (false) like every query here.
+     */
+    fun isSolidBelowFootprint(world: ClientWorld?, x: Double, y: Double, z: Double, offset: Double): Boolean {
+        return try {
+            val baseY = Math.floor(y - offset).toInt()
+            Footprint.columns(x, z).any { (bx, bz) ->
+                isSolidAt(world, bx, baseY, bz) || isSolidAt(world, bx, baseY - 1, bz)
+            }
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     /** True iff the block at (x,y,z) is a liquid (water/lava source or flowing). */
     fun isLiquidAt(world: ClientWorld?, x: Int, y: Int, z: Int): Boolean {
         return try {

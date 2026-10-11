@@ -746,6 +746,51 @@ object Scenarios {
     }
 
     /**
+     * Sneaking at a **ledge** with the hitbox center past the edge (issue #35): the legit stance
+     * `flyEnvelope` read as `Fly(FlyB)` "like crazy" at the void edge.
+     *
+     * A 3-tall stone tower stands in for the void edge -- three blocks of air under the overhang
+     * put the column below the center out of reach of the proxy's two-block support band, which
+     * is all the void does to it. The bot stands on the tower top with its center 0.2 past the
+     * +X edge (box 42.9..43.5 against a last solid column at x = 42), sneaking, on-ground, first
+     * motionless for 40 ticks (past `Fly(Blink)`'s 30-tick freeze window too) and then creeping
+     * along the edge at a sneak-slow 0.03/tick.
+     *
+     * **What this drive proves.** `groundedProxy` samples only the center column, which is air,
+     * so pre-fix every tick was "airborne" with dy = 0 and prevDeltaY = 0: `expectedY ≈ -0.078`,
+     * `dy - expectedY ≈ 0.078` sits inside the FlyB band (0.05, 0.1] on every tick, and FlyB flags
+     * from the 4th tick on -- measured pre-fix: 57 `Fly(FlyB)` flags, peakVL 19.00, an alert. Post-fix the grounded
+     * branch also accepts support anywhere under the 0.6-wide footprint, so the bot is grounded
+     * and every fly sub-signal returns before it is evaluated. The flag counts are asserted
+     * alongside the alert so a regression that stays below setbackVL is still visible.
+     */
+    fun legitSneakEdge(): Spec = Spec(
+        "legit-sneak-edge", Pass.LEGIT, "vanilla", setOf(Tags.MOVEMENT, Tags.WORLD),
+    ) { b ->
+        val g = b.groundY
+        val gi = g.toInt()
+        // tower x 40..42, z -2..2, three blocks tall: top surface at gi + 3, ledge at x = 43.0
+        b.fill(40, gi, -2, 42, gi + 2, 2, net.minecraft.block.Blocks.STONE)
+        val top = g + 3.0
+        val bot = b.bot("Edge", 43.2, top, -1.5)
+        b.expectQuiet(bot, "flyEnvelope")
+        b.expectFlagCount(bot, "flyEnvelope", "Fly(FlyB)", atMost = 0)
+        b.expectFlagCount(bot, "flyEnvelope", "Fly(Blink)", atMost = 0)
+        bot.sneak(true)
+        var t = 0
+        b.everyTick {
+            val i = t++
+            // re-assert the pose every tick (the client recomputes pose flags on its own schedule)
+            bot.sneak(true)
+            bot.setOnGround(true)
+            val z = if (i < 40) -1.5 else -1.5 + 0.03 * (i - 40)
+            bot.teleportTo(43.2, top, z)
+        }
+        // z ends at -1.5 + 0.03*60 = 0.3, still on the 5-wide tower edge
+        b.runFor(100)
+    }
+
+    /**
      * Holding the crosshair still while the target **strafes across it** -- the legitimate timing
      * shape `triggerbot` used to read as a sub-reaction auto-attacker.
      *

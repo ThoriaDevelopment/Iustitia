@@ -289,7 +289,7 @@ The pass before it was 91 at `2c07601`, the first to cover the three scenarios a
 | detector gaps (drive reaches it, detector cannot alert) | **4** checks carry a `knownOpen` entry (`speedEnvelope`, `packetGap`, `stepHeight`, `longJump`) |
 | harness gaps (a drive does not reach it) | **4** checks across 5 scenarios (the `backwardSprint` entry is declared once in `omniSprint(...)` and instantiated by both `cheat-omnisprint-*` rows); 3 of the 4 are ungated (`sprintHack` alerts on two other drives, so its water variant is a drive gap, not a detector gap) |
 | verified detector false positives | **0** (four resolved this cycle -- §6.3) |
-| FP-direction regressions (a legit drive guarding a detector that was narrowed) | **9** -- `legit-fly-ramp`, `legit-triggerbot-strafe`, `legit-nokb-airborne`, `legit-multitarget-sweep`, `legit-mining-cadence`, `legit-mining-near-hurt`, `legit-hurt-idless-bystander`, `legit-hurt-mob-knockback`, `legit-hitswithoutswing-bystander` |
+| FP-direction regressions (a legit drive guarding a detector that was narrowed) | **10** -- `legit-fly-ramp`, `legit-sneak-edge`, `legit-triggerbot-strafe`, `legit-nokb-airborne`, `legit-multitarget-sweep`, `legit-mining-cadence`, `legit-mining-near-hurt`, `legit-hurt-idless-bystander`, `legit-hurt-mob-knockback`, `legit-hitswithoutswing-bystander` |
 | checks carrying any documented finding | 12 |
 
 Every check below has a drive; what differs is whether that drive **establishes a gate**. The four
@@ -306,7 +306,7 @@ outcomes are deliberately distinct and the runner reports them in separate secti
 
 | Check | Cheat clients that trip it |
 |---|---|
-| `flyEnvelope` | Fusion, Itami, LiquidBounce, Meteor (four sub-signals; also guarded by the `legit-fly-ramp` FP regression) |
+| `flyEnvelope` | Fusion, Itami, LiquidBounce, Meteor (four sub-signals; also guarded by the `legit-fly-ramp` and `legit-sneak-edge` FP regressions) |
 | `clickStatistics` | Koid, LionClient, Meteor (also guarded by the `legit-mining-cadence` FP regression) |
 | `speedEnvelope` | Koid, LiquidBounce |
 | `elytraSpeed` | LiquidBounce |
@@ -361,10 +361,10 @@ all** (see the signal-threading bug in the harness lessons, which cost the suite
 false bypasses) or the **state change is written a tick later than it is observed** (see the
 tracker-lag lesson). Check those two before rewriting a drive.
 
-### FP-direction regressions (9 -- the guards on the narrowed detectors)
+### FP-direction regressions (10 -- the guards on the narrowed detectors)
 
 A detector narrowed to stop a false positive is only half-verified by that: the fix could equally
-have been a bypass. Each of the nine guards hardened in these cycles therefore keeps the *legitimate*
+have been a bypass. Each of the ten guards hardened in these cycles therefore keeps the *legitimate*
 shape it used to misread as a cheat, as a permanent legit-pass scenario. Each asserts with
 `expectQuiet` **and** a bounded `expectFlagCount` on the specific flag site, because the FP was
 invisible to an alert-level assertion in every one of these cases: the flag rate never reached
@@ -373,6 +373,7 @@ invisible to an alert-level assertion in every one of these cases: the flag rate
 | Scenario | Legitimate shape presented | What a naive narrowing would break | Observed pre-fix |
 |---|---|---|---|
 | `legit-fly-ramp` | a 20-step slab/stairs ramp climbed one step per 4 ticks (0.5/tick rise as a single-tick Δy spike, then three flat grounded ticks) | `cheat-fly-ascend-liquidbounce`, `cheat-fly-hover-meteor` | `Fly` 17 flags, peakVL 1.00 |
+| `legit-sneak-edge` | sneaking on a 3-tall tower top with the hitbox center 0.2 past the edge, motionless 40 ticks then creeping along it (issue #35) | `cheat-fly-hover-meteor`, `cheat-fly-antikick-itami` | `Fly(FlyB)` 57 flags, peakVL 19.00 (alert) |
 | `legit-triggerbot-strafe` | a strafing victim crossing a **held** crosshair, clicking on each crossing (0-1 tick "reactions") | `cheat-triggerbot-vape` | `Triggerbot` alert, peakVL 6.00 |
 | `legit-nokb-airborne` | a victim already airborne on its own jump arc when the hit lands | `cheat-no-kb-rain` | `NoKB(VelocityB)` 18 flags, peakVL 1.00 |
 | `legit-multitarget-sweep` | two opponents jittering in and out of a vanilla sword sweep's arc, one swept per crossing | `cheat-multi-aura-meteor`, `cheat-multi-aura-pair-liquidbounce` | `MultiTarget` `pair-sustained` alert, peakVL 4.00 |

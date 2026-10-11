@@ -428,6 +428,7 @@
     "signature": "Physics breach: dy exceeds gravity-predicted (prevDeltaY-0.08)*0.98 by > threshold (0.1) with recentDescend < 0.5, sustained >=2 ticks. Hover: |dy| < 0.01 with horizontal > 0.1 for >=3 ticks. Ascend: dy > 0.2 with no observed jump impulse within 2 ticks (jump impulse = prevDeltaY < 0.15 && dy > 0.3 && dy < 1.0, debounced >6 ticks). Four more share the pool: Fly(FlyB) applies the Nemesis vertical air-friction kernel (prevDeltaY-0.08)*0.98 at a 0.05 tolerance, owning the 0.05-0.1 band the 0.1 breach misses, sustained >= 4 ticks; Fly(Blink) is a pure midair full freeze (|delta|^2 < 0.0001) held for blinkFreezeTicks (default 30, clamped 5..200); Fly(AntiKick) holds dy within +-0.05 of a hover point for >= 40 ticks with periodic ~20-tick downward dips <= 0.04; Fly(StrafeHop) counts repeated first-tick-jump dy inside a tight band around 0.40123128, >= 5 times.",
     "fpGuards": [
       "Vehicle/gliding/riptide/swimming exempt",
+      "Edge support counts as ground: a level tick (|dy| < 0.01) with a solid block within 0.05 under any column of the 0.6-wide hitbox footprint is grounded, not only the center column (sneaking at a ledge with the center past the edge, #35)",
       "Velocity window (tick - velocityTick < 30)",
       "Teleport exempt (tick - lastTeleportTick < 10, clears the descend window + hoverTicks)",
       "Hurt exempt (tick - hurtTick < 6): the ~6-tick KB peak plus the residual upward drift after it is exactly what the 30-tick velocity window misses on servers that do not broadcast other-player velocity",
