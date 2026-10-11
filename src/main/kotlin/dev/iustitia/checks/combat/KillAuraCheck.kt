@@ -14,6 +14,7 @@ import dev.iustitia.tracking.TrackedPlayer
 import dev.iustitia.world.WorldQueries
 import net.minecraft.block.Blocks
 import net.minecraft.client.MinecraftClient
+import net.minecraft.client.world.ClientWorld
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
@@ -572,6 +573,21 @@ class KillAuraCheck : Check() {
         ctx.lastBearing = bearingNow
     }
 
+    /** True iff the movement component should skip this tick on the ground block: ice, or an
+     *  unreadable block (fail-negative, never FP). Recomputed at most every
+     *  [BlockLookupBudget.RATE_LIMIT_N] ticks and reused in between (per-player cache in
+     *  [KillAuraContext]); the residual/desync logic still runs every tick on the cached verdict,
+     *  and a 1-tick-stale verdict is absorbed by the LOCK_HITS / SPRINT_HITS counters. */
+    private fun groundSkipCached(world: ClientWorld, ctx: KillAuraContext, bx: Int, by: Int, bz: Int, tick: Int): Boolean {
+        if (ctx.groundSkipTick == NO_TICK || tick - ctx.groundSkipTick >= BlockLookupBudget.RATE_LIMIT_N) {
+            val ground = WorldQueries.blockStateAt(world, bx, by, bz)
+            ctx.groundSkip = ground == null ||
+                ground.isOf(Blocks.ICE) || ground.isOf(Blocks.PACKED_ICE) || ground.isOf(Blocks.BLUE_ICE)
+            ctx.groundSkipTick = tick
+        }
+        return ctx.groundSkip
+    }
+
     /** movement(fix|lock|sprint): the body/head desync movement-fix silent aim introduces. */
     private fun movementComponent(tp: TrackedPlayer, ctx: KillAuraContext,
                                   moveX: Double, moveY: Double, moveZ: Double,
@@ -598,12 +614,13 @@ class KillAuraCheck : Check() {
         // Hurt window substitutes for the (dead) velocity window — recent knockback fakes residual.
         if (!flat || tick - tp.hurtTick < 10 || speed < MOVE_MIN_SPEED || speed > MOVE_MAX_SPEED) return
         // Ice keeps momentum pointing off-yaw for many ticks even for legit players — skip it.
-        val world = MinecraftClient.getInstance().world
-        val ground = WorldQueries.blockStateAt(
-            world, Math.floor(tp.pos.x).toInt(), Math.floor(tp.pos.y - 0.5).toInt(), Math.floor(tp.pos.z).toInt()
-        )
-        if (ground == null) return // chunk unloaded — fail-negative, never FP
-        if (ground.isOf(Blocks.ICE) || ground.isOf(Blocks.PACKED_ICE) || ground.isOf(Blocks.BLUE_ICE)) return
+        // Routed through the shared block-lookup scratch like the movement checks: the chunk gate
+        // is the TrackedPlayer per-tick dedup, and the ground verdict is rate-limit cached.
+        val world = MinecraftClient.getInstance().world ?: return
+        val bx = Math.floor(tp.pos.x).toInt()
+        val bz = Math.floor(tp.pos.z).toInt()
+        if (!tp.chunkLoadedCached(world, tick, bx, bz)) return // chunk unloaded — fail-negative, never FP
+        if (groundSkipCached(world, ctx, bx, Math.floor(tp.pos.y - 0.5).toInt(), bz, tick)) return
 
         // Yaw you'd hold to walk this velocity forward, vs the yaw actually broadcast;
         // residual = distance to the nearest legal 45-deg strafe offset.
@@ -892,6 +909,10 @@ class KillAuraCheck : Check() {
         var lockDesync: Int = 0
         var sprintDesync: Int = 0
         var moveTickCounter: Int = 0
+        /** Tick the [groundSkip] verdict was last computed (rate-limit verdict-cache). */
+        var groundSkipTick: Int = NO_TICK
+        /** Cached ice/unreadable-ground verdict for movement(fix) (rate-limit verdict-cache). */
+        var groundSkip: Boolean = false
         // consume component
         var useItemTicks: Int = 0
         // heuristic(gcd): MX AimConstantCheck Type1 (Axis A §8 step 2)

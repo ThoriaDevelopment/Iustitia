@@ -22,7 +22,9 @@ import net.minecraft.client.MinecraftClient
  *    1-tick-stale verdict is noise absorbed by the sustained-detection windows. Set `RATE_LIMIT_N
  *    = 1` to disable (recompute every tick = original behavior). SprintHack is NOT verdict-cached
  *    (its `isLiquidAt` lookups are cheap `getBlockState`+`isOf`, not `getCollisionShape`) — it
- *    uses only [beyondObserveRange] + the TrackedPlayer query dedup.
+ *    uses only [beyondObserveRange] + the TrackedPlayer query dedup. KillAura's movement(fix)
+ *    ice-ground gate uses the same pair: the TrackedPlayer chunk-loaded dedup plus a verdict-cache
+ *    in its own context.
  *
  * Single-threaded client tick — no synchronization needed. Tunable; runtime-only-verifiable.
  */
