@@ -237,6 +237,7 @@ object ConfigManager {
         "mutedPlayers",       // per-user session mutes
         "wizardCompleted",    // one-shot first-launch gate
         "persistenceEnabled", // environmental preference, not part of a detection/display profile
+        "creativeFlightExempt", // environmental preference (server-specific: creative-PvP testing flips it off)
         "playclipMode",       // user-controlled generation selector (see IustitiaConfig.playclipMode)
     )
 
@@ -269,6 +270,7 @@ object ConfigManager {
         addProperty("joinGraceTicks", c.joinGraceTicks)
         addProperty("legitScaffoldStrictGates", c.legitScaffoldStrictGates)
         addProperty("sensitivitySubstrate", c.sensitivitySubstrate)
+        addProperty("creativeFlightExempt", c.creativeFlightExempt)
         addProperty("alertsEnabled", c.alertsEnabled)
         addProperty("nametagPrefixes", c.nametagPrefixes)
         addProperty("nametagGreenEnabled", c.nametagGreenEnabled)
@@ -365,6 +367,9 @@ object ConfigManager {
         // sensitivitySubstrate: additive — a pre-field config keeps the default (off = substrate
         // dropped, the dense-crowd FPS fix). No CONFIG_VERSION bump (not a check-calibration field).
         if (o.has("sensitivitySubstrate")) c.sensitivitySubstrate = o.get("sensitivitySubstrate").asBoolean
+        // creativeFlightExempt: additive — a pre-field config keeps the default (on). No
+        // CONFIG_VERSION bump (not a check-calibration field).
+        if (o.has("creativeFlightExempt")) c.creativeFlightExempt = o.get("creativeFlightExempt").asBoolean
         if (o.has("alertsEnabled")) c.alertsEnabled = o.get("alertsEnabled").asBoolean
         if (o.has("nametagPrefixes")) c.nametagPrefixes = o.get("nametagPrefixes").asBoolean
         if (o.has("nametagGreenEnabled")) c.nametagGreenEnabled = o.get("nametagGreenEnabled").asBoolean

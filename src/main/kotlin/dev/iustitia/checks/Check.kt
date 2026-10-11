@@ -151,6 +151,18 @@ abstract class Check {
             // an exempt player stays clean. Tracking/replay/render still run (only detection is
             // suppressed). Forward-looking only — does NOT clear existing flags (use /ius clear).
             if (dev.iustitia.exempt.Exemptions.isExempt(tp.uuid)) return
+            // Creative/spectator flight exemption (NARROW — movement only, see
+            // [CreativeFlight]): a player whose server-sent tab-list game mode is CREATIVE
+            // or SPECTATOR skips exactly the movement checks lawful flight trips, so an admin
+            // flying around stops flagging fly/speed without anyone running /ius exempt —
+            // while combat checks (killaura, reach, …) keep full coverage on them. Gated by
+            // the `creativeFlightExempt` toggle (off = check everyone). Runs at most once
+            // per flag() call — i.e. only on ticks where a check is already flagging, never
+            // per-tick per-player — and a single player-list map lookup; unknown game mode
+            // (no tab entry) fails open to checking as before.
+            if (dev.iustitia.config.ConfigManager.config.creativeFlightExempt &&
+                CreativeFlight.isExempt(id, tp.uuid)
+            ) return
             ctx.addVl(level)
             VerboseLog.countFlag()
             // Session flag history (drives /ius hist, status counts, alert hover, nametag tier).

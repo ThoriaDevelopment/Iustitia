@@ -214,12 +214,13 @@ class PresetBuiltInsTest {
             mutedPlayers.add("Someone")
             wizardCompleted = true
             persistenceEnabled = true
+            creativeFlightExempt = false
             playclipMode = IustitiaConfig.PlayclipMode.LEGACY
         }
 
         val template = PresetManager.builtIn("debug")!!
         val obj = JsonParser.parseString(ConfigManager.presetContentJson(template)).asJsonObject
-        for (k in listOf("mutedChecks", "mutedPlayers", "wizardCompleted", "persistenceEnabled", "playclipMode")) {
+        for (k in listOf("mutedChecks", "mutedPlayers", "wizardCompleted", "persistenceEnabled", "creativeFlightExempt", "playclipMode")) {
             assertFalse(obj.has(k), "debug's preset content carries the excluded key '$k'")
         }
 
@@ -228,6 +229,7 @@ class PresetBuiltInsTest {
         assertEquals(listOf("Someone"), target.mutedPlayers)
         assertTrue(target.wizardCompleted)
         assertTrue(target.persistenceEnabled)
+        assertFalse(target.creativeFlightExempt)
         assertEquals(IustitiaConfig.PlayclipMode.LEGACY, target.playclipMode)
     }
 

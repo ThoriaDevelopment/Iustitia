@@ -46,6 +46,17 @@ data class IustitiaConfig(
      *  two GCD sub-flags (accepting the dense-crowd FPS cost). Additive field — no CONFIG_VERSION
      *  bump; a config saved before this field simply keeps the default (off). */
     var sensitivitySubstrate: Boolean = false,
+    /** Skip the movement checks that lawful creative/spectator flight trips (see
+     *  [dev.iustitia.checks.CreativeFlight]): fly/speed/long-jump/no-fall/backward-sprint/
+     *  wall-sprint/step for CREATIVE and SPECTATOR tab-list game modes (spectators also skip
+     *  phase, since noclip is lawful spectator locomotion). Combat checks keep running — a
+     *  creative killaura/reach is still caught. Game mode comes from the server-sent tab list
+     *  (fail-open: unknown mode checks as before), so a minigame server that spoofs or hides
+     *  game modes can under- or over-exempt; flip this off on creative-PvP testing servers
+     *  where even movement detection on creatives is wanted. Environmental preference (like
+     *  [persistenceEnabled]): presets never overwrite it. Additive field — no CONFIG_VERSION
+     *  bump; a config saved before this field simply keeps the default (on). */
+    var creativeFlightExempt: Boolean = true,
 
     // --- usability / display ---
     /** Global chat-alerts switch (toggled by bare `/ius alerts`). When false, NO chat alert lines
