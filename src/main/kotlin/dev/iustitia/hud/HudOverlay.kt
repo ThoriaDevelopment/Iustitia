@@ -60,6 +60,37 @@ object HudOverlay {
     private var dwellUuid: UUID? = null
     private var dwellTicks: Int = 0
 
+    /**
+     * Per-tick panel model for the crosshair target: the lines shared by the compact panel and the
+     * hover tooltip, built at most once per client tick (and on a target change) instead of every
+     * frame. The history reads behind it ([FlagHistory.confidenceScore] / [confidenceExplanation] /
+     * [alertedChecksOf] / [flagCounts]) take locks and allocate, and their inputs only change on a
+     * flag event — so, like the nametag tier cache on [dev.iustitia.tracking.TrackedPlayer.tier],
+     * at most 1 tick of staleness is imperceptible. Render-thread only.
+     */
+    private class PanelModel(
+        val uuid: UUID,
+        val name: String,
+        val tick: Int,
+        /** Header + explanation + FP hint — the compact panel's lines (and the tooltip's prefix). */
+        val lines: List<Text>,
+    ) {
+        /** [lines] plus the top most-flagged checks line (the "what are they actually doing"
+         *  detail). Only the hover tooltip needs it, so it is built on demand. */
+        val hoverLines: List<Text> by lazy(LazyThreadSafetyMode.NONE) {
+            val summary = try {
+                val counts = FlagHistory.flagCounts(uuid)
+                if (counts.isEmpty()) null
+                else Text.literal(counts.entries.take(HOVER_TOP_FLAGS).joinToString("§8, §7") { (cid, c) ->
+                    "§7$cid §8×§f$c"
+                })
+            } catch (_: Throwable) { null }
+            if (summary == null) lines else lines + summary
+        }
+    }
+
+    private var panelCache: PanelModel? = null
+
     /** Register the single HUD callback. Call once from `onInitializeClient`. Fail-open. */
     fun register() {
         try {
@@ -80,11 +111,12 @@ object HudOverlay {
         if (mc.currentScreen != null) return
         val tr = mc.textRenderer ?: return
 
+        // Resolve the crosshair target ONCE per frame; dwell tracking and both panels share it.
         // Dwell tracking for the hover tooltip: increment while the crosshair rests on the SAME
         // player, reset on a change / no target.
         val target = Iustitia.currentTarget()
         if (target == null) {
-            dwellUuid = null; dwellTicks = 0
+            dwellUuid = null; dwellTicks = 0; panelCache = null
         } else if (target.first == dwellUuid) {
             dwellTicks += 1
         } else {
@@ -95,14 +127,44 @@ object HudOverlay {
         if (cfg.lagHudIcon) {
             try { renderLagIcon(context, tr) } catch (_: Throwable) {}
         }
+        if (target == null) return
         // The compact confidence panel and the expanded hover tooltip overlap in content — when the
         // hover tooltip is up (deliberate dwell), suppress the compact panel to avoid duplication.
         if (cfg.confidenceHud && !hoverActive) {
-            try { renderConfidencePanel(context, tr, mc) } catch (_: Throwable) {}
+            try { renderConfidencePanel(context, tr, mc, panelModel(target)) } catch (_: Throwable) {}
         }
         if (hoverActive) {
-            try { renderHoverTooltip(context, tr, mc, target!!) } catch (_: Throwable) {}
+            try { renderHoverTooltip(context, tr, mc, panelModel(target)) } catch (_: Throwable) {}
         }
+    }
+
+    /** The cached [PanelModel] for [target], rebuilt only when the client tick or the target changes. */
+    private fun panelModel(target: Pair<UUID, String>): PanelModel {
+        val (uuid, name) = target
+        val tick = Iustitia.tickCounter
+        panelCache?.let { if (it.tick == tick && it.uuid == uuid && it.name == name) return it }
+
+        // Prefer the tracker's per-tick tier cache (what the nametag mixins read); fall back to a
+        // direct lookup for a target the tracker doesn't hold.
+        val tier = EntityTrackerManager.get(uuid)?.tier
+            ?: try { FlagHistory.tierFor(uuid) } catch (_: Throwable) { FlagHistory.Tier.GREEN }
+        val score = try { FlagHistory.confidenceScore(uuid) } catch (_: Throwable) { 0 }
+        val (color, glyph) = when (tier) {
+            FlagHistory.Tier.GREEN -> "a" to "+"
+            FlagHistory.Tier.YELLOW -> "e" to "!"
+            FlagHistory.Tier.RED -> "c" to "X"
+        }
+        val lines = ArrayList<Text>(3)
+        lines.add(L10n.t("iustitia.hud.confidenceHead", name, color, glyph, score))
+        val explanation = try { FlagHistory.confidenceExplanation(uuid) } catch (_: Throwable) { "" }
+        if (explanation.isNotEmpty()) lines.add(Text.literal("§7$explanation"))
+        // FP hint for the first alerted check (any alerted check's benign-cause is useful context).
+        try {
+            val hint = FlagHistory.alertedChecksOf(uuid).firstNotNullOfOrNull { FpHint.hint(it) }
+            if (hint != null) lines.add(L10n.t("iustitia.hud.fpLine", hint))
+        } catch (_: Throwable) {}
+
+        return PanelModel(uuid, name, tick, lines).also { panelCache = it }
     }
 
     /** Top-left `⚠ lag` while a server-lag spike / burst is recent. */
@@ -120,34 +182,10 @@ object HudOverlay {
     }
 
     /** Compact crosshair-target confidence panel, drawn just below the screen centre. */
-    private fun renderConfidencePanel(context: DrawContext, tr: TextRenderer, mc: MinecraftClient) {
-        val target = Iustitia.currentTarget() ?: return
-        val (uuid, name) = target
-
-        val tier = FlagHistory.tierFor(uuid)
-        val score = try { FlagHistory.confidenceScore(uuid) } catch (_: Throwable) { 0 }
-        val (color, glyph) = when (tier) {
-            FlagHistory.Tier.GREEN -> "a" to "+"
-            FlagHistory.Tier.YELLOW -> "e" to "!"
-            FlagHistory.Tier.RED -> "c" to "X"
-        }
-        val head = L10n.t("iustitia.hud.confidenceHead", name, color, glyph, score)
-
-        val explanation = try { FlagHistory.confidenceExplanation(uuid) } catch (_: Throwable) { "" }
-        val explLine = if (explanation.isEmpty()) null else Text.literal("§7$explanation")
-
-        // FP hint for the first alerted check (any alerted check's benign-cause is useful context).
-        val fpLine = try {
-            val checks = FlagHistory.alertedChecksOf(uuid)
-            val first = checks.firstOrNull { FpHint.hint(it) != null }
-            val hint = first?.let { FpHint.hint(it) }
-            if (hint != null) L10n.t("iustitia.hud.fpLine", hint) else null
-        } catch (_: Throwable) { null }
-
-        val lines = ArrayList<Text>(3)
-        lines.add(head)
-        if (explLine != null) lines.add(explLine)
-        if (fpLine != null) lines.add(fpLine)
+    private fun renderConfidencePanel(
+        context: DrawContext, tr: TextRenderer, mc: MinecraftClient, model: PanelModel,
+    ) {
+        val lines = model.lines
         if (lines.size <= 1) return  // head only + nothing else → skip (don't draw a bare header)
 
         // Layout: centered horizontally, just below the crosshair (screen centre). Each line 11px;
@@ -181,36 +219,9 @@ object HudOverlay {
      */
     private fun renderHoverTooltip(
         context: DrawContext, tr: TextRenderer, mc: MinecraftClient,
-        target: Pair<UUID, String>,
+        model: PanelModel,
     ) {
-        val (uuid, name) = target
-        val tier = FlagHistory.tierFor(uuid)
-        val score = try { FlagHistory.confidenceScore(uuid) } catch (_: Throwable) { 0 }
-        val (color, glyph) = when (tier) {
-            FlagHistory.Tier.GREEN -> "a" to "+"
-            FlagHistory.Tier.YELLOW -> "e" to "!"
-            FlagHistory.Tier.RED -> "c" to "X"
-        }
-        val lines = ArrayList<Text>(5)
-        lines.add(L10n.t("iustitia.hud.confidenceHead", name, color, glyph, score))
-        val explanation = try { FlagHistory.confidenceExplanation(uuid) } catch (_: Throwable) { "" }
-        if (explanation.isNotEmpty()) lines.add(Text.literal("§7$explanation"))
-        try {
-            val checks = FlagHistory.alertedChecksOf(uuid)
-            val first = checks.firstOrNull { FpHint.hint(it) != null }
-            val hint = first?.let { FpHint.hint(it) }
-            if (hint != null) lines.add(L10n.t("iustitia.hud.fpLine", hint))
-        } catch (_: Throwable) {}
-        // Top most-flagged checks this session — the "what are they actually doing" detail.
-        try {
-            val counts = FlagHistory.flagCounts(uuid)
-            if (counts.isNotEmpty()) {
-                val summary = counts.entries.take(HOVER_TOP_FLAGS).joinToString("§8, §7") { (cid, c) ->
-                    "§7$cid §8×§f$c"
-                }
-                lines.add(Text.literal(summary))
-            }
-        } catch (_: Throwable) {}
+        val lines = model.hoverLines
 
         val padX = 6
         val padY = 4
