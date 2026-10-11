@@ -304,6 +304,7 @@ Start here:
 | Use Claude Code or another AI agent safely | [AI-assisted development guide](docs/ai-assisted-development.md) |
 | Use the Iustitia Claude Code skill | [.claude/skills/iustitia-contributor/SKILL.md](.claude/skills/iustitia-contributor/SKILL.md) |
 | Run the repository verification tool | `python scripts/verify_contribution.py --static --run-build` |
+| Add a new detection check | [Adding a detection check](docs/adding-a-check.md) |
 | Verify a detection/replay change without touching the game | [Automated live testing](docs/automated-live-testing.md) — `python scripts/live_selftest.py` |
 | Validate a change that affects mixins, rendering, replay, or live client behavior | [Live verification guide](docs/live-verification.md) |
 

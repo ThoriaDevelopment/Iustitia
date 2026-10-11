@@ -75,6 +75,8 @@ Include:
 
 Do not describe a detector as proof unless the project has evidence that supports that claim. Iustitia is inference-based and cannot see another player's outgoing packets.
 
+To add a new check, follow [Adding a detection check](docs/adding-a-check.md). It lists every place a check has to be wired in, in the order the work happens, and what fails when one is missed.
+
 ### Mixin changes
 
 Mixin changes are Minecraft-version-sensitive. Explain in the PR:
