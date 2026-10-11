@@ -108,6 +108,47 @@ object SelfTest {
             }
         }
 
+        /**
+         * Present this bot to the tab list with [mode] (CREATIVE / SPECTATOR), through the
+         * real consumer path: a [PlayerListS2CPacket.Entry] dispatched to
+         * `ClientPlayNetworkHandler.onPlayerList` on the client thread, exactly where the
+         * server's rebroadcast would land it. The packet's entry list is otherwise only
+         * settable from server-side objects or wire bytes, so the test fills it via one
+         * reflective field write (confined to this harness-only source set). This exercises
+         * the CONSUMER path, not the packet-decode path — same split as [dig]: what the
+         * suite proves is that checks reading the tab-list game mode behave. Fail-LOUD:
+         * the injected mode is read back immediately, so a broken seam errors the scenario
+         * instead of false-greening a quiet expectation.
+         *
+         * Each scenario runs in a throwaway world with a fresh network handler, so entries
+         * never leak across scenarios; bot UUIDs are deterministic per name, making a stale
+         * entry inside one scenario idempotent rather than surprising.
+         */
+        fun gameMode(mode: net.minecraft.world.GameMode) {
+            ClientThread.runOnClient { mc ->
+                val handler = mc.networkHandler ?: error("no network handler -- create the gametest world first")
+                val profile = com.mojang.authlib.GameProfile(uuid, name)
+                val entry = net.minecraft.network.packet.s2c.play.PlayerListS2CPacket.Entry(
+                    uuid, profile, true, 0, mode, null, true, 0, null,
+                )
+                val packet = net.minecraft.network.packet.s2c.play.PlayerListS2CPacket(
+                    java.util.EnumSet.of(
+                        net.minecraft.network.packet.s2c.play.PlayerListS2CPacket.Action.ADD_PLAYER,
+                        net.minecraft.network.packet.s2c.play.PlayerListS2CPacket.Action.UPDATE_GAME_MODE,
+                    ),
+                    emptyList(),
+                )
+                val field = net.minecraft.network.packet.s2c.play.PlayerListS2CPacket::class.java
+                    .getDeclaredField("entries")
+                field.isAccessible = true
+                field.set(packet, listOf(entry))
+                handler.onPlayerList(packet)
+                check(handler.getPlayerListEntry(uuid)?.gameMode == mode) {
+                    "tab-list game-mode injection failed for $name (wanted $mode)"
+                }
+            }
+        }
+
         /** Face the bot (yaw/pitch in degrees). */
         fun look(yaw: Float, pitch: Float) {
             ClientThread.runOnClient { _ ->

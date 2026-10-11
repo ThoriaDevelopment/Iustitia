@@ -389,6 +389,27 @@ structural: a cheat's hits always arrive with the server's named damage packet, 
 through the id-less path and there is no catch to narrow. Mechanisms and the arithmetic behind each row
 are in §6.3.
 
+### Mode-exemption guards (3 -- the creative/spectator flight gate)
+
+The narrowed flight exemption ([CreativeFlight][../src/main/kotlin/dev/iustitia/checks/CreativeFlight.kt])
+is verified the same red-then-green way: each scenario mirrors a survival twin's drive shape,
+changing only the tab-list game mode, and was calibrated with the gate forced off (all three
+went red on exactly their expected checks) before the green run with it on.
+
+| Scenario | Drive (survival twin) | Game mode | Expectation |
+|---|---|---|---|
+| `legit-creative-flight` | fast climb + cruise + descent + landing (`cheat-fly-ascend-liquidbounce` and friends) | CREATIVE | `flyEnvelope`, `speedEnvelope`, `noFallDamage` quiet |
+| `cheat-creative-reach-vape` | 6.0-block named hits (`cheat-reach-vape`) | CREATIVE | `reach` alerts (combat intact) |
+| `legit-spectator-phase` | submerged wall transit (`cheat-phase-koid`) | SPECTATOR | `phaseClip` quiet (lawful noclip) |
+
+The mode arrives via `BotHandle.gameMode`, which dispatches a real tab-list entry through
+`onPlayerList` on the client thread and reads it back (fail-loud on a broken seam). Like
+`dig()`, this drives the consumer path, not the packet-decode path: the mixin turning a
+`PlayerListS2CPacket` into that entry stays on the manual checklist. Each scenario runs in
+a throwaway world with a fresh network handler, so entries never leak across scenarios.
+`longJump` carries no expectation in the flight scenario: the drive never flags it even
+gate-off (its own known-open VL economy), and asserting quiet there would be vacuous.
+
 ### Observer tooling
 
 | Feature | Scenario |
