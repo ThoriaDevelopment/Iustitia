@@ -40,9 +40,12 @@ import dev.iustitia.checks.LagWindows
  *    steady state the carry exactly absorbs the friction loss and the input exactly
  *    fills it, so `offset = 0` (the `speedup` ratio is 1.0); a speed hack pushes `offset`
  *    persistently positive. Accumulate `advantage = min(advantage + offset, MAX_ADVANTAGE)`
- *    (Grim) and flag when `offsetH > MIN_MOVE && (offset >= IMMEDIATE_OFFSET ||
- *    advantage >= ADVANTAGE_FLAG)`. Decay `advantage *= SETBACK_DECAY` when `> DECAY_THRESHOLD`
- *    so a single blip can't accumulate to a flag, but a sustained low-grade overspeed does.
+ *    (Grim) minus a per-tick leak (a leaky bucket — [MomentumModel.ADVANTAGE_LEAK]) and flag
+ *    when `offsetH > MIN_MOVE && (offset >= IMMEDIATE_OFFSET || (offset > leak && advantage >=
+ *    ADVANTAGE_FLAG))`, so a single blip or sub-leak residue can't accumulate to a flag, but a
+ *    sustained low-grade overspeed does. The takeoff tick of a jump is allowed ground input +
+ *    the 0.2 sprint-jump impulse. (#36: Grim's ×0.999 decay plus the unmodelled jump left
+ *    legit players resting at VL ~1.0 — see [MomentumModel].)
  *    This catches the +10–50% sub-cap speed hacks the flat 10 bps cap misses, while the
  *    3rd-gen NP-complete FP problem is avoided (no per-block simulation — a portable
  *    friction model from the block under the player + a default attribute).
@@ -105,6 +108,8 @@ class SpeedEnvelopeCheck : Check() {
                 ctx.bpsWindow.clear()
                 ctx.lastOffsetH = 0.0
                 ctx.advantage = 0.0
+                ctx.wasGrounded = false
+                ctx.lastDeltaY = 0.0
                 return
             }
 
@@ -168,35 +173,40 @@ class SpeedEnvelopeCheck : Check() {
             } else {
                 AIR_FRICTION
             }
+            // Takeoff tick (#36): rising after a grounded or falling tick. groundedProxy is
+            //   already false (Δy = 0.42), but vanilla ran this tick with ground input plus the
+            //   0.2 sprint-jump impulse — modelling it as air left every legit sprint-jump a
+            //   ~0.3 excess (an immediate flag at ~1/sec).
+            val takeoff = MomentumModel.isTakeoff(tp.deltaY, tp.groundedProxy, ctx.wasGrounded, ctx.lastDeltaY)
             // Speed effect raises the attribute (speedFactor); sprint adds a 1.3× boost
             // (ground only — sprint input isn't applied in air). The default attribute
             // (BASE_ATTRIBUTE=0.1) is the conservative vanilla walkSpeed; the speedup ratio
             // self-calibrates to 1.0 at legit speed, so the exact attribute is not load-bearing.
-            val sprintBoost = if (tp.sprinting && tp.groundedProxy) SPRINT_BOOST else 1.0
-            val movementSpeed = if (tp.groundedProxy) {
-                BASE_ATTRIBUTE * speedFactor * sprintBoost * LAND_MOVEMENT_FACTOR /
-                    (friction * friction * friction)
-            } else {
-                AIR_MOVEMENT_SPEED * speedFactor
-            }
+            val movementSpeed = MomentumModel.allowance(
+                tp.groundedProxy, takeoff, friction, ctx.lastGroundFriction, speedFactor, tp.sprinting,
+            )
             // excess = how far this tick's move exceeds (momentum carry + max input accel).
-            val offset = max(0.0, offsetH - ctx.lastOffsetH - movementSpeed)
+            val offset = MomentumModel.excess(offsetH, ctx.lastOffsetH, movementSpeed)
             if (!skipFlag) {
-                ctx.advantage = min(ctx.advantage + offset, MAX_ADVANTAGE)
+                // Leaky bucket (#36): residue under ADVANTAGE_LEAK drains instead of latching
+                //   the pool above ADVANTAGE_FLAG; a sustained overspeed outpaces the leak.
+                ctx.advantage = MomentumModel.accumulate(ctx.advantage, offset)
                 // Flag (Grim): immediate on a single large excess, or sustained on accumulated
-                //   advantage; gated by offsetH > MIN_MOVE so the momentum model isn't applied
-                //   to near-stationary noise (Nemesis offsetH>0.2 guard).
-                if (offsetH > MIN_MOVE && (offset >= IMMEDIATE_OFFSET || ctx.advantage >= ADVANTAGE_FLAG)) {
+                //   advantage — the latter only on a tick that itself carries excess, so a full
+                //   pool can't flag clean movement every tick (the old VL ~1.0 resting state).
+                //   Gated by offsetH > MIN_MOVE so the momentum model isn't applied to
+                //   near-stationary noise (Nemesis offsetH>0.2 guard).
+                if (offsetH > MIN_MOVE && MomentumModel.shouldFlag(offset, ctx.advantage)) {
                     flag(tp, ctx, 1.0, "Speed(Momentum)", tick, Evidence(
                         subLabel = "momentum-friction", measurement = offset, threshold = IMMEDIATE_OFFSET,
-                        pos = tp.pos, extra = "offsetH=$offsetH mvSpeed=$movementSpeed friction=$friction adv=${ctx.advantage}"))
+                        pos = tp.pos, extra = "offsetH=$offsetH mvSpeed=$movementSpeed friction=$friction adv=${ctx.advantage} takeoff=$takeoff"))
                 }
             }
-            // Grim decay: advantage *= 0.999 each tick when > 0.05 (a single blip can't
-            //   accumulate to a flag; a sustained overspeed outpaces the decay and does).
-            if (ctx.advantage > DECAY_THRESHOLD) ctx.advantage *= SETBACK_DECAY
             // momentum carry for the next tick (always — keeps the baseline continuous).
             ctx.lastOffsetH = offsetH * friction
+            ctx.wasGrounded = tp.groundedProxy
+            ctx.lastDeltaY = tp.deltaY
+            if (tp.groundedProxy) ctx.lastGroundFriction = friction
         } catch (_: Throwable) {}
     }
 
@@ -230,18 +240,10 @@ class SpeedEnvelopeCheck : Check() {
 
     companion object {
 
-        // -- Nemesis momentum/friction model (plan §3/§8 step 9) --
-        /** Vanilla generic.movement_speed attribute default (walkSpeed). The speedup ratio
-         *  self-calibrates to 1.0 at legit speed, so the exact attribute is not load-bearing. */
-        const val BASE_ATTRIBUTE = 0.1
-        /** Sprint input boost (ground only). */
-        const val SPRINT_BOOST = 1.3
-        /** Nemesis LAND_MOVEMENT_FACTOR (per-tick input-accel constant). */
-        const val LAND_MOVEMENT_FACTOR = 0.16277136
-        /** Nemesis air movementSpeed (per-tick air-control input; ground uses the friction³ form). */
-        const val AIR_MOVEMENT_SPEED = 0.026
-        /** Per-tick horizontal air drag (the friction applied in air / the ground retention base). */
-        const val AIR_FRICTION = 0.91
+        // -- Nemesis momentum/friction model (plan §3/§8 step 9); the kernel and its
+        //    constants live in [MomentumModel] (pure, unit-tested) --
+        const val AIR_FRICTION = MomentumModel.AIR_FRICTION
+        const val IMMEDIATE_OFFSET = MomentumModel.IMMEDIATE_OFFSET
         /** Default block slipperiness (most blocks). */
         const val DEFAULT_SLIP = 0.6
         /** Ice-family slipperiness (carries momentum further → legit ice speedup). */
@@ -251,16 +253,6 @@ class SpeedEnvelopeCheck : Check() {
         /** Min offsetH (blocks/tick) to apply the momentum model — below ~4 bps the model is
          *  noise (Nemesis offsetH>0.2 guard). Tuned in step 14. */
         const val MIN_MOVE = 0.2
-        /** Grim: a single tick's excess >= this flags immediately (a blatant 1-tick accel spike). */
-        const val IMMEDIATE_OFFSET = 0.1
-        /** Grim: accumulated advantage >= this flags (sustained low-grade overspeed). */
-        const val ADVANTAGE_FLAG = 1.0
-        /** Grim maxAdvantage: advantage accumulation cap. */
-        const val MAX_ADVANTAGE = 4.0
-        /** Grim: decay advantage only when above this (don't decay a zero baseline toward NaN). */
-        const val DECAY_THRESHOLD = 0.05
-        /** Grim setbackDecay: advantage *= this each tick when > DECAY_THRESHOLD. */
-        const val SETBACK_DECAY = 0.999
     }
 
     private class SpeedContext : CheckContext() {
@@ -268,7 +260,13 @@ class SpeedEnvelopeCheck : Check() {
         val bpsWindow = ArrayDeque<Double>()
         /** Previous tick's offsetH × friction — the momentum carried into this tick. */
         var lastOffsetH = 0.0
-        /** Accumulated excess (Grim offset-accumulation), decayed at SETBACK_DECAY each tick. */
+        /** Accumulated excess (leaky bucket, [MomentumModel.accumulate]). */
         var advantage = 0.0
+        /** Whether the previous tick was grounded — detects the takeoff tick. */
+        var wasGrounded = false
+        /** Previous tick's Δy — a rise after a fall is a bunny-hop takeoff. */
+        var lastDeltaY = 0.0
+        /** Friction of the last grounded tick — the takeoff tick's input runs against it. */
+        var lastGroundFriction = AIR_FRICTION * DEFAULT_SLIP
     }
 }
