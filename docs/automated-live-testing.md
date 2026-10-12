@@ -424,6 +424,7 @@ gate-off (its own known-open VL economy), and asserting quiet there would be vac
 | Disabled-check gate (toggled-off check = zero VL; re-enabled = alerts) | `preset-disabled-check-gate` |
 | Preset apply (schema-derived coverage + documented exclusions + standard semantics) | `preset-apply-coverage` |
 | Built-in profiles (all five applied: enable contract, scaled `setbackVL` with `decay`/`threshold` untouched, display canaries, in-place apply, unknown name refused) | `preset-builtin-coverage` |
+| Preset share strings through the real commands, clipboard and presets dir: export -> delete -> apply another -> import (typed and from the clipboard) -> apply -> values match; malformed, truncated, oversized, `../evil`, unknown-setting, built-in-name, existing-name and blank-clipboard imports each refused with no file written | `preset-share-roundtrip` |
 
 ### Scenarios that cannot live here
 

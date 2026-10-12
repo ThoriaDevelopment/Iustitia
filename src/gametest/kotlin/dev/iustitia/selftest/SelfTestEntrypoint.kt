@@ -204,6 +204,7 @@ class SelfTestEntrypoint : FabricClientGameTest {
         PresetScenarios.PresetDisabledGate(),
         PresetScenarios.PresetApplyCoverage(),
         PresetScenarios.PresetBuiltInCoverage(),
+        PresetScenarios.PresetShareRoundTrip(),
     )
 
     /**

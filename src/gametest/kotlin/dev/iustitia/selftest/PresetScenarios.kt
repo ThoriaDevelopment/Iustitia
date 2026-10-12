@@ -330,4 +330,173 @@ object PresetScenarios {
             }
         }
     }
+
+    /**
+     * `/ius presets export` / `/ius presets import` (#6), driven through the REAL commands, the
+     * real clipboard and the real presets directory: the issue's verification plan.
+     *
+     *  1. Tune the live config, save it as a custom preset, export it, delete it, apply a different
+     *     preset, import the string (typed, and again from the clipboard), apply the import and
+     *     confirm every preset-content value matches the tuned one.
+     *  2. A malformed string, an oversized string, a `../evil` name, a built-in name and an
+     *     already-present name are each refused with a message and leave the presets directory
+     *     exactly as it was.
+     *
+     * The codec itself is covered by `PresetShareTest`. This proves the command wiring, the
+     * clipboard path, the file landing in the presets dir and the save-side refusals, none of which
+     * a JVM test can reach. The user's clipboard, the live config and the run-dir presets are
+     * restored in a `finally`.
+     */
+    class PresetShareRoundTrip : SelfTest.Scenario("preset-share-roundtrip", "REPLAY", tags = setOf("guard")) {
+
+        private val src = "selftest-share"
+
+        private fun fail(msg: String): Nothing = throw ScenarioFailed("PRESET/SHARE failure: $msg")
+
+        /** Run `/<cmd>` the way the chat box does. Fabric's client-command hook claims `/ius`
+         *  before anything reaches the server. */
+        private fun command(cmd: String) = ClientThread.runOnClient { mc ->
+            val nh = mc.player?.networkHandler ?: fail("no player network handler to run /$cmd")
+            nh.sendChatCommand(cmd)
+        }
+
+        /** Plain text of the chat HUD's lines, newest first (Yarn `ChatHud.messages`). */
+        private fun chat(): List<String> = ClientThread.computeOnClient { mc ->
+            val hud = mc.inGameHud.chatHud
+            val f = hud.javaClass.getDeclaredField("messages").apply { isAccessible = true }
+            (f.get(hud) as List<*>).map { (it as net.minecraft.client.gui.hud.ChatHudLine).content().string }
+        }
+
+        /** The chat lines a command produced. */
+        private fun run(cmd: String): List<String> {
+            val before = chat().size
+            command(cmd)
+            val after = chat()
+            return after.take((after.size - before).coerceAtLeast(0))
+        }
+
+        private fun presetsDir(): java.nio.file.Path =
+            net.fabricmc.loader.api.FabricLoader.getInstance().gameDir.resolve(".iustitia/presets")
+
+        /** Every file under the run dir's `.iustitia` tree, so a write outside `presets/` shows. */
+        private fun tree(): Map<String, String> {
+            val root = presetsDir().parent
+            if (!java.nio.file.Files.isDirectory(root)) return emptyMap()
+            return java.nio.file.Files.walk(root).use { s ->
+                s.filter { java.nio.file.Files.isRegularFile(it) }
+                    .toList()
+                    .associate { root.relativize(it).toString() to java.nio.file.Files.readString(it) }
+            }
+        }
+
+        /** GLFW on macOS ignores an empty string, so "clear" is a single space (blank either way). */
+        private fun setClipboard(text: String) = ClientThread.runOnClient { mc -> mc.keyboard.setClipboard(text) }
+        private fun clipboard(): String = ClientThread.computeOnClient { mc -> mc.keyboard.clipboard ?: "" }
+
+        /** A share string carrying an arbitrary payload, for the hostile cases. */
+        private fun forge(payload: String): String {
+            val d = java.util.zip.Deflater(java.util.zip.Deflater.BEST_COMPRESSION, true)
+            d.setInput(payload.toByteArray(Charsets.UTF_8)); d.finish()
+            val out = java.io.ByteArrayOutputStream(); val buf = ByteArray(4096)
+            while (!d.finished()) out.write(buf, 0, d.deflate(buf))
+            d.end()
+            return dev.iustitia.config.PresetShare.PREFIX +
+                java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(out.toByteArray())
+        }
+
+        /** Import [input] (typed, or from the clipboard when [viaClipboard]) and require a refusal
+         *  naming [expect] that leaves every file under `.iustitia` untouched. The file check is
+         *  the real guarantee; the message check proves the user is told why. */
+        private fun refused(what: String, input: String, viaClipboard: Boolean, expect: String) {
+            val before = tree()
+            val lines = if (viaClipboard) { setClipboard(input); run("ius presets import") } else run("ius presets import $input")
+            val said = lines.joinToString(" | ")
+            check(!(lines.none { expect in it })) { "PRESET/SHARE failure: " + "$what: expected a refusal mentioning '$expect', chat said: $said" }
+            val after = tree()
+            check(!(after != before)) { "PRESET/SHARE failure: " + "$what: refused, but files changed: added ${after.keys - before.keys}, removed ${before.keys - after.keys}, modified ${before.keys.filter { it in after && after[it] != before[it] }}" }
+            println("[iustitia-selftest] preset-share: $what refused: $said")
+        }
+
+        override fun run(b: SelfTest.ScenarioBuilder) {
+            val savedConfig = ClientThread.computeOnClient { _ -> ConfigManager.presetContentJson(ConfigManager.config) }
+            val savedClipboard = clipboard()
+            val preexisting = tree().keys
+            try {
+                // ---- 1. tune, save, export ----
+                ClientThread.runOnClient { _ ->
+                    val c = ConfigManager.config
+                    c.alertLevel = 2
+                    c.audioVolume = 0.35
+                    c.joinGraceTicks = 40
+                    c.slice("reach").setbackVL = 3.25
+                    c.slice("reach").threshold = 3.4
+                    c.slice("killAura").enabled = false
+                    c.slice("timerRate").decay = 0.125
+                }
+                val tuned = ClientThread.computeOnClient { _ -> ConfigManager.presetContentObj(ConfigManager.config) }
+                run("ius createpreset $src")
+                check(!(!java.nio.file.Files.exists(presetsDir().resolve("$src.json")))) { "PRESET/SHARE failure: " + "createpreset did not write $src.json" }
+
+                setClipboard(" ")
+                val exportSaid = run("ius presets export $src")
+                val shared = clipboard()
+                check(!(!shared.startsWith(dev.iustitia.config.PresetShare.PREFIX))) { "PRESET/SHARE failure: " + "export left '${shared.take(40)}' on the clipboard; chat said: $exportSaid" }
+                check(!(exportSaid.none { "copied to clipboard" in it && "${shared.length} chars" in it })) { "PRESET/SHARE failure: " + "export message does not report the copy: $exportSaid" }
+                println("[iustitia-selftest] preset-share: exported $src as ${shared.length} chars: $shared")
+
+                // ---- 2. remove the source, apply something else ----
+                run("ius deletepreset $src")
+                check(!(java.nio.file.Files.exists(presetsDir().resolve("$src.json")))) { "PRESET/SHARE failure: " + "deletepreset left $src.json behind" }
+                run("ius preset lenient")
+                val lenient = ClientThread.computeOnClient { _ -> ConfigManager.presetContentObj(ConfigManager.config) }
+                check(!(lenient == tuned)) { "PRESET/SHARE failure: " + "applying lenient did not change the config, so the round trip below would prove nothing" }
+
+                // ---- 3. import (typed), apply, compare ----
+                check(!(shared.length > 236)) { "PRESET/SHARE failure: " + "the test preset encodes to ${shared.length} chars, too long to type; trim the tuning" }
+                val importSaid = run("ius presets import $shared")
+                val landed = presetsDir().resolve("$src.json")
+                check(!(!java.nio.file.Files.exists(landed))) { "PRESET/SHARE failure: " + "typed import wrote no $src.json; chat said: $importSaid" }
+                check(!(importSaid.none { "imported preset" in it && landed.toString() in it })) { "PRESET/SHARE failure: " + "import message does not say where the preset landed ($landed): $importSaid" }
+                run("ius preset $src")
+                val roundTripped = ClientThread.computeOnClient { _ -> ConfigManager.presetContentObj(ConfigManager.config) }
+                check(roundTripped == tuned) {
+                    val diffs = tuned.keySet().filter { tuned.get(it) != roundTripped.get(it) }
+                    "PRESET/SHARE failure: applied import differs from the exported config in: ${diffs.map { "$it: ${tuned.get(it)} -> ${roundTripped.get(it)}" }}"
+                }
+
+                // ---- 4. the same import again: already exists, nothing overwritten ----
+                refused("re-import of an existing name", shared, viaClipboard = false, expect = "already have")
+
+                // ---- 5. import from the clipboard (bare form) ----
+                run("ius deletepreset $src")
+                setClipboard(shared)
+                val clipSaid = run("ius presets import")
+                check(!(!java.nio.file.Files.exists(landed))) { "PRESET/SHARE failure: " + "clipboard import wrote no $src.json; chat said: $clipSaid" }
+                run("ius deletepreset $src")
+
+                // ---- 6. hostile and bad input: refused, nothing written anywhere ----
+                refused("malformed string", "ius1.this-is-not-a-preset", viaClipboard = false, expect = "damaged")
+                refused("truncated string", shared.substring(0, shared.length / 2), viaClipboard = false, expect = "damaged")
+                refused("oversized string", "ius1." + "A".repeat(dev.iustitia.config.PresetShare.MAX_ENCODED_CHARS), viaClipboard = true, expect = "too long")
+                refused("../evil name", forge("""{"name":"../evil","preset":{"alertLevel":2}}"""), viaClipboard = false, expect = "isn't allowed")
+                refused("unknown setting", forge("""{"name":"ok","preset":{"notASetting":true}}"""), viaClipboard = false, expect = "unknown setting")
+                setClipboard(" ")
+                run("ius presets export strict")
+                refused("built-in name", clipboard(), viaClipboard = true, expect = "built-in")
+                setClipboard(" ")
+                refused("blank clipboard", " ", viaClipboard = true, expect = "nothing to import")
+            } finally {
+                try {
+                    // Remove anything this scenario wrote, put the config and the user's clipboard back.
+                    val root = presetsDir().parent
+                    for (k in tree().keys - preexisting) java.nio.file.Files.deleteIfExists(root.resolve(k))
+                    ClientThread.runOnClient { mc ->
+                        ConfigManager.configFromJsonInto(com.google.gson.JsonParser.parseString(savedConfig).asJsonObject, ConfigManager.config)
+                        ConfigManager.save()
+                        mc.keyboard.setClipboard(savedClipboard)
+                    }
+                } catch (_: Throwable) {}
+            }
+        }
+    }
 }
