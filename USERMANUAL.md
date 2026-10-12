@@ -79,6 +79,25 @@ The five differ in **only one detection number**: `setbackVL`, the alert trip po
 
 **What an apply does NOT touch:** `configVersion`, `mutedChecks`, `mutedPlayers`, `wizardCompleted`, `persistenceEnabled`, and `playclipMode` are left as-is. Everything else in the config — every check slice plus the display, alert, replay/clip, and chathist fields — is preset content and gets overwritten. A preset only changes detection + display, not your mute list or persistence setting. So applying a preset never silently un-mutes a check you muted, never turns persistence on/off, and never re-runs the wizard.
 
+**Sharing a preset** — send your tuning to another moderator as one line of text:
+
+```
+/ius presets export mystrict → copies "mystrict" to the clipboard as a string starting ius1.
+                               (works for built-ins too)
+/ius presets import ius1.…   → saves the string as a custom preset under the name it was
+                               exported with, and tells you which file it wrote
+/ius presets import          → the same, reading the string from your clipboard
+/ius preset mystrict         → apply it
+```
+
+The string carries only the settings that differ from the defaults, compressed, so a lightly tuned preset is about 100 characters and the busiest built-in about 750. The chat box takes 256 characters, so for a longer string use the bare `/ius presets import` with the string on your clipboard; the export message tells you which form fits. The string holds preset content only (the same fields a custom preset file holds), never your mutes, notes, or persistence setting.
+
+An import **never applies** the preset and **never overwrites** one. It refuses, with a message and without writing any file, when:
+- the string is damaged, cut off, or longer than 8192 characters;
+- it holds a setting this build doesn't know, or a value of the wrong type;
+- the name isn't plain letters, digits, `_`, `.` or `-` (so a name like `../evil` is refused, not renamed), starts with a dot, or is longer than 48 characters;
+- the name is a built-in (`standard`, `lenient`, …) or one of your custom presets. Delete yours with `/ius deletepreset <name>` first if you want to replace it.
+
 **Where custom presets live:** `%APPDATA%\.iustitia\presets` on Windows (the same roaming folder as your clips and exemptions), or `<game folder>\.iustitia\presets` elsewhere. Presets saved by older Iustitia builds (in the game folder) are still listed and load.
 
 ### Spectator-like input suppression during replays & playclips
@@ -454,7 +473,7 @@ What the number means depends on the check (reach = max distance, autoclicker = 
 /ius preset      → apply a named config preset (built-in or custom). See [Presets — /ius preset].
 /ius createpreset → save the current config as a custom preset.
 /ius deletepreset → delete a custom preset (built-ins can't be deleted).
-/ius presets     → list all presets (built-in + custom).
+/ius presets     → list all presets (built-in + custom). `/ius presets export <name>` / `/ius presets import [string]` share one as a string (see [Presets — /ius preset]).
 /ius clear       → reset one player's flags (→green) or everyone's (section 6).
 /ius exempt      → exempt a trusted player from all checks (section 6).
 ```

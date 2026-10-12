@@ -89,6 +89,8 @@ That's it. Alerts appear in chat; other players get a colored tier prefix on the
 /ius createpreset <name>  # save the current config as a custom preset (persists to .iustitia/presets/<name>.json)
 /ius deletepreset <name>  # delete a custom preset (built-ins can't be deleted)
 /ius presets         # list all presets (built-in + custom)
+/ius presets export <name>  # copy a preset to the clipboard as a shareable ius1. string
+/ius presets import [string]  # save a shared string as a custom preset (bare = read the clipboard)
 /ius clear <name|all> # reset one player's flags (tier→green) or everyone's (exemptions untouched)
 /ius exempt [name [on|off]]  # exempt a player from all checks (bare = list exempted); persists across sessions
 /ius alerts          # mute/unmute all chat alerts (detection keeps running)

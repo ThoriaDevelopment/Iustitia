@@ -198,6 +198,52 @@ object PresetManager {
         }
     }
 
+    /** The preset named [name] as a config, built-in first then custom, for `/ius presets export`.
+     *  Null when it is neither or the custom file is unreadable. Fail-open. */
+    fun template(name: String): IustitiaConfig? = try {
+        builtIn(name) ?: loadCustom(name)
+    } catch (_: Throwable) {
+        null
+    }
+
+    /** Outcome of [saveImported]. [Saved.path] is where the preset landed, for the user. */
+    sealed class ImportResult {
+        data class Saved(val path: Path) : ImportResult()
+        object BadName : ImportResult()
+        object BuiltInName : ImportResult()
+        object AlreadyExists : ImportResult()
+        object WriteFailed : ImportResult()
+    }
+
+    /** Save a decoded `/ius presets import` string as the custom preset [name].
+     *
+     *  [name] came from someone else, so it must already pass [PresetShare.validName] unchanged.
+     *  It is checked, not sanitized. The path still resolves through [customPath], and the result
+     *  must sit directly inside [presetsDir]. Refuses built-in names and any name that already has
+     *  a custom preset in either location, so an import never overwrites a preset; the user deletes
+     *  the old one first. Writes the full preset content of [config] (the imported delta already
+     *  expanded onto the defaults). Fail-open. */
+    fun saveImported(name: String, config: IustitiaConfig): ImportResult = try {
+        when {
+            !PresetShare.validName(name) || safeName(name) != name -> ImportResult.BadName
+            isBuiltIn(name) -> ImportResult.BuiltInName
+            name.lowercase() in listCustom().map { it.lowercase() } -> ImportResult.AlreadyExists
+            else -> {
+                val dir = presetsDir().toAbsolutePath().normalize()
+                val p = customPath(name)?.toAbsolutePath()?.normalize()
+                if (p == null || p.parent != dir) {
+                    ImportResult.BadName
+                } else {
+                    Files.createDirectories(dir)
+                    if (dev.iustitia.util.AtomicFiles.write(p, ConfigManager.presetContentJson(config))) ImportResult.Saved(p)
+                    else ImportResult.WriteFailed
+                }
+            }
+        }
+    } catch (_: Throwable) {
+        ImportResult.WriteFailed
+    }
+
     /** Delete a custom preset. Refuses built-in names (returns false — the name is sanitized
      *  BEFORE the guard). Removes the file from BOTH locations — roaming and the legacy game-dir
      *  dir — because a same-named preset can exist in each (one save per build generation) and
