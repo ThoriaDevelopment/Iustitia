@@ -5,6 +5,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import dev.iustitia.Iustitia
 import dev.iustitia.history.FlagHistory
+import dev.iustitia.i18n.L10n
 import dev.iustitia.persistence.PersistenceManager
 import net.minecraft.client.MinecraftClient
 import net.minecraft.client.gl.Framebuffer
@@ -29,12 +30,13 @@ object Snapshot {
         val tierName = tier.label
         val score = FlagHistory.confidenceScore(uuid)
         val counts = FlagHistory.flagCounts(uuid)
-        val top = if (counts.isEmpty()) "no flags" else counts.entries.take(3).joinToString(", ") {
+        val top = if (counts.isEmpty()) L10n.s("iustitia.session.snapshotNoFlags") else counts.entries.take(3).joinToString(", ") {
             (if (it.value > 1) "${it.key} ×${it.value}" else it.key)
         }
         val maxVl = (FlagHistory.maxVlByCheck(uuid).values.maxOrNull() ?: 0.0)
-        "[Iustitia] $name: $top | max vl ${String.format(java.util.Locale.US, "%.1f", maxVl)} | Tier: $tierName [$score]"
-    } catch (_: Throwable) { "[Iustitia] $name: (snapshot unavailable)" }
+        L10n.s("iustitia.session.snapshotLine", name, top,
+            String.format(java.util.Locale.US, "%.1f", maxVl), tierName, score)
+    } catch (_: Throwable) { L10n.s("iustitia.session.snapshotUnavailable", name) }
 
     /** Build the small JSON snapshot (tier, score, confidence, last flags with evidence). Built with
      *  Gson so every string field (name, confidence, checkId, label) is fully escaped — the old
@@ -93,7 +95,7 @@ object Snapshot {
                     client.inGameHud?.chatHud?.addMessage(Text.literal(summary))
                     try { client.keyboard.setClipboard(summary) } catch (_: Throwable) {}
                     if (fileFailed) client.inGameHud?.chatHud?.addMessage(Text.literal(
-                        "§8[§diustitia§8] §csnapshot file could not be written (disk error) — chat + clipboard still have the summary."))
+                        L10n.s("iustitia.session.snapshotFileFailed")))
                 } catch (_: Throwable) {}
             }
             try { captureScreenshot(name, uuid) } catch (_: Throwable) {}

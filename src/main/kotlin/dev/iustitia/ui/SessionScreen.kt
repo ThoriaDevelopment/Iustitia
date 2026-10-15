@@ -2,6 +2,7 @@ package dev.iustitia.ui
 
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
+import dev.iustitia.i18n.L10n
 import dev.iustitia.tracking.EntityTrackerManager
 import net.minecraft.client.gui.DrawContext
 import net.minecraft.client.gui.Click
@@ -62,24 +63,24 @@ class SessionScreen(private val parent: Screen?) : Screen(TITLE) {
             super.render(context, mouseX, mouseY, delta)
             val tr = this.textRenderer
             val s = summary
-            context.drawTextWithShadow(tr, Text.literal("§8[§diustitia§8] §f§lSession summary"), 10, 10, WHITE)
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.session.header"), 10, 10, WHITE)
             if (compact) {
                 context.drawTextWithShadow(tr, Text.literal(
-                    "§7players §f${s.total} §7| §aG§f${s.green} §eY§f${s.yellow} §cR§f${s.red} §7| alerts §f${s.totalAlerts}" +
-                    (s.peakName?.let { " §7| peak §f$it§7[${s.peakScore}]" } ?: "")
+                    L10n.s("iustitia.screen.session.compact", s.total, s.green, s.yellow, s.red, s.totalAlerts) +
+                    (s.peakName?.let { L10n.s("iustitia.screen.session.peak", it, s.peakScore) } ?: "")
                 ), 10, 28, WHITE)
                 return
             }
             var y = 30
-            context.drawTextWithShadow(tr, Text.literal("§7players tracked: §f${s.total}"), 10, y, WHITE); y += 12
-            context.drawTextWithShadow(tr, Text.literal(" §aGREEN §f${s.green}   §eYELLOW §f${s.yellow}   §cRED §f${s.red}"), 10, y, WHITE); y += 16
-            context.drawTextWithShadow(tr, Text.literal("§7alerts this session: §f${s.totalAlerts}"), 10, y, WHITE); y += 12
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.session.playersTracked", s.total), 10, y, WHITE); y += 12
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.session.tierCounts", s.green, s.yellow, s.red), 10, y, WHITE); y += 16
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.session.alerts", s.totalAlerts), 10, y, WHITE); y += 12
             if (s.peakName != null && s.peakScore > 0) {
-                context.drawTextWithShadow(tr, Text.literal("§7peaked highest: §f${s.peakName} §7[${s.peakScore}]"), 10, y, WHITE); y += 16
+                context.drawTextWithShadow(tr, L10n.t("iustitia.screen.session.peakLine", s.peakName, s.peakScore), 10, y, WHITE); y += 16
             } else y += 8
-            context.drawTextWithShadow(tr, Text.literal("§8top offenders (by alert count):"), 10, y, WHITE); y += 12
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.session.topOffenders"), 10, y, WHITE); y += 12
             if (s.top.isEmpty()) {
-                context.drawTextWithShadow(tr, Text.literal("§7(no alerts yet this session)"), 14, y, WHITE)
+                context.drawTextWithShadow(tr, L10n.t("iustitia.screen.session.noAlerts"), 14, y, WHITE)
             } else {
                 s.top.forEach { (name, count) ->
                     context.drawTextWithShadow(tr, Text.literal(" §f$name §7$count"), 14, y, WHITE); y += 12
@@ -96,7 +97,7 @@ class SessionScreen(private val parent: Screen?) : Screen(TITLE) {
     override fun close() { client?.setScreen(parent) }
 
     companion object {
-        private val TITLE = Text.literal("Iustitia — session")
+        private val TITLE get() = L10n.t("iustitia.screen.session.title")
         private const val WHITE = -1
         private val BG = 0xCC101010.toInt()
     }

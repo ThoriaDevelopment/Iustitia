@@ -5,6 +5,7 @@ import java.io.DataOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
+import dev.iustitia.i18n.L10n
 
 /**
  * Binary `.iusclip` codec. A clip is a self-contained recording of the last N seconds of the scene:
@@ -171,8 +172,7 @@ object ClipCodec {
             // exactly like a file that isn't there.
             if (expectedBytes >= 0 && counting.count != expectedBytes) {
                 throw ClipFormatException(
-                    "read ${counting.count} of $expectedBytes bytes — truncated, or written by a " +
-                        "layout this build doesn't know"
+                    L10n.s("iustitia.replay.clipTruncated", counting.count, expectedBytes)
                 )
             }
             lastReadReason = null
@@ -181,20 +181,20 @@ object ClipCodec {
             lastReadReason = e.message
             null
         } catch (e: Throwable) {
-            lastReadReason = "malformed clip: " + (e.message ?: e.javaClass.simpleName)
+            lastReadReason = L10n.s("iustitia.replay.clipMalformed", e.message ?: e.javaClass.simpleName)
             null
         }
     }
 
     /** The parse itself, without the length guard or the reason bookkeeping (see [read]). */
     private fun decode(d: DataInputStream): Clip {
-        if (!checkMagic(d)) throw ClipFormatException("not an .iusclip file (bad magic)")
+        if (!checkMagic(d)) throw ClipFormatException(L10n.s("iustitia.replay.clipBadMagic"))
         val version = d.readInt()
         if (version < MIN_VERSION || version > VERSION) {
-            throw ClipFormatException("clip version $version — this build reads $MIN_VERSION–$VERSION")
+            throw ClipFormatException(L10n.s("iustitia.replay.clipVersion", version, MIN_VERSION, VERSION))
         }
         val focus = readFocus(d)
-        val frames = readFrames(d, version) ?: throw ClipFormatException("malformed frame table")
+        val frames = readFrames(d, version) ?: throw ClipFormatException(L10n.s("iustitia.replay.clipMalformedFrameTable"))
         // Alerts are present for the Iustitia lineage (v2–v8) and for the merged v13+; SnapClip's
         // v9–v12 dropped them entirely, so those clips read back with no alerts.
         val alerts = if (version <= LAST_LEGACY_VERSION || version >= 13) readAlerts(d) else emptyList()
@@ -204,12 +204,12 @@ object ClipCodec {
         var legacyBlockDeltas: List<BlockDeltaBuffer.BlockDelta>? = null
         var legacySnapshotIsStart = false
         if (version >= 9) {
-            val (bd, sis) = readDeltas(d) ?: throw ClipFormatException("malformed block-delta table")
+            val (bd, sis) = readDeltas(d) ?: throw ClipFormatException(L10n.s("iustitia.replay.clipMalformedDeltaTable"))
             legacyBlockDeltas = bd
             legacySnapshotIsStart = sis
         }
         var segments: List<ReplayBuffer.Segment> = emptyList()
-        if (version >= 11) segments = readSegments(d) ?: throw ClipFormatException("malformed segment table")
+        if (version >= 11) segments = readSegments(d) ?: throw ClipFormatException(L10n.s("iustitia.replay.clipMalformedSegmentTable"))
         // Synthesize a segment from a legacy top-level chunk snapshot so the segment-based render path
         // has something to draw for a v6–v10 clip.
         val finalSegments = if (segments.isNotEmpty()) segments

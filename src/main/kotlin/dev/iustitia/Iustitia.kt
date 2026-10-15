@@ -7,6 +7,7 @@ import dev.iustitia.event.AttackEvent
 import dev.iustitia.event.DiggingSignal
 import dev.iustitia.event.EventBus
 import dev.iustitia.event.HurtSignal
+import dev.iustitia.i18n.L10n
 import dev.iustitia.inference.AttackInference
 import dev.iustitia.persistence.NoteStore
 import dev.iustitia.session.Snapshot
@@ -227,7 +228,7 @@ object Iustitia {
             // finished, chat the reason + restore rendering (hide-live snaps back automatically).
             try {
                 val done = dev.iustitia.replay.ReplayState.tick()
-                if (done != null) chat(client, "§8[§diustitia§8] §7replay §c$done§7 — live view restored.")
+                if (done != null) chat(client, L10n.s("iustitia.replay.liveRestored", done))
             } catch (_: Throwable) {}
 
             // FREECAM free-spectate (v1.2.0 pure camera-override): advance the freecam pose
@@ -260,7 +261,7 @@ object Iustitia {
             // exit and chats the reason. All client-thread-safe (option writes stay here).
             try {
                 val exitReason = dev.iustitia.render.WatchState.tickSafety()
-                if (exitReason != null) chat(client, "§8[§diustitia§8] §7watch follow-cam §c$exitReason§7 — view restored.")
+                if (exitReason != null) chat(client, L10n.s("iustitia.render.watchExit", exitReason))
             } catch (_: Throwable) {}
         } catch (e: Throwable) {
             // the driver itself must never crash the client — but the failure must be visible
@@ -293,13 +294,13 @@ object Iustitia {
             when (id) {
                 "snapshot" -> {
                     val t = crosshairTarget()
-                    if (t == null) chat(mc, "§8[§diustitia§8] §7look at a player to snapshot them.")
-                    else { Snapshot.capture(t.first, t.second); chat(mc, "§8[§diustitia§8] §7snapshot of §f${t.second}§7 posted + copied to clipboard") }
+                    if (t == null) chat(mc, L10n.s("iustitia.session.lookToSnapshot"))
+                    else { Snapshot.capture(t.first, t.second); chat(mc, L10n.s("iustitia.session.snapshotPosted", t.second)) }
                 }
                 "transcript" -> {
                     if (mc.currentScreen is TranscriptPanelScreen) { mc.setScreen(null); return }
                     val t = crosshairTarget()
-                    if (t == null) chat(mc, "§8[§diustitia§8] §7look at a player to open their transcript panel.")
+                    if (t == null) chat(mc, L10n.s("iustitia.session.lookToTranscript"))
                     else mc.execute { try { mc.setScreen(TranscriptPanelScreen(t.first, t.second, null)) } catch (_: Throwable) {} }
                 }
                 "session" -> mc.execute { try { mc.setScreen(SessionScreen(mc.currentScreen)) } catch (_: Throwable) {} }
@@ -307,25 +308,26 @@ object Iustitia {
                 "config" -> {
                     mc.execute {
                         try { mc.setScreen(dev.iustitia.config.YaclScreenBuilder.build(mc.currentScreen)) }
-                        catch (_: Throwable) { chat(mc, "§8[§diustitia§8] §cfailed to open config screen") }
+                        catch (_: Throwable) { chat(mc, L10n.s("iustitia.misc.configOpenFailed")) }
                     }
                 }
                 "note" -> {
                     val t = crosshairTarget()
-                    if (t == null) { chat(mc, "§8[§diustitia§8] §7look at a player to read their note."); return }
+                    if (t == null) { chat(mc, L10n.s("iustitia.misc.lookToNote")); return }
                     val n = NoteStore.get(t.first)
-                    if (n == null) chat(mc, "§8[§diustitia§8] §f${t.second} §7has no note.")
-                    else chat(mc, "§8[§diustitia§8] §f${t.second} §7— ${NoteStore.categoryLabel(n.category)}§7: §f${n.text}")
+                    if (n == null) chat(mc, L10n.s("iustitia.misc.noNote", t.second))
+                    else chat(mc, L10n.s("iustitia.misc.noteLine", t.second, NoteStore.categoryLabel(n.category), n.text))
                 }
                 "compact" -> {
                     ConfigManager.config.compactMode = !ConfigManager.config.compactMode
                     try { ConfigManager.save() } catch (_: Throwable) {}
-                    chat(mc, "§8[§diustitia§8] §7compact mode = ${if (ConfigManager.config.compactMode) "§aON" else "§cOFF"}")
+                    chat(mc, L10n.s("iustitia.misc.compactModeStatus",
+                        if (ConfigManager.config.compactMode) L10n.s("iustitia.misc.compactOn") else L10n.s("iustitia.misc.compactOff")))
                 }
                 "watch" -> {
                     // Companion ownership: FollowCam owns the follow-cam when installed.
                     if (dev.iustitia.compat.CompanionMods.followCam) {
-                        chat(mc, "§8[§diustitia§8] §7the follow-cam is handled by §fFollowCam§7 (installed) — use §f/follow§7.")
+                        chat(mc, L10n.s("iustitia.render.watchCompanionActive"))
                         return
                     }
                     // Feature disabled → stay silent (don't print a watch chat line when the user
@@ -334,59 +336,60 @@ object Iustitia {
                     if (!ConfigManager.config.watchFollowCam) return
                     if (dev.iustitia.render.WatchState.active) {
                         val reason = dev.iustitia.render.WatchState.disableNow("disabled")
-                        chat(mc, "§8[§diustitia§8] §7watch follow-cam §c$reason§7 — view restored.")
+                        chat(mc, L10n.s("iustitia.render.watchExit", reason))
                         return
                     }
                     val t = crosshairTarget()
                     if (t == null) {
-                        chat(mc, "§8[§diustitia§8] §7look at a player to watch them, then press the bind again to stop.")
+                        chat(mc, L10n.s("iustitia.render.lookToWatch"))
                     } else {
                         dev.iustitia.render.WatchState.enable(t.first)
-                        chat(mc, "§8[§diustitia§8] §7watching §f${t.second}§7 — orbit follow-cam §aON§7. Mouse to look around; move or get hit to stop.")
+                        chat(mc, L10n.s("iustitia.render.watching", t.second))
                     }
                 }
                 "replayPause" -> {
                     if (!dev.iustitia.replay.ReplayState.active) return
                     val paused = dev.iustitia.replay.ReplayState.togglePause()
-                    chat(mc, "§8[§diustitia§8] §7replay ${if (paused) "§e⏸ paused" else "§aresumed"}§7.")
+                    chat(mc, L10n.s("iustitia.replay.pauseState",
+                        if (paused) L10n.s("iustitia.replay.paused") else L10n.s("iustitia.replay.resumed")))
                 }
                 "replaySeekBack" -> {
                     if (!dev.iustitia.replay.ReplayState.active) return
                     dev.iustitia.replay.ReplayState.seekBy(-5f)
-                    chat(mc, "§8[§diustitia§8] §7replay §e−5s§7.")
+                    chat(mc, L10n.s("iustitia.replay.seekBack"))
                 }
                 "replaySeekFwd" -> {
                     if (!dev.iustitia.replay.ReplayState.active) return
                     dev.iustitia.replay.ReplayState.seekBy(5f)
-                    chat(mc, "§8[§diustitia§8] §7replay §e+5s§7.")
+                    chat(mc, L10n.s("iustitia.replay.seekFwd"))
                 }
                 "replayExit" -> {
                     if (!dev.iustitia.replay.ReplayState.active) return
                     dev.iustitia.replay.ReplayState.stop("stopped")
-                    chat(mc, "§8[§diustitia§8] §7replay §cstopped§7 — live view restored.")
+                    chat(mc, L10n.s("iustitia.replay.stopped"))
                 }
                 "replayToggle" -> {
                     // Companion ownership: SnapClip owns replay/clip/record when installed.
                     if (dev.iustitia.compat.CompanionMods.snapClip) {
-                        chat(mc, "§8[§diustitia§8] §7replay is handled by §fSnapClip§7 (installed) — use its §f/replay§7.")
+                        chat(mc, L10n.s("iustitia.replay.companionActive"))
                         return
                     }
                     if (dev.iustitia.replay.ReplayState.active) {
                         dev.iustitia.replay.ReplayState.stop("stopped")
-                        chat(mc, "§8[§diustitia§8] §7replay §cstopped§7 — live view restored.")
+                        chat(mc, L10n.s("iustitia.replay.stopped"))
                         return
                     }
                     val cfg = ConfigManager.config
-                    if (!cfg.replayCapture) { chat(mc, "§8[§diustitia§8] §7replay capture is §cdisabled§7 in config (enable via §f/ius config§7)."); return }
+                    if (!cfg.replayCapture) { chat(mc, L10n.s("iustitia.replay.captureDisabled")); return }
                     val secs = try { cfg.replayKeybindSeconds.coerceIn(1, dev.iustitia.replay.ReplayBuffer.MAX_SECONDS) } catch (_: Throwable) { 30 }
                     val speed = dev.iustitia.replay.ReplayState.SPEED_FULL
                     val now = tickCounter
                     val window = try { dev.iustitia.replay.ReplayBuffer.snapshot(secs, now) } catch (_: Throwable) { dev.iustitia.replay.ReplayBuffer.Window(emptyList(), emptyList()) }
-                    if (window.frames.isEmpty()) { chat(mc, "§8[§diustitia§8] §7no buffered data for the last §f${secs}s§7."); return }
+                    if (window.frames.isEmpty()) { chat(mc, L10n.s("iustitia.replay.noBufferedData", secs)); return }
                     val started = try { dev.iustitia.replay.ReplayState.start(window, null, speed, cfg.replayHideLive, relocate = false, legacy = false) } catch (_: Throwable) { false }
-                    if (!started) { chat(mc, "§8[§diustitia§8] §7couldn't start the replay (empty window)."); return }
-                    val hideTxt = if (cfg.replayHideLive) " §7(live players hidden)" else ""
-                    chat(mc, "§8[§diustitia§8] §7replaying last §f${secs}s§7 at §f${NumFmt.d(digits = 2, v = speed)}×§7 — ghosts drawn in-world$hideTxt. Press again (or §f/ius replay off§7) to stop.")
+                    if (!started) { chat(mc, L10n.s("iustitia.replay.startFailed")); return }
+                    val hideTxt = if (cfg.replayHideLive) L10n.s("iustitia.replay.liveHidden") else ""
+                    chat(mc, L10n.s("iustitia.replay.replaying", secs, NumFmt.d(digits = 2, v = speed), hideTxt))
                 }
                 else -> { /* unknown id: no-op */ }
             }
@@ -429,9 +432,9 @@ object Iustitia {
         AlertManager.clearPlayer(uuid)
         try { dev.iustitia.persistence.PersistenceManager.saveHistory() } catch (_: Throwable) {}
         val name = dev.iustitia.history.FlagHistory.nameFor(uuid) ?: uuid.toString().take(8)
-        "§8[§diustitia§8] §7cleared all flags for §f$name§7 — tier reset to §aGREEN§7."
+        L10n.s("iustitia.misc.clearedPlayer", name)
     } catch (_: Throwable) {
-        "§8[§diustitia§8] §cclear failed."
+        L10n.s("iustitia.misc.clearFailed")
     }
 
     /**
@@ -444,9 +447,9 @@ object Iustitia {
         dev.iustitia.history.FlagHistory.reset()
         AlertManager.reset()
         try { dev.iustitia.persistence.PersistenceManager.saveHistory() } catch (_: Throwable) {}
-        "§8[§diustitia§8] §7cleared §fall§7 flags — every player's tier reset to §aGREEN§7."
+        L10n.s("iustitia.misc.clearedAll")
     } catch (_: Throwable) {
-        "§8[§diustitia§8] §cclear failed."
+        L10n.s("iustitia.misc.clearFailed")
     }
 
     /** Full reset on dimension change / game-join. */

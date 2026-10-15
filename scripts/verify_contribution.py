@@ -476,8 +476,52 @@ def check_language_assets(errors: list[str], warnings: list[str]) -> None:
         if not any(k.startswith(prefix) for k in en):
             issue(errors, f"source builds keys under '{prefix}*' but en_us.json has none")
 
-    # Generated keys (check descriptions, presets, keybind hub rows, tier labels) get pinned
-    # here as their call sites move onto L10n; until then they have no lang entries to check.
+    try:
+        check_ids = {c["id"] for c in json.loads(read(ROOT / "scripts" / "checks.json")) if c.get("id")}
+    except (ValueError, KeyError, TypeError):
+        check_ids = set()  # reports come from check_check_registry
+    for cid in sorted(check_ids):
+        if f"iustitia.info.check.{cid}" not in en:
+            issue(errors, f"en_us.json is missing the check description key iustitia.info.check.{cid}")
+
+    # Wizard buttons derive their keys from the built-in preset name and the blurb line index.
+    try:
+        built_ins = re.findall(
+            r'BuiltIn\(\s*"(\w+)"[\s\S]*?blurb\s*=\s*listOf\(([\s\S]*?)\n\s*\)',
+            read(SRC / "config" / "PresetManager.kt"),
+        )
+    except OSError:
+        built_ins = []
+    for name, blurbs in built_ins:
+        for suffix in [".label"] + [f".blurb{i}" for i in range(len(re.findall(r'"[^"]*"', blurbs)))]:
+            if f"iustitia.preset.{name}{suffix}" not in en:
+                issue(errors, f"en_us.json is missing iustitia.preset.{name}{suffix}")
+
+    # Keybind label/description keys are assembled from the bind id at runtime, so the prefix scan
+    # above cannot see a bind whose lang keys were never added. Pin every id explicitly — this is
+    # what lets Keybinds.Bind drop its hardcoded English fallback.
+    try:
+        bind_ids = re.findall(r'Bind\(\s*"(\w+)"', read(SRC / "keybind" / "Keybinds.kt"))
+    except OSError:
+        bind_ids = []
+    for bid in bind_ids:
+        for key in (f"key.iustitia.{bid}", f"iustitia.misc.keybind.{bid}"):
+            if key not in en:
+                issue(errors, f"en_us.json is missing {key}")
+
+    # Tier labels are built from the enum name at runtime (`iustitia.misc.tier.$name`), same deal:
+    # pin every Tier constant so a new tier without lang keys cannot fall back silently.
+    try:
+        tier_head = re.search(
+            r"enum class Tier[^{]*\{([^;}]*)(?:;|\})",
+            read(SRC / "history" / "FlagHistory.kt"),
+        )
+        tier_names = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", tier_head.group(1)) if tier_head else []
+    except OSError:
+        tier_names = []
+    for tn in tier_names:
+        if f"iustitia.misc.tier.{tn}" not in en:
+            issue(errors, f"en_us.json is missing iustitia.misc.tier.{tn}")
 
     spec = re.compile(r"%(?:%|[-0-9.]*[a-zA-Z])")
     conversions = lambda value: sorted(re.findall(r"%(?!%)(?:[-0-9.]*)([a-zA-Z])", value))

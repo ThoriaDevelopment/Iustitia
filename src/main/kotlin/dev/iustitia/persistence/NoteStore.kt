@@ -1,5 +1,6 @@
 package dev.iustitia.persistence
 
+import dev.iustitia.i18n.L10n
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -56,9 +57,9 @@ object NoteStore {
     }
 
     fun categoryLabel(c: Category): String = when (c) {
-        Category.CLOSET -> "§ecloset"
-        Category.BLATANT -> "§cblatant"
-        Category.NEEDS_REVIEW -> "§6needs review"
-        Category.LEGIT -> "§alegit"
+        Category.CLOSET -> L10n.s("iustitia.misc.noteCategoryCloset")
+        Category.BLATANT -> L10n.s("iustitia.misc.noteCategoryBlatant")
+        Category.NEEDS_REVIEW -> L10n.s("iustitia.misc.noteCategoryNeedsReview")
+        Category.LEGIT -> L10n.s("iustitia.misc.noteCategoryLegit")
     }
 }

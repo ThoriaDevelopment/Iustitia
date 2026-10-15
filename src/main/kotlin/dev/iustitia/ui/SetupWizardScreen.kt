@@ -2,6 +2,7 @@ package dev.iustitia.ui
 
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.config.PresetManager
+import dev.iustitia.i18n.L10n
 import net.minecraft.client.gui.DrawContext
 import net.minecraft.client.gui.Click
 import net.minecraft.client.gui.screen.Screen
@@ -45,8 +46,9 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
     private val presets: List<Preset> = try {
         PresetManager.builtIns.filterNot { it.diagnostic }.map { bi ->
             Preset(
-                label = if (bi.recommended) "§f§l${bi.label} §a§l(recommended)" else "§f§l${bi.label}",
-                blurb = bi.blurb,
+                label = "§f§l" + L10n.s("iustitia.preset.${bi.name}.label") +
+                    (if (bi.recommended) L10n.s("iustitia.screen.setupWizard.recommended") else ""),
+                blurb = bi.blurb.indices.map { L10n.s("iustitia.preset.${bi.name}.blurb$it") },
                 apply = {
                     try { PresetManager.apply(bi.name) } catch (_: Throwable) {}
                     // Per-user state, which is why the preset cannot carry it: see the class KDoc.
@@ -162,7 +164,9 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
     }
 
     companion object {
-        private val TITLE = Text.literal("Iustitia setup")
+        /** Getters rather than init-time `val`s: the wizard is only ever opened after the game has
+         *  loaded, so re-reading keeps it on the client's *current* language (README "Language"). */
+        private val TITLE get() = L10n.t("iustitia.screen.setupWizard.title")
         private const val WHITE = -1
         private val BG = 0xCC101010.toInt()
         private const val LINE_H = 10
@@ -177,14 +181,14 @@ class SetupWizardScreen(private val parent: Screen?) : Screen(TITLE) {
 
         /** Hand-split rather than wrapped: these carry color codes, and a wrap that broke between a
          *  `§` and its letter would print the letter as text. */
-        private val HEADER = listOf(
-            "§8[§diustitia§8] §f§lFirst-launch setup",
-            "§7Pick the profile that matches how you play.",
-            "§fStandard §7is the recommended starting point.",
-            "§7You can change any of it later in §f/ius config§7.",
+        private val HEADER get() = listOf(
+            L10n.s("iustitia.screen.setupWizard.headerTitle"),
+            L10n.s("iustitia.screen.setupWizard.headerProfile"),
+            L10n.s("iustitia.screen.setupWizard.headerStandard"),
+            L10n.s("iustitia.screen.setupWizard.headerLater"),
         )
 
-        private const val SKIP_LABEL = "§7Skip / keep defaults §8(no preset applied)"
+        private val SKIP_LABEL get() = L10n.s("iustitia.screen.setupWizard.skip")
 
         /** Split [text] into lines of at most [maxChars] characters, breaking on spaces. Plain text
          *  only: a §-code counts as visible characters here, which shortens a line rather than

@@ -14,9 +14,6 @@ import net.minecraft.util.Language
  * Fail-open by construction: an unknown key renders as the key itself (vanilla behavior), a
  * malformed `%` spec degrades to that entry's raw text instead of vanilla's `Format error: …`
  * line, and neither can throw into a render or tick path.
- *
- * Lookup is deliberately not cached: [Language] is swapped on a language change and every caller
- * — including the per-frame HUD lines — must see the new language without a restart.
  */
 object L10n {
 
