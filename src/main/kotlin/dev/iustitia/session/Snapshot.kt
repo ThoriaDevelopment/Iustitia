@@ -49,6 +49,9 @@ object Snapshot {
         obj.addProperty("name", name)
         obj.addProperty("uuid", uuid.toString())
         obj.addProperty("tick", Iustitia.tickCounter)
+        // Localized display name (README "Language"): a report exported on a zh_cn client says the
+        // tier in Chinese. Prose, not an identifier — check ids stay raw, and tooling that matches
+        // on "RED"/"GREEN" should read FlagHistory.tierFor(uuid) instead of this field.
         obj.addProperty("tier", tierName)
         obj.addProperty("score", FlagHistory.confidenceScore(uuid))
         obj.addProperty("confidence", FlagHistory.confidenceExplanation(uuid))

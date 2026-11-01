@@ -454,6 +454,9 @@ object ClipCodec {
         for (a in alerts) {
             d.writeInt(a.tick)
             d.writeLong(a.uuidMost); d.writeLong(a.uuidLeast)
+            // `label` is the localized display name captured at write time, so a clip keeps the
+            // wording its recording client showed; `checkId` beside it is the raw identifier that
+            // tooling and the live tests match on.
             d.writeUTF(a.name); d.writeUTF(a.checkId); d.writeUTF(a.label)
             d.writeFloat(a.vl)
         }

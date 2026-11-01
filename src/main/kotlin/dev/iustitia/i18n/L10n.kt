@@ -24,16 +24,24 @@ object L10n {
     fun s(key: String, vararg args: Any?): String = try {
         // `Language.get` returns the key itself when the entry is missing — the sentinel that
         // CheckInfo / FeatureInfo / Keybinds test for to fall back to their English text.
-        val raw = Language.getInstance().get(key)
-        // Formatting is ours rather than I18n's so that a bad spec — a hand-edited lang file with
-        // a stray `%` — shows the sentence as written instead of "Format error: …". `%%` still
-        // resolves to `%`, exactly as vanilla does it.
-        try {
-            String.format(Locale.ROOT, raw, *args)
-        } catch (_: Throwable) {
-            raw
-        }
+        formatEntry(Language.getInstance().get(key), args)
     } catch (_: Throwable) {
         key
+    }
+
+    /**
+     * Apply [args] to an already-resolved [raw] entry, returning the entry untouched when its spec
+     * and the arguments disagree.
+     *
+     * Split out of [s] so the fail-open formatting path is testable: a pure-JVM unit test has no
+     * loaded language file, so every key it asks for comes back as the key and this branch is
+     * otherwise unreachable. Formatting is ours rather than I18n's so that a bad spec — a
+     * hand-edited lang file with a stray `%` — shows the sentence as written instead of
+     * "Format error: …". `%%` still resolves to `%`, exactly as vanilla does it.
+     */
+    internal fun formatEntry(raw: String, args: Array<out Any?>): String = try {
+        String.format(Locale.ROOT, raw, *args)
+    } catch (_: Throwable) {
+        raw
     }
 }
