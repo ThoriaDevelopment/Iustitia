@@ -107,7 +107,8 @@ class PresetShareTest {
     @Test
     fun `oversized input is refused before decoding`() {
         val reason = failure(PresetShare.PREFIX + "A".repeat(PresetShare.MAX_ENCODED_CHARS))
-        assertTrue("too long" in reason, reason)
+        // Reasons come from L10n, which fails open to the raw key with no language loaded.
+        assertTrue("tooLong" in reason, reason)
     }
 
     @Test
@@ -140,7 +141,7 @@ class PresetShareTest {
         for (bad in listOf("../evil", "..", ".hidden", "a/b", "a\\b", "", "with space", "x".repeat(PresetShare.MAX_NAME_LENGTH + 1), "§cred")) {
             assertFalse(PresetShare.validName(bad), "validName accepted '$bad'")
             val reason = failure(forge(Gson().toJson(JsonObject().apply { addProperty("name", bad); add("preset", JsonObject()) })))
-            assertTrue("name" in reason, "'$bad' was refused for the wrong reason: $reason")
+            assertTrue("badName" in reason, "'$bad' was refused for the wrong reason: $reason")
         }
         for (good in listOf("myTune", "pvp-1.2", "_x", "a".repeat(PresetShare.MAX_NAME_LENGTH))) {
             assertTrue(PresetShare.validName(good), "validName refused '$good'")

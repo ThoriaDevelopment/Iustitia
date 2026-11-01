@@ -2,6 +2,7 @@ package dev.iustitia.mixin
 
 import dev.iustitia.Iustitia
 import dev.iustitia.config.ConfigManager
+import dev.iustitia.i18n.L10n
 import dev.iustitia.replay.ReplayBuffer
 import dev.iustitia.replay.ReplayState
 import dev.iustitia.render.OffenderCapture
@@ -262,7 +263,7 @@ class CameraMixin {
                 // Target left the world — flag an exit for the client-thread tick loop to restore
                 // the HUD/perspective state + chat (option writes stay off this render thread).
                 // active goes false now → vanilla re-derives the local-player view next frame.
-                WatchState.requestExit("target left — watch cancelled")
+                WatchState.requestExit(L10n.s("iustitia.render.watchExitTargetLeft"))
                 return false
             }
             positionWatch(offender, tickDelta)

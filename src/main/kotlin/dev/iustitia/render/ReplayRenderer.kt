@@ -3,6 +3,7 @@ package dev.iustitia.render
 import dev.iustitia.NumFmt
 import dev.iustitia.config.ConfigManager
 import dev.iustitia.history.FlagHistory
+import dev.iustitia.i18n.L10n
 import dev.iustitia.mixin.LivingEntityRendererAccessor
 import dev.iustitia.replay.ReplayBuffer
 import dev.iustitia.replay.ReplayState
@@ -1256,9 +1257,9 @@ object ReplayRenderer {
         val tr = mc.textRenderer ?: return
         val speed = ReplayState.currentSpeed()
         val paused = ReplayState.isPaused()
-        val focus = ReplayState.focusName() ?: "scene"
+        val focus = ReplayState.focusName() ?: L10n.s("iustitia.render.replayScene")
         val pauseTxt = if (paused) "§e⏸ " else ""
-        val line = Text.literal("§8[§diustitia§8] §6▶ §fReplay §e$focus §7$pauseTxt§7${NumFmt.d(digits = 2, v = speed)}×")
+        val line = L10n.t("iustitia.render.replayStatus", focus, pauseTxt, NumFmt.d(digits = 2, v = speed))
         val padX = 6
         val sw = mc.getWindow().scaledWidth
         val sh = mc.getWindow().scaledHeight

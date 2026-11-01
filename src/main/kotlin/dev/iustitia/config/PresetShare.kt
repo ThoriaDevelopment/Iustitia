@@ -12,6 +12,7 @@ import java.util.Base64
 import java.util.zip.DataFormatException
 import java.util.zip.Deflater
 import java.util.zip.Inflater
+import dev.iustitia.i18n.L10n
 
 /**
  * The shareable-string form of a preset (`/ius presets export` / `/ius presets import`).
@@ -48,7 +49,8 @@ import java.util.zip.Inflater
  *    rejected, not rewritten.
  *
  * Built-in and existing-name refusals, and the path resolution, live in [PresetManager.saveImported].
- * Nothing here touches disk or Minecraft, so the whole codec is covered by pure-JVM tests.
+ * Nothing here touches disk; failure strings come from [L10n], which fails open to the raw
+ * key when no language is loaded, so the codec stays covered by pure-JVM tests.
  */
 object PresetShare {
 
@@ -95,26 +97,26 @@ object PresetShare {
     /** Decode and validate a pasted string. Never throws. */
     fun decode(input: String): Decoded {
         val text = input.trim()
-        if (text.length > MAX_ENCODED_CHARS) return Decoded.Failure("string is too long (${text.length} chars, limit $MAX_ENCODED_CHARS)")
-        if (!text.startsWith(PREFIX)) return Decoded.Failure("not an Iustitia preset string (it should start with $PREFIX)")
+        if (text.length > MAX_ENCODED_CHARS) return Decoded.Failure(L10n.s("iustitia.presetShare.tooLong", text.length, MAX_ENCODED_CHARS))
+        if (!text.startsWith(PREFIX)) return Decoded.Failure(L10n.s("iustitia.presetShare.badPrefix", PREFIX))
         return try {
             val compressed = try {
                 Base64.getUrlDecoder().decode(text.substring(PREFIX.length))
             } catch (_: IllegalArgumentException) {
-                return Decoded.Failure("string is damaged (bad characters; was it cut off when copied?)")
+                return Decoded.Failure(L10n.s("iustitia.presetShare.badBase64"))
             }
-            val json = inflate(compressed) ?: return Decoded.Failure("string is damaged or decodes to more than ${MAX_DECODED_BYTES / 1024} KB")
-            val root = parseStrict(json) ?: return Decoded.Failure("string is damaged (the decoded preset isn't valid JSON)")
-            if (!root.isJsonObject) return Decoded.Failure("string doesn't contain a preset")
+            val json = inflate(compressed) ?: return Decoded.Failure(L10n.s("iustitia.presetShare.inflateFail", MAX_DECODED_BYTES / 1024))
+            val root = parseStrict(json) ?: return Decoded.Failure(L10n.s("iustitia.presetShare.badJson"))
+            if (!root.isJsonObject) return Decoded.Failure(L10n.s("iustitia.presetShare.noPreset"))
             val obj = root.asJsonObject
 
             val nameEl = obj.get("name")
-            if (nameEl == null || !nameEl.isJsonPrimitive || !nameEl.asJsonPrimitive.isString) return Decoded.Failure("string has no preset name")
+            if (nameEl == null || !nameEl.isJsonPrimitive || !nameEl.asJsonPrimitive.isString) return Decoded.Failure(L10n.s("iustitia.presetShare.noName"))
             val name = nameEl.asString
-            if (!validName(name)) return Decoded.Failure("preset name '${name.take(MAX_NAME_LENGTH)}' isn't allowed (letters, digits, _ . - only, not starting with a dot, at most $MAX_NAME_LENGTH chars)")
+            if (!validName(name)) return Decoded.Failure(L10n.s("iustitia.presetShare.badName", name.take(MAX_NAME_LENGTH), MAX_NAME_LENGTH))
 
             val presetEl = obj.get("preset")
-            if (presetEl == null || !presetEl.isJsonObject) return Decoded.Failure("string has no preset content")
+            if (presetEl == null || !presetEl.isJsonObject) return Decoded.Failure(L10n.s("iustitia.presetShare.noContent"))
             val preset = presetEl.asJsonObject
             schemaError(preset, ConfigManager.presetContentObj(IustitiaConfig()), "")?.let { return Decoded.Failure(it) }
 
@@ -123,7 +125,7 @@ object PresetShare {
             ConfigManager.configFromJsonInto(preset, scratch)
             Decoded.Success(name, scratch)
         } catch (_: Throwable) {
-            Decoded.Failure("string couldn't be read")
+            Decoded.Failure(L10n.s("iustitia.presetShare.unreadable"))
         }
     }
 
@@ -161,40 +163,40 @@ object PresetShare {
     private fun schemaError(obj: JsonObject, template: JsonObject, path: String): String? {
         for ((key, value) in obj.entrySet()) {
             val where = if (path.isEmpty()) key else "$path.$key"
-            val expected = template.get(key) ?: return "unknown setting '$where'"
+            val expected = template.get(key) ?: return L10n.s("iustitia.presetShare.unknownSetting", where)
             when {
                 expected.isJsonObject -> {
-                    if (!value.isJsonObject) return "'$where' should be a group of settings"
+                    if (!value.isJsonObject) return L10n.s("iustitia.presetShare.notGroup", where)
                     schemaError(value.asJsonObject, expected.asJsonObject, where)?.let { return it }
                 }
                 expected.isJsonPrimitive -> {
-                    if (!value.isJsonPrimitive) return "'$where' has the wrong type"
+                    if (!value.isJsonPrimitive) return L10n.s("iustitia.presetShare.wrongType", where)
                     primitiveError(value.asJsonPrimitive, expected.asJsonPrimitive, where)?.let { return it }
                 }
                 // Arrays only appear under excluded per-user keys, which are not in the template.
-                else -> return "'$where' has an unsupported type"
+                else -> return L10n.s("iustitia.presetShare.unsupportedType", where)
             }
         }
         return null
     }
 
     private fun primitiveError(v: JsonPrimitive, t: JsonPrimitive, where: String): String? = when {
-        t.isBoolean -> if (v.isBoolean) null else "'$where' should be true or false"
-        t.isString -> if (v.isString) null else "'$where' should be text"
+        t.isBoolean -> if (v.isBoolean) null else L10n.s("iustitia.presetShare.wantBool", where)
+        t.isString -> if (v.isString) null else L10n.s("iustitia.presetShare.wantText", where)
         t.isNumber -> {
             if (!v.isNumber) {
-                "'$where' should be a number"
+                L10n.s("iustitia.presetShare.wantNumber", where)
             } else {
                 val d = v.asDouble
                 val integral = t.asNumber.let { it is Int || it is Long || it is Short || it is Byte }
                 when {
-                    !d.isFinite() -> "'$where' isn't a finite number"
-                    integral && (d != Math.rint(d) || d > Int.MAX_VALUE || d < Int.MIN_VALUE) -> "'$where' should be a whole number"
+                    !d.isFinite() -> L10n.s("iustitia.presetShare.notFinite", where)
+                    integral && (d != Math.rint(d) || d > Int.MAX_VALUE || d < Int.MIN_VALUE) -> L10n.s("iustitia.presetShare.wantInteger", where)
                     else -> null
                 }
             }
         }
-        else -> "'$where' has an unsupported type"
+        else -> L10n.s("iustitia.presetShare.unsupportedType", where)
     }
 
     /** Strict single-value JSON parse: rejects lenient syntax (NaN, comments, unquoted strings) and

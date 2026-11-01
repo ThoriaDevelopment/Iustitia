@@ -1,6 +1,7 @@
 package dev.iustitia.ui
 
 import dev.iustitia.chathist.ChatHistory
+import dev.iustitia.i18n.L10n
 import net.minecraft.client.gui.DrawContext
 import net.minecraft.client.gui.screen.Screen
 import net.minecraft.text.Text
@@ -49,10 +50,10 @@ class ChatHistPanelScreen(
             context.drawTextWithShadow(tr, Text.literal("§8chathist"), x0 + 4, y, WHITE); y += 11
             context.drawTextWithShadow(tr, Text.literal("§f$subtitle"), x0 + 4, y, WHITE); y += 13
             val rows = rowsProvider().take(limit)
-            context.drawTextWithShadow(tr, Text.literal("§8last ${rows.size} msg:"), x0 + 4, y, WHITE); y += 11
+            context.drawTextWithShadow(tr, L10n.t("iustitia.screen.chatHist.lastMsg", rows.size), x0 + 4, y, WHITE); y += 11
             val maxW = panelW - 8
             if (rows.isEmpty()) {
-                context.drawTextWithShadow(tr, Text.literal("§7(no messages)"), x0 + 4, y, WHITE)
+                context.drawTextWithShadow(tr, L10n.t("iustitia.screen.chatHist.empty"), x0 + 4, y, WHITE)
             } else {
                 for (r in rows) {
                     val ts = try { FMT.format(Date(r.wallClockMs)) } catch (_: Throwable) { "??:??:??" }
@@ -72,7 +73,7 @@ class ChatHistPanelScreen(
         } catch (_: Throwable) {
             try {
                 val tr = this.textRenderer
-                context.drawTextWithShadow(tr, Text.literal("§7(unavailable)"), 4, 4, WHITE)
+                context.drawTextWithShadow(tr, L10n.t("iustitia.screen.chatHist.unavailable"), 4, 4, WHITE)
             } catch (_: Throwable) {}
         }
     }
@@ -80,7 +81,7 @@ class ChatHistPanelScreen(
     override fun close() { client?.setScreen(parent) }
 
     companion object {
-        private val TITLE = Text.literal("Iustitia — chathist")
+        private val TITLE get() = L10n.t("iustitia.screen.chatHist.title")
         private const val WHITE = -1
         private val BG = 0xCC101010.toInt()
         private val FMT = SimpleDateFormat("HH:mm:ss")
